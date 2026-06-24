@@ -81,7 +81,6 @@
   <section id="devices" class="grid"></section>
 </main>
 
-<script src="/js/cloudbase.full.js"></script>
 <script src="js/config.js"></script>
 <script src="js/api.js"></script>
 <script src="js/ui.js"></script>
@@ -96,7 +95,7 @@ const heroMetaEl = document.getElementById('hero-meta');
 const roleCopyEl = document.getElementById('role-copy');
 const roleActionsEl = document.getElementById('role-actions');
 
-deployMode.textContent = (window.APP_CONFIG && window.APP_CONFIG.useCloudBase) ? 'CloudBase 函数直连' : 'VPS / HTTP API';
+deployMode.textContent = 'VPS / HTTP API';
 heroMetaEl.innerHTML = `
   <span class="badge info">${isLoggedIn() ? '已登录' : '访客模式'}</span>
   <span class="badge ${isCurrentUserAdmin() ? 'warn' : 'success'}">${isCurrentUserAdmin() ? '管理员视角' : '用户视角'}</span>

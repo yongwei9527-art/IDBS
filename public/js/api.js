@@ -1,6 +1,3 @@
-let app;
-let authReady;
-
 const STATUS_LABELS = {
   available: '可预约',
   reserved: '已预约',
@@ -25,20 +22,6 @@ function normalizeBaseUrl(url) {
 
 function getApiBaseUrl() {
   return normalizeBaseUrl(window.APP_CONFIG && window.APP_CONFIG.apiBaseUrl) || window.location.origin;
-}
-
-function isCloudBaseMode() {
-  return !!(window.APP_CONFIG && window.APP_CONFIG.useCloudBase);
-}
-
-function initCloudBase() {
-  if (!app) {
-    const cb = window.cloudbase && (window.cloudbase.default || window.cloudbase);
-    if (!cb || !cb.init) throw new Error('CloudBase SDK 加载失败');
-    app = cb.init({ env: window.APP_CONFIG.envId, region: window.APP_CONFIG.region });
-    authReady = app.auth({ persistence: 'local' }).signInAnonymously().catch(() => null);
-  }
-  return app;
 }
 
 function getUserToken() { return localStorage.getItem('USER_TOKEN') || ''; }
@@ -136,22 +119,6 @@ async function requestJson(url, options = {}) {
 }
 
 async function callApi(action, payload = {}, admin = false) {
-  if (isCloudBaseMode()) {
-    initCloudBase();
-    await authReady;
-    const response = await app.callFunction({
-      name: window.APP_CONFIG.apiFunctionName,
-      data: { action, payload, token: admin ? getEffectiveAdminToken() : getUserToken() }
-    });
-    const data = response.result || response;
-    if (!data.ok) {
-      const error = new Error(data.message || '操作失败');
-      error.payload = data;
-      throw error;
-    }
-    return data;
-  }
-
   try {
     return await requestJson(`${getApiBaseUrl()}/api/${encodeURIComponent(action)}`, {
       method: 'POST',
@@ -199,31 +166,18 @@ async function callRestApi(path, options = {}) {
 
 async function uploadPhoto(file, folder = 'return') {
   if (!file) return '';
-  if (!isCloudBaseMode()) {
-    const form = new FormData();
-    form.append('file', file);
-    const data = await requestJson(`${getApiBaseUrl()}/api/upload`, {
-      method: 'POST',
-      body: form
-    });
-    return data.url || (data.data && data.data.url) || '';
-  }
-
-  initCloudBase();
-  await authReady;
-  const ext = (file.name || 'jpg').split('.').pop();
-  const cloudPath = `${folder}/${Date.now()}-${Math.random().toString(16).slice(2)}.${ext}`;
-  const response = await app.uploadFile({ cloudPath, filePath: file });
-  return response.fileID;
+  const form = new FormData();
+  form.append('file', file);
+  const data = await requestJson(`${getApiBaseUrl()}/api/upload`, {
+    method: 'POST',
+    body: form
+  });
+  return data.url || (data.data && data.data.url) || '';
 }
 
 async function tempUrl(fileID) {
   if (!fileID) return '';
-  if (!isCloudBaseMode()) return fileID;
-  initCloudBase();
-  await authReady;
-  const response = await app.getTempFileURL({ fileList: [fileID] });
-  return response.fileList && response.fileList[0] ? response.fileList[0].tempFileURL : '';
+  return fileID;
 }
 
 async function renderImg(fileID, className = 'photo') {

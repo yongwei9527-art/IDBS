@@ -8,6 +8,7 @@ This checklist is for IDBS VPS + PostgreSQL deployment, frontend/backend integra
 - Confirm reverse proxy is healthy: `sudo nginx -t`
 - Confirm basic health endpoint: `curl http://127.0.0.1:3000/health`
 - Confirm readiness endpoint: `curl http://127.0.0.1:3000/ready`
+- Run local syntax checks before deploying: `npm run check`
 - Run smoke test from `/var/www/idbs/current`: `npm run smoke -- http://127.0.0.1:3000`
 
 ## 2. Environment Variables
