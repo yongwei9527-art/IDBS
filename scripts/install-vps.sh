@@ -32,4 +32,4 @@ fi
 echo "[4/4] Running deployment"
 cd "${SRC_DIR}"
 chmod +x scripts/deploy-ubuntu.sh
-./scripts/deploy-ubuntu.sh
+sudo -E ./scripts/deploy-ubuntu.sh

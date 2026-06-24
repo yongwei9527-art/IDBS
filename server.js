@@ -61,7 +61,9 @@ function buildRuntimeStatus() {
   const warnings = [];
 
   if (!ADMIN_PASSWORD) warnings.push('ADMIN_PASSWORD is not configured');
+  if (ADMIN_PASSWORD === 'change-me' || ADMIN_PASSWORD === 'your-admin-password') warnings.push('ADMIN_PASSWORD is still using a placeholder value');
   if (!TOKEN_SECRET || TOKEN_SECRET === 'change-me-please') warnings.push('TOKEN_SECRET is using the default value');
+  if (TOKEN_SECRET === 'your-long-random-secret') warnings.push('TOKEN_SECRET is still using a placeholder value');
   if ((WECHAT_APP_ID && !WECHAT_APP_SECRET) || (!WECHAT_APP_ID && WECHAT_APP_SECRET)) warnings.push('WECHAT_APP_ID and WECHAT_APP_SECRET should be configured together');
   if (!DATABASE_URL) warnings.push('DATABASE_URL is not configured');
 

@@ -1,42 +1,46 @@
 # Integration Checklist
 
-This checklist is for VPS deployment, frontend/backend联调, smoke verification, and go-live sanity checks.
+This checklist is for IDBS VPS + PostgreSQL deployment, frontend/backend integration, smoke verification, and go-live checks.
 
 ## 1. Server Readiness
 
-- Confirm service is running:
-  - `sudo systemctl status idbs`
-- Confirm reverse proxy is healthy:
-  - `sudo nginx -t`
-  - `sudo systemctl status nginx`
-- Confirm basic health endpoint:
-  - `curl http://127.0.0.1:3000/health`
-- Confirm readiness endpoint:
-  - `curl http://127.0.0.1:3000/ready`
-- Run smoke test:
-  - `npm run smoke -- http://127.0.0.1:3000`
+- Confirm service is running: `sudo systemctl status idbs`
+- Confirm reverse proxy is healthy: `sudo nginx -t`
+- Confirm basic health endpoint: `curl http://127.0.0.1:3000/health`
+- Confirm readiness endpoint: `curl http://127.0.0.1:3000/ready`
+- Run smoke test from `/var/www/idbs/current`: `npm run smoke -- http://127.0.0.1:3000`
 
 ## 2. Environment Variables
 
-Required production values:
+Required production values are stored in `/var/www/idbs/shared/.env`:
 
 ```bash
 PORT=3000
 ADMIN_PASSWORD=<strong-password>
 TOKEN_SECRET=<long-random-secret>
 UPLOAD_DIR=/var/www/idbs/uploads
-USE_CLOUDBASE=true
-CLOUDBASE_ENV_ID=<cloudbase-env-id>
-CLOUDBASE_REGION=ap-shanghai
-```
-
-Recommended:
-
-```bash
+DATABASE_URL=postgresql://idbs_user:<password>@127.0.0.1:5432/idbs
+PGSSL=false
 CORS_ORIGIN=https://your-domain.com
 ```
 
-## 3. Manual End-To-End User Flow
+Optional WeChat values:
+
+```bash
+WECHAT_TOKEN=<wechat-callback-token>
+WECHAT_APP_ID=<official-account-appid>
+WECHAT_APP_SECRET=<official-account-secret>
+WECHAT_ADMIN_OPENIDS=<openid_a,openid_b>
+```
+
+## 3. Database Checks
+
+- Confirm PostgreSQL is running: `sudo systemctl status postgresql`
+- Confirm schema exists: `sudo -u postgres psql -d idbs -c "\dt"`
+- Confirm app user can connect: `psql "$DATABASE_URL" -c "select 1"`
+- Confirm `/ready` returns `200` after `.env` is finalized and service restarted
+
+## 4. Manual End-To-End User Flow
 
 Run this in order:
 
@@ -50,9 +54,9 @@ Run this in order:
 8. Open a device detail page
 9. Create a reservation
 10. In admin, approve the reservation
-11. In user center, click `开始使用`
+11. In user center, start using the approved reservation
 12. In user center, upload return photos and submit return
-13. In admin statistics, verify usage record appears
+13. In admin statistics, verify the usage record appears
 
 Expected result:
 
@@ -61,12 +65,12 @@ Expected result:
 - Device state changes are reflected correctly
 - Borrow/return records show up in both user and admin views
 
-## 4. Admin Flow
+## 5. Admin Flow
 
 - Add a new device
 - Verify it appears on the home page
-- Set one device to abnormal flow by submitting an abnormal return
-- In admin, restore device availability
+- Submit an abnormal return
+- Restore device availability in admin
 - Export CSV from statistics page
 
 Expected result:
@@ -75,7 +79,7 @@ Expected result:
 - Status badge changes match business flow
 - CSV downloads with readable columns
 
-## 5. API Verification
+## 6. API Verification
 
 Recommended requests:
 
@@ -93,7 +97,7 @@ Recommended requests:
 
 Use the contract in [api-contract.md](./api-contract.md).
 
-## 6. Security Checks
+## 7. Security Checks
 
 - Confirm `TOKEN_SECRET` is not default
 - Confirm `ADMIN_PASSWORD` is strong
@@ -102,17 +106,16 @@ Use the contract in [api-contract.md](./api-contract.md).
 - Confirm `/ready` returns `200` without warnings before go-live
 - Confirm admin account is not shared broadly
 
-## 7. Stability Checks
+## 8. Stability Checks
 
-- Inspect service logs:
-  - `sudo journalctl -u idbs -f`
+- Inspect service logs: `sudo journalctl -u idbs -f`
 - Confirm request logs include status and request id
 - Confirm repeated refreshes do not crash the service
 - Confirm large image uploads are rejected above configured limit
 - Confirm rate limiting returns `429` under burst traffic
 
-## 8. Known Current Constraints
+## 9. Known Constraints
 
-- The app currently depends on CloudBase as the real backend data source.
-- If `USE_CLOUDBASE=false`, Node can start, but business APIs do not have a local SQL adapter yet.
-- This version is suitable for VPS + CloudBase hybrid deployment, not fully local standalone data mode.
+- WeChat cannot recall/delete already-sent public-account messages through a general API.
+- Daily report push uses a new message to replace yesterday's attention focus.
+- If using an external PostgreSQL instance, update `DATABASE_URL` and `PGSSL`, then restart `idbs`.

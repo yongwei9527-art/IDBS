@@ -35,7 +35,7 @@ require_root() {
 install_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
-  apt-get install -y curl ca-certificates gnupg nginx postgresql-client rsync
+  apt-get install -y curl ca-certificates gnupg nginx openssl postgresql postgresql-client rsync
   if ! command -v node >/dev/null 2>&1; then
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
     apt-get install -y nodejs
@@ -62,6 +62,7 @@ sync_app() {
 
 ensure_env() {
   if [ ! -f "$ENV_FILE" ]; then
+    DB_PASSWORD="$(openssl rand -hex 16)"
     cat > "$ENV_FILE" <<EOF
 PORT=$PORT
 ADMIN_PASSWORD=change-me
@@ -71,13 +72,54 @@ WECHAT_APP_ID=
 WECHAT_APP_SECRET=
 WECHAT_ADMIN_OPENIDS=
 UPLOAD_DIR=$APP_UPLOADS
-DATABASE_URL=postgresql://idbs_user:your-password@127.0.0.1:5432/idbs
+DATABASE_URL=postgresql://idbs_user:${DB_PASSWORD}@127.0.0.1:5432/idbs
 PGSSL=false
 CORS_ORIGIN=https://your-domain.com
 EOF
   fi
   chown "$APP_USER:$APP_GROUP" "$ENV_FILE"
   chmod 600 "$ENV_FILE"
+}
+
+get_env_value() {
+  grep -E "^$1=" "$ENV_FILE" | tail -n 1 | cut -d '=' -f 2-
+}
+
+ensure_local_database() {
+  local database_url db_password
+  database_url="$(get_env_value DATABASE_URL)"
+
+  case "$database_url" in
+    postgresql://idbs_user:*@127.0.0.1:5432/idbs|postgres://idbs_user:*@127.0.0.1:5432/idbs)
+      db_password="${database_url#*://idbs_user:}"
+      db_password="${db_password%@127.0.0.1:5432/idbs}"
+      ;;
+    *)
+      log "Skipping local PostgreSQL setup because DATABASE_URL is not the default local idbs database."
+      return 0
+      ;;
+  esac
+
+  systemctl enable postgresql
+  systemctl start postgresql
+
+  if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='idbs_user'" | grep -q 1; then
+    sudo -u postgres psql -c "CREATE USER idbs_user WITH PASSWORD '${db_password}';"
+  else
+    sudo -u postgres psql -c "ALTER USER idbs_user WITH PASSWORD '${db_password}';"
+  fi
+
+  if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='idbs'" | grep -q 1; then
+    sudo -u postgres createdb -O idbs_user idbs
+  fi
+
+  sudo -u postgres psql -d idbs -c "GRANT ALL PRIVILEGES ON DATABASE idbs TO idbs_user;"
+  sudo -u postgres psql -d idbs -f "$APP_CURRENT/sql/schema.sql"
+  sudo -u postgres psql -d idbs -c "GRANT ALL ON SCHEMA public TO idbs_user;"
+  sudo -u postgres psql -d idbs -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO idbs_user;"
+  sudo -u postgres psql -d idbs -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO idbs_user;"
+  sudo -u postgres psql -d idbs -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO idbs_user;"
+  sudo -u postgres psql -d idbs -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO idbs_user;"
 }
 
 install_service() {
@@ -137,12 +179,14 @@ EOF
 
 main() {
   require_root
-  need_cmd rsync
   install_packages
+  need_cmd rsync
   ensure_user
   sync_app
   ensure_env
   npm --prefix "$APP_CURRENT" install --omit=dev
+  chown -R "$APP_USER:$APP_GROUP" "$APP_CURRENT"
+  ensure_local_database
   install_service
   install_nginx
   systemctl restart "$APP_NAME"

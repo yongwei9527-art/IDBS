@@ -1,4 +1,4 @@
--- IDBS schema for Tencent CloudBase SQL PostgreSQL
+-- IDBS schema for PostgreSQL
 -- Run this in schema public.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
