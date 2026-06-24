@@ -1,6 +1,6 @@
-# Rental System VPS Deployment
+# IDBS VPS Deployment
 
-This project can run on a VPS as a standalone Node.js service.
+IDBS can run on a VPS as a standalone Node.js service.
 
 Before deploying or using this project, read [DISCLAIMER.md](./DISCLAIMER.md).
 
@@ -36,7 +36,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/sc
 Optional environment overrides:
 
 ```bash
-REPO_URL=https://github.com/yongwei9527-art/IDBS.git BRANCH=main SRC_DIR=/var/www/rental-system-src bash -c "$(curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install-vps.sh)"
+REPO_URL=https://github.com/yongwei9527-art/IDBS.git BRANCH=main SRC_DIR=/var/www/idbs-src bash -c "$(curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install-vps.sh)"
 ```
 
 ### 2. Manual upload alternative
@@ -44,13 +44,13 @@ REPO_URL=https://github.com/yongwei9527-art/IDBS.git BRANCH=main SRC_DIR=/var/ww
 Copy the project to your VPS, for example:
 
 ```bash
-scp -r ./Rental-System user@your-server:/var/www/rental-system-src
+scp -r ./IDBS user@your-server:/var/www/idbs-src
 ```
 
 Then run the deployment script:
 
 ```bash
-cd /var/www/rental-system-src
+cd /var/www/idbs-src
 chmod +x scripts/deploy-ubuntu.sh
 ./scripts/deploy-ubuntu.sh
 ```
@@ -58,8 +58,8 @@ chmod +x scripts/deploy-ubuntu.sh
 This script will:
 
 - install `nginx` and `nodejs`
-- copy the app into `/var/www/rental-system/current`
-- create `/var/www/rental-system/shared/.env`
+- copy the app into `/var/www/idbs/current`
+- create `/var/www/idbs/shared/.env`
 - install a `systemd` service
 - install an `nginx` site config
 
@@ -68,7 +68,7 @@ This script will:
 Edit:
 
 ```bash
-sudo nano /var/www/rental-system/shared/.env
+sudo nano /var/www/idbs/shared/.env
 ```
 
 Suggested configuration:
@@ -81,7 +81,7 @@ WECHAT_TOKEN=your-wechat-callback-token
 WECHAT_APP_ID=your-wechat-official-account-appid
 WECHAT_APP_SECRET=your-wechat-official-account-secret
 WECHAT_ADMIN_OPENIDS=openid_a,openid_b
-UPLOAD_DIR=/var/www/rental-system/uploads
+UPLOAD_DIR=/var/www/idbs/uploads
 USE_CLOUDBASE=true
 CLOUDBASE_ENV_ID=your-cloudbase-env-id
 CLOUDBASE_REGION=ap-shanghai
@@ -104,8 +104,8 @@ sql/migrations/2026-06-24_wechat_security.sql
 ### 5. Restart the service
 
 ```bash
-sudo systemctl restart rental-system
-sudo systemctl status rental-system
+sudo systemctl restart idbs
+sudo systemctl status idbs
 ```
 
 ### 6. Verify
@@ -118,8 +118,8 @@ npm run smoke -- http://127.0.0.1:3000
 
 ## systemd And Nginx Files
 
-- Service template: `deploy/rental-system.service`
-- Nginx config: `deploy/nginx.rental-system.conf`
+- Service template: `deploy/idbs.service`
+- Nginx config: `deploy/nginx.idbs.conf`
 
 ## Frontend Config
 
@@ -145,13 +145,13 @@ This means:
 View service logs:
 
 ```bash
-sudo journalctl -u rental-system -f
+sudo journalctl -u idbs -f
 ```
 
 Restart service:
 
 ```bash
-sudo systemctl restart rental-system
+sudo systemctl restart idbs
 ```
 
 Reload nginx:

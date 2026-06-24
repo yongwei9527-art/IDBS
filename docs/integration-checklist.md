@@ -5,7 +5,7 @@ This checklist is for VPS deployment, frontend/backend联调, smoke verification
 ## 1. Server Readiness
 
 - Confirm service is running:
-  - `sudo systemctl status rental-system`
+  - `sudo systemctl status idbs`
 - Confirm reverse proxy is healthy:
   - `sudo nginx -t`
   - `sudo systemctl status nginx`
@@ -24,7 +24,7 @@ Required production values:
 PORT=3000
 ADMIN_PASSWORD=<strong-password>
 TOKEN_SECRET=<long-random-secret>
-UPLOAD_DIR=/var/www/rental-system/uploads
+UPLOAD_DIR=/var/www/idbs/uploads
 USE_CLOUDBASE=true
 CLOUDBASE_ENV_ID=<cloudbase-env-id>
 CLOUDBASE_REGION=ap-shanghai
@@ -91,7 +91,7 @@ Recommended requests:
 - `GET /api/admin/bookings`
 - `GET /api/admin/statistics/usage`
 
-Use the contract in [api-contract.md](/E:/Rental-System/docs/api-contract.md:1).
+Use the contract in [api-contract.md](./api-contract.md).
 
 ## 6. Security Checks
 
@@ -105,7 +105,7 @@ Use the contract in [api-contract.md](/E:/Rental-System/docs/api-contract.md:1).
 ## 7. Stability Checks
 
 - Inspect service logs:
-  - `sudo journalctl -u rental-system -f`
+  - `sudo journalctl -u idbs -f`
 - Confirm request logs include status and request id
 - Confirm repeated refreshes do not crash the service
 - Confirm large image uploads are rejected above configured limit

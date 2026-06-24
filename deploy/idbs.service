@@ -1,0 +1,18 @@
+[Unit]
+Description=IDBS API
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/idbs/current
+EnvironmentFile=/var/www/idbs/shared/.env
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=5
+User=www-data
+Group=www-data
+StandardOutput=append:/var/log/idbs/app.log
+StandardError=append:/var/log/idbs/error.log
+
+[Install]
+WantedBy=multi-user.target

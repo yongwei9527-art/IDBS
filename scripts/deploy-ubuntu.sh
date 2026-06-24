@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="rental-system"
+APP_NAME="idbs"
 APP_ROOT="/var/www/${APP_NAME}"
 CURRENT_DIR="${APP_ROOT}/current"
 SHARED_DIR="${APP_ROOT}/shared"
@@ -52,14 +52,14 @@ else
 fi
 
 echo "[7/8] Installing systemd service"
-sudo cp deploy/rental-system.service "/etc/systemd/system/${SERVICE_NAME}"
-sudo sed -i "s|/var/www/rental-system|${APP_ROOT}|g" "/etc/systemd/system/${SERVICE_NAME}"
+sudo cp deploy/idbs.service "/etc/systemd/system/${SERVICE_NAME}"
+sudo sed -i "s|/var/www/idbs|${APP_ROOT}|g" "/etc/systemd/system/${SERVICE_NAME}"
 sudo systemctl daemon-reload
 sudo systemctl enable "${SERVICE_NAME}"
 sudo systemctl restart "${SERVICE_NAME}"
 
 echo "[8/8] Installing nginx config"
-sudo cp deploy/nginx.rental-system.conf "/etc/nginx/sites-available/${APP_NAME}"
+sudo cp deploy/nginx.idbs.conf "/etc/nginx/sites-available/${APP_NAME}"
 sudo ln -sf "/etc/nginx/sites-available/${APP_NAME}" "/etc/nginx/sites-enabled/${APP_NAME}"
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t

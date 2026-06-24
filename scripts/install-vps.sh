@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/yongwei9527-art/IDBS.git}"
-SRC_DIR="${SRC_DIR:-/var/www/rental-system-src}"
+SRC_DIR="${SRC_DIR:-/var/www/idbs-src}"
 BRANCH="${BRANCH:-main}"
 
 echo "[1/4] Installing bootstrap packages"
