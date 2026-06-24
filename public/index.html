@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="实验室设备预约系统，支持设备查询、预约、借还和后台管理">
+  <title>设备列表</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main>
+  <section class="hero">
+    <h2>设备总览</h2>
+    <p class="muted">统一查看设备状态、当前位置和可预约情况，让用户操作和管理员联调都更顺手。</p>
+    <div class="hero-meta" id="hero-meta"></div>
+    <div class="hero-actions">
+      <a class="badge info" href="reserve.html">快速预约</a>
+      <a class="badge success" href="my.html">查看我的记录</a>
+      <a class="badge" href="admin.html">进入管理后台</a>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h3>筛选设备</h3>
+        <p class="muted">部署模式：<span id="deploy-mode">-</span></p>
+      </div>
+    </div>
+    <div class="toolbar">
+      <div>
+        <label for="keyword">关键词</label>
+        <input id="keyword" placeholder="输入设备名、编号、位置">
+      </div>
+      <div>
+        <label for="status">状态</label>
+        <select id="status">
+          <option value="">全部状态</option>
+          <option value="available">可预约</option>
+          <option value="in_use">使用中</option>
+          <option value="maintenance">维修中</option>
+          <option value="disabled">停用</option>
+          <option value="abnormal_pending">异常待处理</option>
+        </select>
+      </div>
+      <div class="actions">
+        <button id="search-btn">查询</button>
+        <button id="reset-btn" class="secondary">重置</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="summary" class="kpi"></section>
+
+  <section class="panel-grid">
+    <article class="card soft-panel">
+      <div class="section-head">
+        <div>
+          <h3>推荐操作顺序</h3>
+          <p class="muted">适合作为前后端联调的页面流转路径。</p>
+        </div>
+      </div>
+      <ol class="list-plain">
+        <li>确认当前角色识别是否正确</li>
+        <li>浏览设备详情与状态标签</li>
+        <li>提交预约并完成审核</li>
+        <li>开始使用、上传归还照片并查看统计</li>
+      </ol>
+    </article>
+    <article class="card soft-panel">
+      <div class="section-head">
+        <div>
+          <h3>当前身份</h3>
+          <p class="muted" id="role-copy">未登录时仅展示公共设备信息。</p>
+        </div>
+      </div>
+      <div class="actions" id="role-actions"></div>
+    </article>
+  </section>
+
+  <section id="devices" class="grid"></section>
+</main>
+
+<script src="/js/cloudbase.full.js"></script>
+<script src="js/config.js"></script>
+<script src="js/api.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/common-header.js"></script>
+<script>
+const deployMode = document.getElementById('deploy-mode');
+const keywordInput = document.getElementById('keyword');
+const statusInput = document.getElementById('status');
+const devicesEl = document.getElementById('devices');
+const summaryEl = document.getElementById('summary');
+const heroMetaEl = document.getElementById('hero-meta');
+const roleCopyEl = document.getElementById('role-copy');
+const roleActionsEl = document.getElementById('role-actions');
+
+deployMode.textContent = (window.APP_CONFIG && window.APP_CONFIG.useCloudBase) ? 'CloudBase 函数直连' : 'VPS / HTTP API';
+heroMetaEl.innerHTML = `
+  <span class="badge info">${isLoggedIn() ? '已登录' : '访客模式'}</span>
+  <span class="badge ${isCurrentUserAdmin() ? 'warn' : 'success'}">${isCurrentUserAdmin() ? '管理员视角' : '用户视角'}</span>
+`;
+roleCopyEl.textContent = isCurrentUserAdmin()
+  ? '你当前是管理员身份，可以直接进入后台处理设备、审核和统计。'
+  : (isLoggedIn() ? '你当前是普通用户身份，可以直接预约、查看记录和提交归还。' : '你当前未登录，可先浏览设备，再决定是否登录。');
+roleActionsEl.innerHTML = isCurrentUserAdmin()
+  ? '<a href="admin.html">进入管理后台</a><a href="my.html">查看用户闭环</a>'
+  : (isLoggedIn() ? '<a href="reserve.html">去预约设备</a><a href="my.html">查看我的记录</a>' : '<a href="login.html">前往登录</a><a href="register.html">创建账号</a>');
+
+function renderSummary(devices) {
+  const counts = {
+    total: devices.length,
+    available: devices.filter((item) => item.status === 'available').length,
+    inUse: devices.filter((item) => item.status === 'in_use').length,
+    abnormal: devices.filter((item) => item.status === 'abnormal_pending').length
+  };
+
+  summaryEl.innerHTML = `
+    <div class="card"><div class="metric-label">设备总数</div><div class="value">${counts.total}</div></div>
+    <div class="card"><div class="metric-label">可预约</div><div class="value">${counts.available}</div></div>
+    <div class="card"><div class="metric-label">使用中</div><div class="value">${counts.inUse}</div></div>
+    <div class="card"><div class="metric-label">异常待处理</div><div class="value">${counts.abnormal}</div></div>
+  `;
+}
+
+function renderDevices(devices) {
+  if (!devices.length) {
+    devicesEl.innerHTML = '<div class="card empty-state">当前没有匹配的设备记录。</div>';
+    return;
+  }
+
+  devicesEl.innerHTML = devices.map((device) => `
+    <article class="card stack">
+      <div class="section-head">
+        <div>
+          <h3>${escapeHtml(device.name)}</h3>
+          <p class="muted mono">${escapeHtml(device.device_code)}</p>
+        </div>
+        ${statusBadge(device.status)}
+      </div>
+      <p class="muted">位置：${escapeHtml(device.location || '未填写')}</p>
+      <p class="muted">负责人：${escapeHtml(device.manager || '未填写')}</p>
+      <p>${escapeHtml(device.description || '暂无设备说明')}</p>
+      <div class="actions">
+        <a href="device.html?device_code=${encodeURIComponent(device.device_code)}">查看详情</a>
+        <a href="reserve.html?device_code=${encodeURIComponent(device.device_code)}">发起预约</a>
+      </div>
+    </article>
+  `).join('');
+}
+
+async function loadDevices() {
+  setLoading(devicesEl, '正在加载设备...');
+  try {
+    const response = await callApi('listDevices', {
+      keyword: keywordInput.value.trim(),
+      status: statusInput.value
+    });
+    const devices = response.devices || response.list || [];
+    renderSummary(devices);
+    renderDevices(devices);
+  } catch (error) {
+    showPageMessage(devicesEl, 'danger', error.message);
+  }
+}
+
+document.getElementById('search-btn').addEventListener('click', loadDevices);
+document.getElementById('reset-btn').addEventListener('click', () => {
+  keywordInput.value = '';
+  statusInput.value = '';
+  loadDevices();
+});
+
+loadDevices();
+</script>
+</body>
+</html>

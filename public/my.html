@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>我的记录</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main>
+  <section class="hero">
+    <h2>我的预约与借还记录</h2>
+    <p class="muted">这里是联调最关键的用户闭环页面，可以完整覆盖预约、开始使用、归还和异常处理。</p>
+  </section>
+  <div class="actions"><button id="refresh-btn">刷新数据</button></div>
+  <section id="box"></section>
+</main>
+
+<script src="/js/cloudbase.full.js"></script>
+<script src="js/config.js"></script>
+<script src="js/api.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/common-header.js"></script>
+<script>
+function reservationTable(rows) {
+  if (!rows.length) return '<div class="empty-state">暂无预约记录。</div>';
+  return `
+    <div class="table-wrap">
+      <table>
+        <tr><th>设备</th><th>预约时段</th><th>状态</th><th>操作</th></tr>
+        ${rows.map((row) => `
+          <tr>
+            <td>${escapeHtml(row.device_name || '-')}<br><span class="muted mono">${escapeHtml(row.device_code || '-')}</span></td>
+            <td>${escapeHtml(fmtTime(row.start_time))}<br>${escapeHtml(fmtTime(row.end_time))}</td>
+            <td>${statusBadge(row.status)}</td>
+            <td>${row.status === 'approved' ? `<button onclick="startUse('${row.id}')">开始使用</button>` : '<span class="muted">无</span>'}</td>
+          </tr>
+        `).join('')}
+      </table>
+    </div>
+  `;
+}
+
+function returnForm(id) {
+  return `
+    <select id="cond_${id}">
+      <option value="normal">正常</option>
+      <option value="minor_issue">轻微异常</option>
+      <option value="damaged">设备损坏</option>
+      <option value="repair_needed">需要维修</option>
+    </select>
+    <textarea id="note_${id}" rows="2" placeholder="补充说明"></textarea>
+    <input id="photo_${id}" type="file" accept="image/*" multiple>
+    <button onclick="submitReturn('${id}')">提交归还</button>
+  `;
+}
+
+function borrowTable(rows) {
+  if (!rows.length) return '<div class="empty-state">暂无借用记录。</div>';
+  return `
+    <div class="table-wrap">
+      <table>
+        <tr><th>设备</th><th>开始 / 预计归还</th><th>状态</th><th>归还处理</th></tr>
+        ${rows.map((row) => `
+          <tr>
+            <td>${escapeHtml(row.device_name || '-')}<br><span class="muted mono">${escapeHtml(row.device_code || '-')}</span></td>
+            <td>${escapeHtml(fmtTime(row.borrow_time))}<br>${escapeHtml(fmtTime(row.expected_return_time))}</td>
+            <td>${statusBadge(row.status)}</td>
+            <td>${row.status === 'in_use' ? returnForm(row.id) : '<span class="muted">已结束</span>'}</td>
+          </tr>
+        `).join('')}
+      </table>
+    </div>
+  `;
+}
+
+async function load() {
+  if (!requireLogin()) return;
+  const box = document.getElementById('box');
+  setLoading(box, '正在加载个人记录...');
+  try {
+    const result = await callApi('myRecords');
+    box.innerHTML = `
+      <section class="card">
+        <h3>我的预约</h3>
+        ${reservationTable(result.reservations || [])}
+      </section>
+      <section class="card">
+        <h3>我的借用记录</h3>
+        ${borrowTable(result.borrows || [])}
+      </section>
+    `;
+  } catch (error) {
+    showPageMessage(box, 'danger', error.message);
+  }
+}
+
+async function startUse(id) {
+  try {
+    await callApi('startUse', { reservation_id: id });
+    load();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function submitReturn(id) {
+  try {
+    const input = document.getElementById(`photo_${id}`);
+    const files = [...(input.files || [])];
+    if (!files.length) throw new Error('请至少上传一张归还照片。');
+
+    const photos = [];
+    for (const file of files.slice(0, 5)) {
+      photos.push(await uploadPhoto(file, 'return-photos'));
+    }
+
+    await callApi('submitReturn', {
+      record_id: id,
+      return_condition: document.getElementById(`cond_${id}`).value,
+      return_note: document.getElementById(`note_${id}`).value.trim(),
+      return_photos: photos
+    });
+    load();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+document.getElementById('refresh-btn').addEventListener('click', load);
+load();
+</script>
+</body>
+</html>

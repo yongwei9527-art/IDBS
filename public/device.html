@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>设备详情</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main>
+  <section id="content"></section>
+</main>
+
+<script src="/js/cloudbase.full.js"></script>
+<script src="js/config.js"></script>
+<script src="js/api.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/common-header.js"></script>
+<script>
+async function load() {
+  const code = qs('device_code');
+  const container = document.getElementById('content');
+
+  if (!code) {
+    showPageMessage(container, 'danger', '缺少设备编号。');
+    return;
+  }
+
+  setLoading(container, '正在加载设备详情...');
+
+  try {
+    const result = await callApi('getDeviceDetail', { device_code: code });
+    const device = result.device;
+    const reservations = result.reservations || [];
+    const lastRecord = result.last_record;
+    const photos = [];
+
+    if (lastRecord && Array.isArray(lastRecord.return_photos)) {
+      for (const item of lastRecord.return_photos) {
+        photos.push(await renderImg(item));
+      }
+    } else if (device.last_return_photo) {
+      photos.push(await renderImg(device.last_return_photo));
+    }
+
+    container.innerHTML = `
+      <section class="hero">
+        <h2>${escapeHtml(device.name)}</h2>
+        <p class="muted">编号：<span class="mono">${escapeHtml(device.device_code)}</span> | 位置：${escapeHtml(device.location || '未填写')}</p>
+        <div class="hero-actions">
+          ${statusBadge(device.status)}
+          <a class="badge success" href="reserve.html?device_code=${encodeURIComponent(device.device_code)}">预约这台设备</a>
+        </div>
+      </section>
+
+      <section class="grid">
+        <article class="card stack">
+          <h3>基础信息</h3>
+          <p>负责人：${escapeHtml(device.manager || '未填写')}</p>
+          <p>设备说明：${escapeHtml(device.description || '暂无说明')}</p>
+          <p>使用提示：${escapeHtml(device.usage_notice || '暂无提示')}</p>
+        </article>
+        <article class="card stack">
+          <h3>最近一次归还</h3>
+          <p>归还人：${escapeHtml(device.last_return_user || '暂无')}</p>
+          <p>归还时间：${escapeHtml(fmtTime(device.last_return_time))}</p>
+          <p>归还状态：${escapeHtml(device.last_condition || '暂无')}</p>
+          <div>${photos.join('') || '<p class="muted">暂无归还照片</p>'}</div>
+        </article>
+      </section>
+
+      <section class="card">
+        <h3>未来占用时段</h3>
+        ${reservations.length ? `
+          <div class="table-wrap">
+            <table>
+              <tr><th>开始时间</th><th>结束时间</th><th>状态</th></tr>
+              ${reservations.map((reservation) => `
+                <tr>
+                  <td>${escapeHtml(fmtTime(reservation.start_time))}</td>
+                  <td>${escapeHtml(fmtTime(reservation.end_time))}</td>
+                  <td>${statusBadge(reservation.status)}</td>
+                </tr>
+              `).join('')}
+            </table>
+          </div>` : '<div class="empty-state">暂无未来预约记录。</div>'}
+      </section>
+    `;
+  } catch (error) {
+    showPageMessage(container, 'danger', error.message);
+  }
+}
+
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "name": "rental-system-vps",
+  "private": true,
+  "version": "1.0.0",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "build": "node -e \"console.log('No build step required')\"",
+    "smoke": "node scripts/smoke-test.js"
+  },
+  "dependencies": {
+    "@cloudbase/js-sdk": "^2.29.0",
+    "@cloudbase/node-sdk": "^4.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
+  }
+}

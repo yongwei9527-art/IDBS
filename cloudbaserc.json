@@ -1,0 +1,11 @@
+{
+  "envId": "lab-device-d3gquy8kkafef862e",
+  "functionRoot": "functions",
+  "functions": [
+    {
+      "name": "api",
+      "timeout": 20,
+      "runtime": "Nodejs18.15"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+node_modules/
+functions/*/node_modules/
+uploads/
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+*.log
+npm-debug.log*
+Thumbs.db
+.DS_Store

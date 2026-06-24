@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>用户注册</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main>
+  <section class="hero">
+    <h2>用户注册</h2>
+    <p class="muted">提交后需管理员审核，通过后才可以正式预约设备。</p>
+  </section>
+
+  <section class="card">
+    <div id="message"></div>
+    <div class="form-grid">
+      <div><label for="name">姓名</label><input id="name" placeholder="例如：张三"></div>
+      <div><label for="phone">手机号</label><input id="phone" inputmode="tel" placeholder="例如：13800000000"></div>
+      <div><label for="student_no">学号 / 工号</label><input id="student_no" placeholder="便于身份核验"></div>
+      <div><label for="group_name">课题组 / 部门</label><input id="group_name" placeholder="例如：实验室 A 组"></div>
+      <div><label for="email">邮箱</label><input id="email" type="email" placeholder="例如：name@example.com"></div>
+      <div><label for="password">密码</label><input id="password" type="password" placeholder="至少 6 位"></div>
+    </div>
+    <div class="actions">
+      <button id="register-btn">提交注册</button>
+      <a href="login.html">已有账号？去登录</a>
+    </div>
+  </section>
+</main>
+
+<script src="/js/cloudbase.full.js"></script>
+<script src="js/config.js"></script>
+<script src="js/api.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/common-header.js"></script>
+<script>
+async function registerUser() {
+  const messageEl = document.getElementById('message');
+  messageEl.innerHTML = '';
+
+  try {
+    const result = await callApi('registerUser', {
+      name: name.value.trim(),
+      phone: phone.value.trim(),
+      student_no: student_no.value.trim(),
+      group_name: group_name.value.trim(),
+      email: email.value.trim(),
+      password: password.value
+    });
+    showPageMessage(messageEl, 'success', result.message || '注册成功，请等待审核。');
+    setTimeout(() => { location.href = 'login.html'; }, 900);
+  } catch (error) {
+    showPageMessage(messageEl, 'danger', error.message);
+  }
+}
+
+document.getElementById('register-btn').addEventListener('click', registerUser);
+</script>
+</body>
+</html>

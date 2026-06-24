@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>发起预约</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main>
+  <section class="hero">
+    <h2>发起设备预约</h2>
+    <p class="muted">系统会自动校验时间冲突，待审核预约也会占用时间段。</p>
+  </section>
+
+  <section class="card">
+    <div id="message"></div>
+    <label for="device_code">设备编号</label>
+    <input id="device_code" class="mono" placeholder="例如：EQ-001">
+    <div class="form-grid">
+      <div>
+        <label for="start_time">开始时间</label>
+        <input id="start_time" type="datetime-local">
+      </div>
+      <div>
+        <label for="end_time">结束时间</label>
+        <input id="end_time" type="datetime-local">
+      </div>
+    </div>
+    <label for="purpose">使用目的</label>
+    <textarea id="purpose" rows="4" placeholder="请说明用途，方便管理员审核"></textarea>
+    <div class="actions">
+      <button id="submit-btn">提交预约</button>
+      <a href="index.html">返回设备列表</a>
+    </div>
+  </section>
+</main>
+
+<script src="/js/cloudbase.full.js"></script>
+<script src="js/config.js"></script>
+<script src="js/api.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/common-header.js"></script>
+<script>
+device_code.value = qs('device_code') || '';
+
+async function submitReserve() {
+  if (!requireLogin()) return;
+  const messageEl = document.getElementById('message');
+  messageEl.innerHTML = '';
+
+  try {
+    const result = await callApi('createReservation', {
+      device_code: device_code.value.trim(),
+      start_time: start_time.value,
+      end_time: end_time.value,
+      purpose: purpose.value.trim()
+    });
+    showPageMessage(messageEl, 'success', result.message || '预约已提交。');
+    setTimeout(() => { location.href = 'my.html'; }, 700);
+  } catch (error) {
+    showPageMessage(messageEl, 'danger', error.message);
+  }
+}
+
+document.getElementById('submit-btn').addEventListener('click', submitReserve);
+</script>
+</body>
+</html>
