@@ -418,6 +418,41 @@ tr:hover td { background: rgba(245, 249, 246, 0.82); }
   font: 14px/1.7 Consolas, "Courier New", monospace;
   color: var(--text);
 }
+.notice-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(41, 54, 48, 0.38);
+  backdrop-filter: blur(10px);
+}
+.notice-card {
+  width: min(560px, 100%);
+  border-radius: 28px;
+  padding: 26px;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(226, 207, 177, 0.42), transparent 32%),
+    linear-gradient(180deg, rgba(255,255,255,0.96), rgba(249,246,239,0.96));
+  border: 1px solid rgba(93, 127, 115, 0.12);
+  box-shadow: 0 24px 80px rgba(42, 59, 51, 0.24);
+}
+.notice-kicker {
+  color: var(--primary);
+  font-weight: 800;
+  letter-spacing: .12em;
+  font-size: 12px;
+}
+.notice-card h2 {
+  margin: 8px 0 12px;
+}
+.notice-content {
+  color: #4d5d56;
+  line-height: 1.8;
+  white-space: normal;
+  margin-bottom: 18px;
+}
 
 @media (max-width: 720px) {
   header { flex-direction: column; align-items: flex-start; }

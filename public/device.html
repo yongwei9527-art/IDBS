@@ -31,6 +31,7 @@ async function load() {
     const result = await callApi('getDeviceDetail', { device_code: code });
     const device = result.device;
     const reservations = result.reservations || [];
+    const currentBorrow = result.current_borrow || device.current_borrow;
     const lastRecord = result.last_record;
     const photos = [];
 
@@ -60,6 +61,15 @@ async function load() {
           <p>使用提示：${escapeHtml(device.usage_notice || '暂无提示')}</p>
         </article>
         <article class="card stack">
+          <h3>当前使用情况</h3>
+          ${currentBorrow ? `
+            <p>使用人：${escapeHtml(currentBorrow.user_name || '-')}</p>
+            <p>联系方式：${escapeHtml(currentBorrow.user_phone || '-')}</p>
+            <p>借出时间：${escapeHtml(fmtTime(currentBorrow.borrow_time))}</p>
+            <p>预计归还：${escapeHtml(fmtTime(currentBorrow.expected_return_time))}</p>
+          ` : '<p class="muted">当前无人使用。</p>'}
+        </article>
+        <article class="card stack">
           <h3>最近一次归还</h3>
           <p>归还人：${escapeHtml(device.last_return_user || '暂无')}</p>
           <p>归还时间：${escapeHtml(fmtTime(device.last_return_time))}</p>
@@ -73,9 +83,11 @@ async function load() {
         ${reservations.length ? `
           <div class="table-wrap">
             <table>
-              <tr><th>开始时间</th><th>结束时间</th><th>状态</th></tr>
+              <tr><th>预约人</th><th>联系方式</th><th>开始时间</th><th>结束时间</th><th>状态</th></tr>
               ${reservations.map((reservation) => `
                 <tr>
+                  <td>${escapeHtml(reservation.user_name || '-')}</td>
+                  <td>${escapeHtml(reservation.user_phone || '-')}</td>
                   <td>${escapeHtml(fmtTime(reservation.start_time))}</td>
                   <td>${escapeHtml(fmtTime(reservation.end_time))}</td>
                   <td>${statusBadge(reservation.status)}</td>

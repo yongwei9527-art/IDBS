@@ -21,6 +21,8 @@
 <script src="js/ui.js"></script>
 <script src="js/common-header.js"></script>
 <script>
+let requireReturnPhoto = true;
+
 function reservationTable(rows) {
   if (!rows.length) return '<div class="empty-state">暂无预约记录。</div>';
   return `
@@ -32,7 +34,10 @@ function reservationTable(rows) {
             <td>${escapeHtml(row.device_name || '-')}<br><span class="muted mono">${escapeHtml(row.device_code || '-')}</span></td>
             <td>${escapeHtml(fmtTime(row.start_time))}<br>${escapeHtml(fmtTime(row.end_time))}</td>
             <td>${statusBadge(row.status)}</td>
-            <td>${row.status === 'approved' ? `<button onclick="startUse('${row.id}')">开始使用</button>` : '<span class="muted">无</span>'}</td>
+            <td>
+              ${row.can_cancel ? `<button onclick="cancelReservation('${row.id}')">取消预约</button>` : ''}
+              ${row.status === 'approved' ? `<button onclick="startUse('${row.id}')">开始使用</button>` : '<span class="muted">无</span>'}
+            </td>
           </tr>
         `).join('')}
       </table>
@@ -49,6 +54,7 @@ function returnForm(id) {
       <option value="repair_needed">需要维修</option>
     </select>
     <textarea id="note_${id}" rows="2" placeholder="补充说明"></textarea>
+    <div class="field-help">${requireReturnPhoto ? '归还前必须上传设备状态图片。' : '管理员当前未强制要求上传图片，可按需上传。'}</div>
     <input id="photo_${id}" type="file" accept="image/*" multiple>
     <button onclick="submitReturn('${id}')">提交归还</button>
   `;
@@ -79,6 +85,7 @@ async function load() {
   setLoading(box, '正在加载个人记录...');
   try {
     const result = await callApi('myRecords');
+    requireReturnPhoto = result.require_return_photo !== false;
     box.innerHTML = `
       <section class="card">
         <h3>我的预约</h3>
@@ -103,11 +110,23 @@ async function startUse(id) {
   }
 }
 
+async function cancelReservation(id) {
+  if (!confirm('确认取消这条预约吗？预约当天将无法取消。')) return;
+  try {
+    await callRestApi(`/bookings/${encodeURIComponent(id)}/cancel`, {
+      method: 'PATCH'
+    });
+    load();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
 async function submitReturn(id) {
   try {
     const input = document.getElementById(`photo_${id}`);
     const files = [...(input.files || [])];
-    if (!files.length) throw new Error('请至少上传一张归还照片。');
+    if (requireReturnPhoto && !files.length) throw new Error('请至少上传一张归还照片。');
 
     const photos = [];
     for (const file of files.slice(0, 5)) {

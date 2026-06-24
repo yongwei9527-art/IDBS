@@ -16,11 +16,9 @@
   <section class="card">
     <div id="message"></div>
     <div class="form-grid">
-      <div><label for="name">姓名</label><input id="name" placeholder="例如：张三"></div>
-      <div><label for="phone">手机号</label><input id="phone" inputmode="tel" placeholder="例如：13800000000"></div>
-      <div><label for="student_no">学号 / 工号</label><input id="student_no" placeholder="便于身份核验"></div>
-      <div><label for="group_name">课题组 / 部门</label><input id="group_name" placeholder="例如：实验室 A 组"></div>
-      <div><label for="email">邮箱</label><input id="email" type="email" placeholder="例如：name@example.com"></div>
+      <div><label for="name">姓名</label><input id="name" placeholder="请输入姓名"></div>
+      <div><label for="phone">联系方式</label><input id="phone" inputmode="tel" placeholder="请输入手机号"></div>
+      <div><label for="student_no">学号</label><input id="student_no" placeholder="请输入学号"></div>
       <div><label for="password">密码</label><input id="password" type="password" placeholder="至少 6 位"></div>
     </div>
     <div class="actions">
@@ -44,8 +42,6 @@ async function registerUser() {
       name: name.value.trim(),
       phone: phone.value.trim(),
       student_no: student_no.value.trim(),
-      group_name: group_name.value.trim(),
-      email: email.value.trim(),
       password: password.value
     });
     showPageMessage(messageEl, 'success', result.message || '注册成功，请等待审核。');

@@ -37,7 +37,15 @@ function createRentalService(options) {
     captcha_expire_minutes: 3,
     captcha_hourly_limit: 3,
     openid_daily_register_limit: 1,
-    enable_image_captcha: 0
+    enable_image_captcha: 0,
+    require_return_photo: 1,
+    public_show_reserver_name: 1,
+    public_show_reserver_phone: 1,
+    public_show_reserver_student_no: 0,
+    system_notice_enabled: 1,
+    system_notice_title: '使用注意事项',
+    system_notice_content: '请按预约时间使用设备，归还前确认设备状态并按要求提交归还信息。',
+    system_notice_version: '1'
   };
 
   const DEFAULT_REPORT_CONFIG = {
@@ -45,6 +53,12 @@ function createRentalService(options) {
     admin_report_hour: 9,
     admin_report_minute: 0,
     admin_report_timezone: 'Asia/Shanghai'
+  };
+  const DEFAULT_WECHAT_CONFIG = {
+    wechat_token: wechatToken,
+    wechat_app_id: wechatAppId,
+    wechat_app_secret: wechatAppSecret,
+    wechat_admin_openids: wechatAdminOpenids
   };
   const MAX_REPORT_PUSH_ROWS = 25;
   const MAX_WECHAT_TEXT_LENGTH = 1800;
@@ -241,7 +255,15 @@ function createRentalService(options) {
       captcha_expire_minutes: Number(config.captcha_expire_minutes) || DEFAULT_SECURITY_CONFIG.captcha_expire_minutes,
       captcha_hourly_limit: Number(config.captcha_hourly_limit) || DEFAULT_SECURITY_CONFIG.captcha_hourly_limit,
       openid_daily_register_limit: Number(config.openid_daily_register_limit) || DEFAULT_SECURITY_CONFIG.openid_daily_register_limit,
-      enable_image_captcha: parseBoolean(config.enable_image_captcha)
+      enable_image_captcha: parseBoolean(config.enable_image_captcha),
+      require_return_photo: parseBoolean(config.require_return_photo),
+      public_show_reserver_name: parseBoolean(config.public_show_reserver_name),
+      public_show_reserver_phone: parseBoolean(config.public_show_reserver_phone),
+      public_show_reserver_student_no: parseBoolean(config.public_show_reserver_student_no),
+      system_notice_enabled: parseBoolean(config.system_notice_enabled),
+      system_notice_title: String(config.system_notice_title || DEFAULT_SECURITY_CONFIG.system_notice_title),
+      system_notice_content: String(config.system_notice_content || DEFAULT_SECURITY_CONFIG.system_notice_content),
+      system_notice_version: String(config.system_notice_version || DEFAULT_SECURITY_CONFIG.system_notice_version)
     };
   }
 
@@ -255,6 +277,41 @@ function createRentalService(options) {
       admin_report_minute: Math.min(59, Math.max(0, Number(config.admin_report_minute) || DEFAULT_REPORT_CONFIG.admin_report_minute)),
       admin_report_timezone: String(config.admin_report_timezone || DEFAULT_REPORT_CONFIG.admin_report_timezone)
     };
+  }
+
+  async function getWechatConfig() {
+    const rows = await query('select config_key, config_value from system_configs');
+    const config = { ...DEFAULT_WECHAT_CONFIG };
+    for (const row of rows || []) config[row.config_key] = row.config_value;
+    return {
+      wechat_token: String(config.wechat_token || DEFAULT_WECHAT_CONFIG.wechat_token || ''),
+      wechat_app_id: String(config.wechat_app_id || DEFAULT_WECHAT_CONFIG.wechat_app_id || ''),
+      wechat_app_secret: String(config.wechat_app_secret || DEFAULT_WECHAT_CONFIG.wechat_app_secret || ''),
+      wechat_admin_openids: String(config.wechat_admin_openids || DEFAULT_WECHAT_CONFIG.wechat_admin_openids || '')
+    };
+  }
+
+  async function getAdminAuthConfig() {
+    const rows = await query('select config_key, config_value from system_configs');
+    const config = {};
+    for (const row of rows || []) config[row.config_key] = row.config_value;
+    return {
+      admin_password_hash: String(config.admin_password_hash || ''),
+      admin_password_salt: String(config.admin_password_salt || ''),
+      has_custom_admin_password: Boolean(config.admin_password_hash && config.admin_password_salt)
+    };
+  }
+
+  async function getSystemNotice() {
+    const config = await getSecurityConfig();
+    return ok({
+      notice: {
+        enabled: config.system_notice_enabled,
+        title: config.system_notice_title,
+        content: config.system_notice_content,
+        version: config.system_notice_version
+      }
+    });
   }
 
   async function saveSystemConfig(configKey, configValue, description = '') {
@@ -312,6 +369,7 @@ function createRentalService(options) {
       ...row,
       user_name: users[row.user_id]?.name || '',
       user_phone: users[row.user_id]?.phone || '',
+      user_student_no: users[row.user_id]?.student_no || '',
       device_code: devices[row.device_id]?.device_code || '',
       device_name: devices[row.device_id]?.name || ''
     }));
@@ -324,9 +382,61 @@ function createRentalService(options) {
       ...row,
       user_name: users[row.user_id]?.name || '',
       user_phone: users[row.user_id]?.phone || '',
+      user_student_no: users[row.user_id]?.student_no || '',
       device_code: devices[row.device_id]?.device_code || '',
       device_name: devices[row.device_id]?.name || ''
     }));
+  }
+
+  async function getReservationVisibilityConfig() {
+    const config = await getSecurityConfig();
+    return {
+      showName: config.public_show_reserver_name,
+      showPhone: config.public_show_reserver_phone,
+      showStudentNo: config.public_show_reserver_student_no
+    };
+  }
+
+  function applyReservationVisibility(row, visibility, forceVisible = false) {
+    if (!row) return null;
+    const visible = forceVisible ? { showName: true, showPhone: true, showStudentNo: true } : visibility;
+    return {
+      ...row,
+      user_name: visible.showName ? row.user_name : '',
+      user_phone: visible.showPhone ? row.user_phone : '',
+      user_student_no: visible.showStudentNo ? row.user_student_no : ''
+    };
+  }
+
+  function canCancelReservation(row, timeZone = 'Asia/Shanghai') {
+    if (!row || !['pending', 'approved'].includes(row.status)) return false;
+    const today = formatDateForTimezone(new Date(), timeZone);
+    const reservationDay = formatDateForTimezone(new Date(row.start_time), timeZone);
+    return reservationDay > today;
+  }
+
+  async function addReservationSnapshotsToDevices(devices, options = {}) {
+    const visibility = options.fullAccess
+      ? { showName: true, showPhone: true, showStudentNo: true }
+      : await getReservationVisibilityConfig();
+    const rows = [];
+    const currentStatuses = ['in_use', 'abnormal_pending', 'overdue'];
+    const referenceTime = nowIso();
+    for (const device of devices || []) {
+      const currentRows = await query('select * from borrow_records where device_id = $1 and status = any($2) order by borrow_time desc limit 1', [device.id, currentStatuses]);
+      const reservationRows = await query('select * from reservations where device_id = $1 and status = any($2) and end_time >= $3 order by start_time asc limit 1', [device.id, activeReservationStatus, referenceTime]);
+      const lastRows = await query('select * from borrow_records where device_id = $1 and return_time is not null order by return_time desc limit 1', [device.id]);
+      const namedCurrent = await addNamesToBorrowRows(currentRows || []);
+      const namedReservations = await addNamesToReservations(reservationRows || []);
+      const namedLast = await addNamesToBorrowRows(lastRows || []);
+      rows.push({
+        ...device,
+        current_borrow: applyReservationVisibility(namedCurrent[0], visibility, options.fullAccess),
+        next_reservation: applyReservationVisibility(namedReservations[0], visibility, options.fullAccess),
+        last_record: applyReservationVisibility(namedLast[0], visibility, options.fullAccess)
+      });
+    }
+    return rows;
   }
 
   function formatDateForTimezone(date, timeZone = 'Asia/Shanghai') {
@@ -404,8 +514,15 @@ function createRentalService(options) {
 
   async function adminLogin(payload) {
     const password = assertText(payload.password, 'password', 100);
-    if (!adminPassword) return fail('ADMIN_PASSWORD is not configured', 500, 5000);
-    if (password !== adminPassword) return fail('Invalid admin password', 401, 1001);
+    const adminAuth = await getAdminAuthConfig();
+    if (adminAuth.has_custom_admin_password) {
+      if (hashPassword(password, adminAuth.admin_password_salt) !== adminAuth.admin_password_hash) {
+        return fail('Invalid admin password', 401, 1001);
+      }
+    } else {
+      if (!adminPassword) return fail('ADMIN_PASSWORD is not configured', 500, 5000);
+      if (password !== adminPassword) return fail('Invalid admin password', 401, 1001);
+    }
     const token = makeToken({ role: 'admin', name: 'admin' }, 7);
     return ok({ token });
   }
@@ -414,7 +531,7 @@ function createRentalService(options) {
     const name = assertText(payload.name, 'name', 50);
     const phone = assertPhone(payload.phone);
     const password = assertPassword(payload.password);
-    const studentNo = String(payload.student_no || '').trim();
+    const studentNo = assertText(payload.student_no, 'student_no', 50);
     const groupName = String(payload.group_name || '').trim();
     const email = assertOptionalEmail(payload.email);
     const exists = await queryOne('select id from users where phone = $1 limit 1', [phone]);
@@ -507,6 +624,7 @@ function createRentalService(options) {
     const tempCode = assertText(payload.temp_code || payload.tempCode, 'temp_code', 20);
     const name = assertText(payload.name, 'name', 50);
     const studentNo = assertText(payload.student_no || payload.studentNo, 'student_no', 50);
+    const phone = assertPhone(payload.phone);
     const challenge = challengeStore.get(tempCode);
     if (!challenge || !challenge.openid || challenge.expire_at <= Date.now()) {
       if (challenge && challenge.expire_at <= Date.now()) challengeStore.delete(tempCode);
@@ -523,8 +641,36 @@ function createRentalService(options) {
     if (existingByOpenId) {
       return fail('This WeChat account is already bound to another user', 409, 3001);
     }
-    const user = await queryOne('select * from users where name = $1 and student_no = $2 limit 1', [name, studentNo]);
-    if (!user) return fail('No matching user found, please contact the administrator', 404, 3004);
+    let user = await queryOne('select * from users where name = $1 and student_no = $2 limit 1', [name, studentNo]);
+    if (!user) {
+      const phoneExists = await queryOne('select id from users where phone = $1 limit 1', [phone]);
+      if (phoneExists) return fail('Phone number already registered', 409, 3001);
+      const salt = crypto.randomBytes(8).toString('hex');
+      user = {
+        id: uuid(),
+        name,
+        phone,
+        student_no: studentNo,
+        group_name: '',
+        email: '',
+        password_hash: hashPassword(crypto.randomBytes(16).toString('hex'), salt),
+        password_salt: salt,
+        role: 'user',
+        status: 'pending',
+        is_banned: false,
+        wechat_openid: challenge.openid,
+        wechat_nickname: challenge.nickname || '',
+        created_at: nowIso(),
+        updated_at: nowIso()
+      };
+      await query('insert into users (id, name, phone, student_no, group_name, email, password_hash, password_salt, role, status, is_banned, wechat_openid, wechat_nickname, created_at, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)', [
+        user.id, user.name, user.phone, user.student_no, user.group_name, user.email, user.password_hash, user.password_salt, user.role, user.status, user.is_banned, user.wechat_openid, user.wechat_nickname, user.created_at, user.updated_at
+      ]);
+      challenge.used_at = Date.now();
+      challengeStore.delete(tempCode);
+      await recordUserEvent({ user_id: user.id, user_name: user.name, phone: user.phone, wechat_openid: challenge.openid, event_type: 'register', device_type: context.deviceType || 'wechat', client_key: getClientKey(context), ip_address: context.ip || '', remark: `Registered and bound through challenge ${tempCode}` });
+      return ok({ message: 'Registered and bound successfully, waiting for administrator approval', need_review: true, user: safeUser(user) });
+    }
     if (user.is_banned) return fail('This account has been banned', 403, 1003);
     if (user.wechat_openid && user.wechat_openid !== challenge.openid) {
       return fail('This account is already bound to another WeChat account', 409, 3001);
@@ -534,6 +680,9 @@ function createRentalService(options) {
     challengeStore.delete(tempCode);
     const boundUser = { ...user, wechat_openid: challenge.openid, wechat_nickname: challenge.nickname || user.wechat_nickname || '' };
     await recordUserEvent({ user_id: user.id, user_name: user.name, phone: user.phone, wechat_openid: challenge.openid, event_type: 'wechat_bind', device_type: context.deviceType || 'wechat', client_key: getClientKey(context), ip_address: context.ip || '', remark: `Bound through challenge ${tempCode}` });
+    if (boundUser.status !== 'active') {
+      return ok({ message: 'WeChat bound successfully, waiting for administrator approval', need_review: true, user: safeUser(boundUser) });
+    }
     return finalizeUserLogin(boundUser, { ...context, remark: 'wechat_bind_and_login', deviceType: context.deviceType || 'wechat' });
   }
 
@@ -575,20 +724,28 @@ function createRentalService(options) {
     return ok({ user: safeUser(user) });
   }
 
-  async function listDevices(query = {}) {
+  async function listDevices(filters = {}) {
     let sql = 'select * from devices';
     const params = [];
     const clauses = [];
-    if (query.status) { params.push(String(query.status)); clauses.push(`status = $${params.length}`); }
-    if (query.category) { params.push(String(query.category)); clauses.push(`category = $${params.length}`); }
+    if (filters.status) { params.push(String(filters.status)); clauses.push(`status = $${params.length}`); }
+    if (filters.category) { params.push(String(filters.category)); clauses.push(`category = $${params.length}`); }
     if (clauses.length) sql += ` where ${clauses.join(' and ')}`;
     sql += ' order by created_at desc';
     let rows = await query(sql, params);
-    if (query.keyword) {
-      const keyword = String(query.keyword).trim().toLowerCase();
+    if (filters.keyword) {
+      const keyword = String(filters.keyword).trim().toLowerCase();
       rows = rows.filter((row) => [row.device_code, row.name, row.location, row.manager, row.category].filter(Boolean).some((value) => String(value).toLowerCase().includes(keyword)));
     }
-    return ok({ list: rows, total: rows.length });
+    const list = await addReservationSnapshotsToDevices(rows, { fullAccess: false });
+    return ok({ list, total: list.length });
+  }
+
+  async function adminListDevices(filters = {}, token) {
+    await requireAdmin(token);
+    const result = await listDevices(filters);
+    const list = await addReservationSnapshotsToDevices(result.list || [], { fullAccess: true });
+    return ok({ list, devices: list, total: list.length });
   }
 
   async function getDeviceDetail(params = {}) {
@@ -596,8 +753,16 @@ function createRentalService(options) {
     const device = await getDeviceByCode(code);
     if (!device) return fail('Device not found', 404, 3004);
     const reservations = await query('select * from reservations where device_id = $1 and status = any($2) and end_time >= $3 order by start_time asc', [device.id, activeReservationStatus, nowIso()]);
-    const borrows = await query('select * from borrow_records where device_id = $1 and status = any($2) order by return_time desc limit 1', [device.id, ['returned', 'abnormal_pending']]);
-    return ok({ device, reservations: reservations || [], last_record: borrows && borrows[0] ? borrows[0] : null });
+    const visibility = await getReservationVisibilityConfig();
+    const deviceList = await addReservationSnapshotsToDevices([device], { fullAccess: false });
+    const namedReservations = await addNamesToReservations(reservations || []);
+    return ok({
+      device: deviceList[0] || device,
+      reservations: namedReservations.map((row) => applyReservationVisibility(row, visibility)),
+      current_borrow: deviceList[0]?.current_borrow || null,
+      next_reservation: deviceList[0]?.next_reservation || null,
+      last_record: deviceList[0]?.last_record || null
+    });
   }
 
   async function createReservation(payload, token) {
@@ -612,6 +777,10 @@ function createRentalService(options) {
     if (!device.allow_reservation || ['maintenance', 'disabled', 'abnormal_pending'].includes(device.status)) {
       return fail('Device is not reservable', 409, 3001);
     }
+    const unfinishedRecord = await queryOne('select id from borrow_records where user_id = $1 and status = any($2) limit 1', [user.id, ['in_use', 'abnormal_pending', 'overdue']]);
+    if (unfinishedRecord) {
+      return fail('Please finish the current device usage before creating another reservation', 409, 3001);
+    }
     const conflicts = await checkConflict(device.id, start.toISOString(), end.toISOString());
     if (conflicts.length) return fail('Selected time slot is already occupied', 409, 3001);
     const row = { id: uuid(), device_id: device.id, user_id: user.id, start_time: start.toISOString(), end_time: end.toISOString(), purpose, status: 'pending', created_at: nowIso(), updated_at: nowIso() };
@@ -624,7 +793,27 @@ function createRentalService(options) {
     const user = await requireUser(token);
     const reservations = await query('select * from reservations where user_id = $1 order by created_at desc', [user.id]);
     const borrows = await query('select * from borrow_records where user_id = $1 order by borrow_time desc', [user.id]);
-    return ok({ reservations: await addNamesToReservations(reservations || []), borrows: await addNamesToBorrowRows(borrows || []) });
+    const config = await getSecurityConfig();
+    const namedReservations = await addNamesToReservations(reservations || []);
+    return ok({
+      reservations: namedReservations.map((row) => ({ ...row, can_cancel: canCancelReservation(row) })),
+      borrows: await addNamesToBorrowRows(borrows || []),
+      require_return_photo: config.require_return_photo
+    });
+  }
+
+  async function cancelReservation(payload, token) {
+    const user = await requireUser(token);
+    const reservationId = assertText(payload.reservation_id, 'reservation_id', 60);
+    const reservation = await getById('reservations', reservationId);
+    if (!reservation) return fail('Reservation not found', 404, 3004);
+    if (reservation.user_id !== user.id) return fail('Cannot cancel another user reservation', 403, 1003);
+    if (!canCancelReservation(reservation)) {
+      return fail('Reservations can only be cancelled before the reservation day', 409, 3001);
+    }
+    await query('update reservations set status = $1, updated_at = $2 where id = $3', ['cancelled', nowIso(), reservation.id]);
+    await log('cancel_reservation', 'Cancelled reservation before reservation day', user, reservation.device_id, reservation.id);
+    return ok({ message: 'Reservation cancelled' });
   }
 
   async function startUse(payload, token) {
@@ -657,6 +846,10 @@ function createRentalService(options) {
     const returnCondition = String(payload.return_condition || 'normal').trim().slice(0, 50);
     const returnNote = String(payload.return_note || '').trim().slice(0, 500);
     const returnPhotos = Array.isArray(payload.return_photos) ? payload.return_photos.slice(0, 5).map((value) => String(value).slice(0, 500)) : [];
+    const config = await getSecurityConfig();
+    if (config.require_return_photo && !returnPhotos.length) {
+      return fail('Return photo is required before ending device usage', 400, 2001);
+    }
     const record = await getById('borrow_records', recordId);
     if (!record) return fail('Borrow record not found', 404, 3004);
     if (record.user_id !== user.id) return fail('Cannot return another user record', 403, 1003);
@@ -712,7 +905,19 @@ function createRentalService(options) {
 
   async function adminGetSecurityConfig(_, token) {
     await requireAdmin(token);
-    return ok({ config: { ...(await getSecurityConfig()), ...(await getReportConfig()) } });
+    const wechatConfig = await getWechatConfig();
+    const adminAuth = await getAdminAuthConfig();
+    return ok({
+      config: {
+        ...(await getSecurityConfig()),
+        ...(await getReportConfig()),
+        wechat_token: wechatConfig.wechat_token,
+        wechat_app_id: wechatConfig.wechat_app_id,
+        wechat_admin_openids: wechatConfig.wechat_admin_openids,
+        has_wechat_app_secret: Boolean(wechatConfig.wechat_app_secret),
+        has_custom_admin_password: adminAuth.has_custom_admin_password
+      }
+    });
   }
 
   async function adminUpdateSecurityConfig(payload, token) {
@@ -722,18 +927,54 @@ function createRentalService(options) {
       ['captcha_hourly_limit', 'captcha_hourly_limit', 'Maximum challenge requests per hour'],
       ['openid_daily_register_limit', 'openid_daily_register_limit', 'Daily bind limit for the same OpenID'],
       ['enable_image_captcha', 'enable_image_captcha', 'Whether image captcha is enabled before challenge issuance', true],
+      ['require_return_photo', 'require_return_photo', 'Whether return photos are required before ending usage', true],
+      ['public_show_reserver_name', 'public_show_reserver_name', 'Whether public users can see reserver name', true],
+      ['public_show_reserver_phone', 'public_show_reserver_phone', 'Whether public users can see reserver phone', true],
+      ['public_show_reserver_student_no', 'public_show_reserver_student_no', 'Whether public users can see reserver student number', true],
+      ['system_notice_enabled', 'system_notice_enabled', 'Whether login notice popup is enabled', true],
       ['admin_report_enabled', 'admin_report_enabled', 'Whether daily usage report push is enabled', true],
       ['admin_report_hour', 'admin_report_hour', 'Daily report push hour'],
       ['admin_report_minute', 'admin_report_minute', 'Daily report push minute'],
-      ['admin_report_timezone', 'admin_report_timezone', 'Daily report push timezone']
+      ['admin_report_timezone', 'admin_report_timezone', 'Daily report push timezone'],
+      ['wechat_token', 'wechat_token', 'WeChat official account callback token'],
+      ['wechat_app_id', 'wechat_app_id', 'WeChat official account AppID'],
+      ['wechat_admin_openids', 'wechat_admin_openids', 'Comma-separated admin OpenIDs']
     ];
     for (const [key, payloadKey, description, booleanValue] of updates) {
       if (!Object.prototype.hasOwnProperty.call(payload, payloadKey)) continue;
       const value = booleanValue ? (parseBoolean(payload[payloadKey]) ? '1' : '0') : payload[payloadKey];
       await saveSystemConfig(key, value, description);
     }
+    if (Object.prototype.hasOwnProperty.call(payload, 'wechat_app_secret') && String(payload.wechat_app_secret || '').trim()) {
+      await saveSystemConfig('wechat_app_secret', String(payload.wechat_app_secret).trim(), 'WeChat official account AppSecret');
+    }
+    let noticeChanged = false;
+    if (Object.prototype.hasOwnProperty.call(payload, 'system_notice_title')) {
+      noticeChanged = true;
+      await saveSystemConfig('system_notice_title', String(payload.system_notice_title || '').trim().slice(0, 120) || DEFAULT_SECURITY_CONFIG.system_notice_title, 'Login notice popup title');
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'system_notice_content')) {
+      noticeChanged = true;
+      await saveSystemConfig('system_notice_content', String(payload.system_notice_content || '').trim().slice(0, 3000) || DEFAULT_SECURITY_CONFIG.system_notice_content, 'Login notice popup content');
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'system_notice_enabled')) {
+      noticeChanged = true;
+    }
+    if (noticeChanged) {
+      await saveSystemConfig('system_notice_version', String(Date.now()), 'Login notice popup version');
+    }
+    if (String(payload.new_admin_password || '').trim()) {
+      const password = assertText(payload.new_admin_password, 'new_admin_password', 100);
+      if (password.length < 8) {
+        throw new AppError('new_admin_password must be at least 8 characters', { status: 400, code: 2001 });
+      }
+      const salt = crypto.randomBytes(16).toString('hex');
+      await saveSystemConfig('admin_password_salt', salt, 'Admin password salt');
+      await saveSystemConfig('admin_password_hash', hashPassword(password, salt), 'Admin password hash');
+    }
     await log('update_security_config', 'Updated security settings', admin);
-    return ok({ message: 'Security config updated', config: { ...(await getSecurityConfig()), ...(await getReportConfig()) } });
+    const refreshed = await adminGetSecurityConfig({}, token);
+    return ok({ message: 'Security config updated', config: refreshed.config });
   }
 
   async function adminGetActivitySummary(_, token) {
@@ -781,8 +1022,9 @@ function createRentalService(options) {
   }
 
   async function getWechatAccessToken(payload = {}) {
-    const appId = String(payload.appId || wechatAppId || '').trim();
-    const appSecret = String(payload.appSecret || wechatAppSecret || '').trim();
+    const wechatConfig = await getWechatConfig();
+    const appId = String(payload.appId || wechatConfig.wechat_app_id || '').trim();
+    const appSecret = String(payload.appSecret || wechatConfig.wechat_app_secret || '').trim();
     if (!appId || !appSecret) {
       throw new AppError('WECHAT_APP_ID or WECHAT_APP_SECRET is missing', { status: 500, code: 5000 });
     }
@@ -808,7 +1050,8 @@ function createRentalService(options) {
   }
 
   async function pushDailyUsageReport(payload = {}) {
-    const openids = Array.isArray(payload.openids) ? payload.openids : String(payload.openids || wechatAdminOpenids || '').split(',').map((item) => item.trim()).filter(Boolean);
+    const wechatConfig = await getWechatConfig();
+    const openids = Array.isArray(payload.openids) ? payload.openids : String(payload.openids || wechatConfig.wechat_admin_openids || '').split(',').map((item) => item.trim()).filter(Boolean);
     if (!openids.length) {
       return ok({ sent: 0, skipped: true, reason: 'No admin openids configured' });
     }
@@ -950,15 +1193,16 @@ function createRentalService(options) {
     return ok({ users: users || [], devices: devices || [] });
   }
 
-  function verifyWechatSignature({ signature, timestamp, nonce }) {
-    if (!wechatToken) return true;
-    const raw = [wechatToken, timestamp, nonce].sort().join('');
+  async function verifyWechatSignature({ signature, timestamp, nonce }) {
+    const wechatConfig = await getWechatConfig();
+    if (!wechatConfig.wechat_token) return true;
+    const raw = [wechatConfig.wechat_token, timestamp, nonce].sort().join('');
     return sha256(raw) === signature || crypto.createHash('sha1').update(raw).digest('hex') === signature;
   }
 
   async function verifyWechatHandshake(query = {}) {
     const { signature, timestamp, nonce, echostr } = query;
-    if (!signature || !timestamp || !nonce || !verifyWechatSignature({ signature, timestamp, nonce })) {
+    if (!signature || !timestamp || !nonce || !(await verifyWechatSignature({ signature, timestamp, nonce }))) {
       throw new AppError('Invalid WeChat signature', { status: 403, code: 1003 });
     }
     return String(echostr || '');
@@ -980,9 +1224,9 @@ function createRentalService(options) {
     return `<xml>\n<ToUserName><![CDATA[${escapeXml(toUser)}]]></ToUserName>\n<FromUserName><![CDATA[${escapeXml(fromUser)}]]></FromUserName>\n<CreateTime>${timestamp}</CreateTime>\n<MsgType><![CDATA[text]]></MsgType>\n<Content><![CDATA[${escapeXml(content)}]]></Content>\n</xml>`;
   }
 
-  const legacyRoutes = { adminLogin, registerUser, loginUser, listDevices, getDeviceDetail, createReservation, myRecords, startUse, submitReturn, adminListUsers, adminSetUserStatus, adminSetUserBan, adminUnbindWechat, adminCreateDevice, adminUpdateDevice, adminListReservations, adminApproveReservation, adminSetDeviceAvailable, adminGetSecurityConfig, adminUpdateSecurityConfig, adminGetActivitySummary, usageStats, adminOptions, adminPreviewDailyUsageReport, adminSendDailyUsageReport, createLoginChallenge, getLoginChallengeStatus, bindWechatAccount };
+  const legacyRoutes = { adminLogin, registerUser, loginUser, listDevices, getDeviceDetail, createReservation, cancelReservation, myRecords, startUse, submitReturn, adminListUsers, adminSetUserStatus, adminSetUserBan, adminUnbindWechat, adminCreateDevice, adminListDevices, adminUpdateDevice, adminListReservations, adminApproveReservation, adminSetDeviceAvailable, adminGetSecurityConfig, adminUpdateSecurityConfig, adminGetActivitySummary, usageStats, adminOptions, adminPreviewDailyUsageReport, adminSendDailyUsageReport, createLoginChallenge, getLoginChallengeStatus, bindWechatAccount, getSystemNotice };
 
-  return { adminApproveReservation, adminCreateDevice, adminGetActivitySummary, adminGetSecurityConfig, adminListReservations, adminListUsers, adminLogin, adminOptions, adminPreviewDailyUsageReport, adminSendDailyUsageReport, adminSetDeviceAvailable, adminSetUserBan, adminSetUserStatus, adminUnbindWechat, adminUpdateDevice, adminUpdateSecurityConfig, authTokenFromReq, bindWechatAccount, buildWechatReply, createLoginChallenge, createReservation, getReportConfig, getDeviceDetail, getLoginChallengeStatus, getProfile, handleWechatMessage, legacyRoutes, listDevices, loginUser, myRecords, registerUser, safeFilename, sendWechatCustomMessage, startUse, submitReturn, pushDailyUsageReport, usageStats, verifyWechatHandshake };
+  return { adminApproveReservation, adminCreateDevice, adminGetActivitySummary, adminGetSecurityConfig, adminListDevices, adminListReservations, adminListUsers, adminLogin, adminOptions, adminPreviewDailyUsageReport, adminSendDailyUsageReport, adminSetDeviceAvailable, adminSetUserBan, adminSetUserStatus, adminUnbindWechat, adminUpdateDevice, adminUpdateSecurityConfig, authTokenFromReq, bindWechatAccount, buildWechatReply, cancelReservation, createLoginChallenge, createReservation, getReportConfig, getDeviceDetail, getLoginChallengeStatus, getProfile, getSystemNotice, handleWechatMessage, legacyRoutes, listDevices, loginUser, myRecords, registerUser, safeFilename, sendWechatCustomMessage, startUse, submitReturn, pushDailyUsageReport, usageStats, verifyWechatHandshake };
 }
 
 module.exports = { createRentalService };

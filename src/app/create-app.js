@@ -19,7 +19,7 @@ function securityHeaders(req, res, next) {
   next();
 }
 
-function createApp({ config, service }) {
+function createApp({ config, db, service }) {
   const app = express();
 
   app.disable('x-powered-by');
@@ -45,7 +45,7 @@ function createApp({ config, service }) {
   app.use('/api', createRestApiRouter(service));
   app.use('/api', createLegacyApiRouter(service));
   app.use('/wechat', createWechatRouter(service));
-  app.use(createHealthRouter(config));
+  app.use(createHealthRouter(config, db));
 
   app.get('*', (_, res) => res.sendFile(path.join(config.publicDir, 'index.html')));
 

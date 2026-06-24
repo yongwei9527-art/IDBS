@@ -34,7 +34,7 @@ const service = createRentalService({
   wechatAdminOpenids: config.wechatAdminOpenids
 });
 
-const app = createApp({ config, service });
+const app = createApp({ config, db, service });
 let reportScheduler = null;
 
 const server = app.listen(config.port, () => {
@@ -44,7 +44,7 @@ const server = app.listen(config.port, () => {
   if (runtime.warnings.length) {
     console.warn(`Runtime warnings: ${runtime.warnings.join(' | ')}`);
   }
-  reportScheduler = scheduleDailyUsageReport({ service, config });
+  reportScheduler = scheduleDailyUsageReport({ service });
 });
 
 async function shutdown(signal) {

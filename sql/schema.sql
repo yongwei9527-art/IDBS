@@ -196,10 +196,22 @@ VALUES
   ('admin_report_enabled', '0', 'Whether daily usage report push is enabled'),
   ('admin_report_hour', '9', 'Daily report push hour'),
   ('admin_report_minute', '0', 'Daily report push minute'),
-  ('admin_report_timezone', 'Asia/Shanghai', 'Daily report push timezone')
+  ('admin_report_timezone', 'Asia/Shanghai', 'Daily report push timezone'),
+  ('wechat_token', '', 'WeChat official account callback token'),
+  ('wechat_app_id', '', 'WeChat official account AppID'),
+  ('wechat_app_secret', '', 'WeChat official account AppSecret'),
+  ('wechat_admin_openids', '', 'Comma-separated admin OpenIDs'),
+  ('require_return_photo', '1', 'Whether return photos are required before ending usage'),
+  ('public_show_reserver_name', '1', 'Whether public users can see reserver name'),
+  ('public_show_reserver_phone', '1', 'Whether public users can see reserver phone'),
+  ('public_show_reserver_student_no', '0', 'Whether public users can see reserver student number'),
+  ('system_notice_enabled', '1', 'Whether login notice popup is enabled'),
+  ('system_notice_title', '使用注意事项', 'Login notice popup title'),
+  ('system_notice_content', '请按预约时间使用设备，归还前确认设备状态并按要求提交归还信息。', 'Login notice popup content'),
+  ('system_notice_version', '1', 'Login notice popup version')
 ON CONFLICT (config_key) DO NOTHING;
 
--- This project does all writes through Cloud Functions. Keep RLS off for the first runnable version.
+-- This project writes through the VPS Node service. Keep RLS off for the first runnable version.
 ALTER TABLE users DISABLE ROW LEVEL SECURITY;
 ALTER TABLE devices DISABLE ROW LEVEL SECURITY;
 ALTER TABLE reservations DISABLE ROW LEVEL SECURITY;

@@ -140,6 +140,8 @@ function renderDevices(devices) {
       </div>
       <p class="muted">位置：${escapeHtml(device.location || '未填写')}</p>
       <p class="muted">负责人：${escapeHtml(device.manager || '未填写')}</p>
+      ${device.current_borrow ? `<p class="muted">当前使用：${escapeHtml(device.current_borrow.user_name || '-')} ${escapeHtml(device.current_borrow.user_phone || '-')}</p>` : ''}
+      ${device.next_reservation ? `<p class="muted">下个预约：${escapeHtml(device.next_reservation.user_name || '-')} ${escapeHtml(device.next_reservation.user_phone || '-')}，${escapeHtml(fmtTime(device.next_reservation.start_time))}</p>` : '<p class="muted">下个预约：暂无</p>'}
       <p>${escapeHtml(device.description || '暂无设备说明')}</p>
       <div class="actions">
         <a href="device.html?device_code=${encodeURIComponent(device.device_code)}">查看详情</a>

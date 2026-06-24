@@ -67,6 +67,8 @@
         <input id="bind-name" placeholder="请输入姓名">
         <label for="bind-student-no">学号/工号</label>
         <input id="bind-student-no" placeholder="请输入学号或工号">
+        <label for="bind-phone">联系方式</label>
+        <input id="bind-phone" inputmode="tel" placeholder="请输入手机号或联系电话">
         <div class="actions">
           <button id="bind-btn">确认绑定并登录</button>
         </div>
@@ -192,11 +194,17 @@ async function submitBind() {
       body: {
         temp_code: activeChallengeCode,
         name: document.getElementById('bind-name').value.trim(),
-        student_no: document.getElementById('bind-student-no').value.trim()
+        student_no: document.getElementById('bind-student-no').value.trim(),
+        phone: document.getElementById('bind-phone').value.trim()
       }
     });
-    updateWechatStatus('success', '绑定成功，正在登录...');
-    handleLoginResult(result);
+    if (result.token) {
+      updateWechatStatus('success', '绑定成功，正在登录...');
+      handleLoginResult(result);
+      return;
+    }
+    document.getElementById('bind-panel').classList.add('hidden');
+    updateWechatStatus('success', result.message || '绑定成功，请等待管理员审核后再登录。');
   } catch (error) {
     showToast('danger', error.message);
     updateWechatStatus('danger', error.message);

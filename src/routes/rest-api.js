@@ -36,12 +36,17 @@ function createRestApiRouter(service) {
   })));
 
   router.get('/users/profile', wrap((req) => service.getProfile(service.authTokenFromReq(req))));
+  router.get('/system/notice', wrap(() => service.getSystemNotice()));
 
   router.get('/devices', wrap((req) => service.listDevices(req.query || {})));
   router.get('/devices/:deviceCode', wrap((req) => service.getDeviceDetail({ deviceCode: req.params.deviceCode })));
 
   router.post('/bookings', wrap((req) => service.createReservation(req.body || {}, service.authTokenFromReq(req))));
   router.get('/bookings/me', wrap((req) => service.myRecords(req.query || {}, service.authTokenFromReq(req))));
+  router.patch('/bookings/:reservationId/cancel', wrap((req) => service.cancelReservation({
+    ...req.body,
+    reservation_id: req.params.reservationId
+  }, service.authTokenFromReq(req))));
 
   router.post('/borrow-records', wrap((req) => service.startUse(req.body || {}, service.authTokenFromReq(req))));
   router.put('/borrow-records/:recordId/return', wrap((req) => service.submitReturn({
@@ -64,6 +69,7 @@ function createRestApiRouter(service) {
   }, service.authTokenFromReq(req))));
 
   router.post('/admin/devices', wrap((req) => service.adminCreateDevice(req.body || {}, service.authTokenFromReq(req))));
+  router.get('/admin/devices', wrap((req) => service.adminListDevices(req.query || {}, service.authTokenFromReq(req))));
   router.put('/admin/devices/:deviceId', wrap((req) => service.adminUpdateDevice({
     ...req.body,
     id: req.params.deviceId

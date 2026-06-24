@@ -9,12 +9,17 @@ APP_BASE="${APP_BASE:-/var/www/idbs}"
 APP_CURRENT="$APP_BASE/current"
 APP_SHARED="$APP_BASE/shared"
 APP_UPLOADS="$APP_BASE/uploads"
+APP_BACKUPS="$APP_BASE/backups"
 ENV_FILE="$APP_SHARED/.env"
 SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
+BACKUP_SERVICE_FILE="/etc/systemd/system/${APP_NAME}-backup.service"
+BACKUP_TIMER_FILE="/etc/systemd/system/${APP_NAME}-backup.timer"
 NGINX_FILE="/etc/nginx/sites-available/${APP_NAME}.conf"
 NGINX_LINK="/etc/nginx/sites-enabled/${APP_NAME}.conf"
 PORT="${PORT:-3000}"
 DOMAIN_NAME="${DOMAIN_NAME:-_}"
+ENV_CREATED=0
+ADMIN_PASSWORD_ROTATED=0
 
 log() { printf '\n[%s] %s\n' "${APP_NAME}" "$*"; }
 
@@ -46,7 +51,7 @@ ensure_user() {
   if ! id "$APP_USER" >/dev/null 2>&1; then
     useradd --system --create-home --shell /usr/sbin/nologin "$APP_USER"
   fi
-  mkdir -p "$APP_BASE" "$APP_SHARED" "$APP_UPLOADS"
+  mkdir -p "$APP_BASE" "$APP_SHARED" "$APP_UPLOADS" "$APP_BACKUPS"
   chown -R "$APP_USER:$APP_GROUP" "$APP_BASE"
 }
 
@@ -63,9 +68,11 @@ sync_app() {
 ensure_env() {
   if [ ! -f "$ENV_FILE" ]; then
     DB_PASSWORD="$(openssl rand -hex 16)"
+    ADMIN_PASSWORD="$(printf 'IDBS_%s' "$(openssl rand -hex 6)")"
+    DEFAULT_ORIGIN="${CORS_ORIGIN:-$(detect_default_origin)}"
     cat > "$ENV_FILE" <<EOF
 PORT=$PORT
-ADMIN_PASSWORD=change-me
+ADMIN_PASSWORD=${ADMIN_PASSWORD}
 TOKEN_SECRET=$(openssl rand -hex 32)
 WECHAT_TOKEN=
 WECHAT_APP_ID=
@@ -74,11 +81,64 @@ WECHAT_ADMIN_OPENIDS=
 UPLOAD_DIR=$APP_UPLOADS
 DATABASE_URL=postgresql://idbs_user:${DB_PASSWORD}@127.0.0.1:5432/idbs
 PGSSL=false
-CORS_ORIGIN=https://your-domain.com
+CORS_ORIGIN=${DEFAULT_ORIGIN}
 EOF
+    ENV_CREATED=1
   fi
+  repair_env_placeholders
   chown "$APP_USER:$APP_GROUP" "$ENV_FILE"
   chmod 600 "$ENV_FILE"
+}
+
+set_env_value() {
+  local key="$1"
+  local value="$2"
+  if grep -qE "^${key}=" "$ENV_FILE"; then
+    sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
+  else
+    printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
+  fi
+}
+
+repair_env_placeholders() {
+  local current_admin current_secret current_cors current_db
+  current_admin="$(get_env_value ADMIN_PASSWORD || true)"
+  current_secret="$(get_env_value TOKEN_SECRET || true)"
+  current_cors="$(get_env_value CORS_ORIGIN || true)"
+  current_db="$(get_env_value DATABASE_URL || true)"
+
+  if [ -z "$current_admin" ] || [ "$current_admin" = "change-me" ] || [ "$current_admin" = "your-admin-password" ]; then
+    set_env_value ADMIN_PASSWORD "IDBS_$(openssl rand -hex 6)"
+    ADMIN_PASSWORD_ROTATED=1
+  fi
+
+  if [ -z "$current_secret" ] || [ "$current_secret" = "change-me-please" ] || [ "$current_secret" = "your-long-random-secret" ]; then
+    set_env_value TOKEN_SECRET "$(openssl rand -hex 32)"
+  fi
+
+  if [ -z "$current_cors" ] || [ "$current_cors" = "https://your-domain.com" ]; then
+    set_env_value CORS_ORIGIN "${CORS_ORIGIN:-$(detect_default_origin)}"
+  fi
+
+  if [ -z "$current_db" ] || printf '%s' "$current_db" | grep -q 'your-password'; then
+    set_env_value DATABASE_URL "postgresql://idbs_user:$(openssl rand -hex 16)@127.0.0.1:5432/idbs"
+  fi
+}
+
+detect_default_origin() {
+  local public_ip
+  public_ip="$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
+  if [ -z "$public_ip" ]; then
+    public_ip="$(curl -fsS --max-time 5 https://ifconfig.me 2>/dev/null || true)"
+  fi
+  if [ -z "$public_ip" ]; then
+    public_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  fi
+  if [ -n "$public_ip" ]; then
+    printf 'http://%s' "$public_ip"
+  else
+    printf '*'
+  fi
 }
 
 get_env_value() {
@@ -147,6 +207,38 @@ EOF
   systemctl enable "$APP_NAME"
 }
 
+install_backup_timer() {
+  cat > "$BACKUP_SERVICE_FILE" <<EOF
+[Unit]
+Description=IDBS PostgreSQL daily backup
+After=network.target postgresql.service
+
+[Service]
+Type=oneshot
+User=$APP_USER
+Group=$APP_GROUP
+EnvironmentFile=$ENV_FILE
+Environment=APP_BACKUPS=$APP_BACKUPS
+ExecStart=/bin/bash -lc 'set -euo pipefail; mkdir -p "$APP_BACKUPS"; pg_dump "\$DATABASE_URL" | gzip > "$APP_BACKUPS/idbs_\$(date +%%F).sql.gz"; find "$APP_BACKUPS" -type f -name "idbs_*.sql.gz" -mtime +14 -delete'
+EOF
+
+  cat > "$BACKUP_TIMER_FILE" <<EOF
+[Unit]
+Description=Run IDBS PostgreSQL backup once per day
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+Unit=${APP_NAME}-backup.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  systemctl daemon-reload
+  systemctl enable --now "${APP_NAME}-backup.timer"
+}
+
 install_nginx() {
   cat > "$NGINX_FILE" <<EOF
 server {
@@ -188,9 +280,16 @@ main() {
   chown -R "$APP_USER:$APP_GROUP" "$APP_CURRENT"
   ensure_local_database
   install_service
+  install_backup_timer
   install_nginx
   systemctl restart "$APP_NAME"
-  log "Deployment finished. Edit $ENV_FILE and then restart $APP_NAME if needed."
+  if [ "$ENV_CREATED" = "1" ] || [ "$ADMIN_PASSWORD_ROTATED" = "1" ]; then
+    log "Initial admin password: $(get_env_value ADMIN_PASSWORD)"
+    log "The password can be changed later in the admin security page."
+  else
+    log "Existing environment file kept: $ENV_FILE"
+  fi
+  log "Deployment finished. Open http://SERVER_IP/ or your bound domain."
 }
 
 main "$@"

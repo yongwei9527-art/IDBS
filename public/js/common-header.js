@@ -41,4 +41,44 @@ document.addEventListener('DOMContentLoaded', () => {
       location.href = 'index.html';
     });
   }
+
+  showSystemNoticeIfNeeded();
 });
+
+async function showSystemNoticeIfNeeded() {
+  if (!isLoggedIn()) return;
+  try {
+    const result = await callRestApi('/system/notice');
+    const notice = result.notice || {};
+    if (!notice.enabled || !notice.content) return;
+    const version = String(notice.version || '1');
+    const storageKey = `IDBS_NOTICE_CLOSED_${version}`;
+    if (localStorage.getItem(storageKey) === '1') return;
+    openSystemNoticeModal(notice, storageKey);
+  } catch (_) {
+    // Notice should never block the user from entering the system.
+  }
+}
+
+function openSystemNoticeModal(notice, storageKey) {
+  const existing = document.getElementById('system-notice-modal');
+  if (existing) existing.remove();
+  const modal = document.createElement('div');
+  modal.id = 'system-notice-modal';
+  modal.className = 'notice-modal';
+  modal.innerHTML = `
+    <div class="notice-card">
+      <div class="notice-kicker">系统提醒</div>
+      <h2>${escapeHtml(notice.title || '使用注意事项')}</h2>
+      <div class="notice-content">${escapeHtml(notice.content || '').replace(/\n/g, '<br>')}</div>
+      <div class="actions">
+        <button id="system-notice-close">我已了解，关闭</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  document.getElementById('system-notice-close').addEventListener('click', () => {
+    localStorage.setItem(storageKey, '1');
+    modal.remove();
+  });
+}

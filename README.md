@@ -1,132 +1,53 @@
-# IDBS VPS + PostgreSQL 部署
+# IDBS
 
-IDBS 是一个运行在 Ubuntu VPS 上的设备借还、预约和后台管理系统。后端使用 Node.js + Express，数据库使用 PostgreSQL，前端页面放在 `public/`。
+IDBS 是一套面向 Ubuntu VPS 的设备预约、借还、图片归还、微信绑定和后台管理系统。后端使用 Node.js + Express，数据库使用 PostgreSQL，前端静态页面位于 `public/`。
 
-部署或使用前，请先阅读 [免责声明](./DISCLAIMER.md)。
+使用或部署前，请先阅读 [免责声明](./DISCLAIMER.md)。
 
 ## 一键安装
 
-在 VPS 终端执行：
+在 Ubuntu 22.04/24.04 VPS 终端执行：
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install-vps.sh)
 ```
 
-这条命令会自动完成：
+安装脚本会自动完成 Node.js、Nginx、PostgreSQL、数据库初始化、systemd 服务、反向代理、每日数据库备份和默认运行配置。
 
-- 安装 `git`、`curl`、`nginx`、`nodejs`、`postgresql`
-- 拉取 GitHub 仓库到 `/var/www/idbs-src`
-- 部署应用到 `/var/www/idbs/current`
-- 创建配置文件 `/var/www/idbs/shared/.env`
-- 创建本机 PostgreSQL 数据库 `idbs` 和用户 `idbs_user`
-- 导入 `sql/schema.sql`
-- 安装并启动 `idbs` systemd 服务
-- 安装 nginx 反向代理配置
-
-如果 `sudo nano /var/www/idbs/shared/.env` 打开是空白，或提示 `No such file or directory`，说明配置文件没有成功生成。请先重新执行上面的一键安装命令，不要保存空白文件。
-
-## 必要操作
-
-### 1. 修改配置
-
-安装完成后再编辑配置文件：
+安装完成后终端会显示初始后台密码：
 
 ```bash
-sudo nano /var/www/idbs/shared/.env
+Initial admin password: IDBS_xxxxxxxxxxxx
 ```
 
-至少建议修改：
+浏览器访问服务器公网 IP 即可打开系统，例如：
 
-```bash
-ADMIN_PASSWORD=请改成强密码
-TOKEN_SECRET=请改成一串很长的随机字符串
-CORS_ORIGIN=https://你的域名
+```text
+http://你的服务器IP/
 ```
 
-微信功能需要再填写：
+## 后台必做
 
-```bash
-WECHAT_TOKEN=你的公众号回调Token
-WECHAT_APP_ID=你的公众号AppID
-WECHAT_APP_SECRET=你的公众号AppSecret
-WECHAT_ADMIN_OPENIDS=管理员openid
-```
+登录后台后进入“系统配置”：
 
-`DATABASE_URL` 默认由安装脚本自动生成，本机 PostgreSQL 部署通常不需要手动修改。
+- 修改管理员密码，保存后立即生效。
+- 按需填写公众号 `Token`、`AppID`、`AppSecret`、管理员 `OpenID`，保存后立即生效。
+- 设置登录注意事项弹窗，用户登录后会自动弹出，用户需自行关闭。
+- 设置其他用户是否能看到预约人的姓名、联系方式、学号。
+- 设置结束使用设备时是否必须上传图片。
+- 设置每日运营日报推送时间。
 
-### 2. 重启服务
+默认情况下不需要手动编辑 `/var/www/idbs/shared/.env`。如果你误打开 `.env` 看到空白或提示 `No such file or directory`，直接重新执行上面的一键安装命令即可。
 
-```bash
-sudo systemctl restart idbs
-```
+## 运维命令
 
-### 3. 检查运行状态
+查看服务状态：
 
 ```bash
 sudo systemctl status idbs
-curl http://127.0.0.1:3000/health
-curl http://127.0.0.1:3000/ready
 ```
 
-浏览器访问服务器公网 IP 即可打开前端页面。
-
-## 模块化结构
-
-后端已经拆成模块，后续升级时优先修改对应文件：
-
-- 启动入口：`server.js`
-- 环境配置和就绪检查：`src/config/env.js`
-- Express 应用组装：`src/app/create-app.js`
-- REST API 路由：`src/routes/rest-api.js`
-- 旧版动作路由兼容：`src/routes/legacy-api.js`
-- 上传接口：`src/routes/upload.js`
-- 微信公众号回调：`src/routes/wechat.js`
-- 健康检查：`src/routes/health.js`
-- PostgreSQL 连接池：`src/lib/db.js`
-- 业务服务：`src/services/create-rental-service.js`
-- 每日运营日报调度：`src/tasks/daily-report-scheduler.js`
-- 静态前端：`public/`
-- 数据库表结构：`sql/schema.sql`
-
-详细维护说明见 [模块维护说明](./docs/module-map.md)。
-
-## 手动数据库操作
-
-正常一键安装不需要手动建库。只有在使用外部 PostgreSQL，或自动建库失败时，才需要执行本节。
-
-进入 PostgreSQL：
-
-```bash
-sudo -u postgres psql
-```
-
-示例 SQL：
-
-```sql
-CREATE DATABASE idbs;
-CREATE USER idbs_user WITH ENCRYPTED PASSWORD 'your-password';
-GRANT ALL PRIVILEGES ON DATABASE idbs TO idbs_user;
-```
-
-导入表结构：
-
-```bash
-cd /var/www/idbs/current
-psql "$DATABASE_URL" -f sql/schema.sql
-```
-
-如果 `$DATABASE_URL` 没有加载，可以临时执行：
-
-```bash
-set -a
-source /var/www/idbs/shared/.env
-set +a
-psql "$DATABASE_URL" -f /var/www/idbs/current/sql/schema.sql
-```
-
-## 常用命令
-
-查看日志：
+查看实时日志：
 
 ```bash
 sudo journalctl -u idbs -f
@@ -138,21 +59,55 @@ sudo journalctl -u idbs -f
 sudo systemctl restart idbs
 ```
 
-重载 nginx：
+检查接口：
 
 ```bash
-sudo nginx -t && sudo systemctl reload nginx
+curl http://127.0.0.1:3000/health
+curl http://127.0.0.1:3000/ready
 ```
 
-重新部署最新 GitHub 代码：
+更新到 GitHub 最新版本：
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install-vps.sh)
 ```
 
+## 自动备份
+
+安装脚本会创建每日备份定时器：
+
+```bash
+systemctl list-timers | grep idbs
+```
+
+备份文件默认保存到：
+
+```text
+/var/www/idbs/backups
+```
+
+默认保留 14 天。
+
+## 模块结构
+
+- `server.js`：服务启动入口。
+- `src/app/create-app.js`：Express 应用组装。
+- `src/config/env.js`：环境变量读取与校验。
+- `src/routes/rest-api.js`：标准 REST API。
+- `src/routes/legacy-api.js`：兼容旧版 `POST /api/:action`。
+- `src/routes/wechat.js`：微信公众号回调。
+- `src/routes/upload.js`：图片上传。
+- `src/routes/health.js`：健康检查。
+- `src/services/create-rental-service.js`：核心业务逻辑。
+- `src/tasks/daily-report-scheduler.js`：每日运营日报调度。
+- `public/js/admin.js`：后台页面逻辑。
+- `public/js/common-header.js`：公共导航与登录提醒弹窗。
+- `sql/schema.sql`：PostgreSQL 表结构和默认配置。
+- `scripts/install-vps.sh`：VPS 一键安装入口。
+- `scripts/deploy-ubuntu.sh`：部署、服务、Nginx、备份定时器配置。
+
+更多维护说明见 [模块维护说明](./docs/module-map.md)。
+
 ## 重要说明
 
-- `/var/www/idbs/shared/.env` 是服务器上的运行配置文件，不会提交到 GitHub。
-- 默认安装使用本机 PostgreSQL；外部数据库只需要修改 `DATABASE_URL` 和 `PGSSL`。
-- 如果修改了 `.env`，必须执行 `sudo systemctl restart idbs` 才会生效。
-- 公众号已发送消息无法通过微信 API 撤回，日报推送采用“每天发送新日报”的业务口径。
+微信不提供已发送消息的通用撤回/删除 API。本项目的“覆盖昨日记录”指每天推送新的日报，让管理员以最新日报为准，不代表可以从微信聊天记录里撤回旧消息。
