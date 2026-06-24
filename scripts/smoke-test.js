@@ -1,4 +1,4 @@
-const baseUrl = (process.argv[2] || process.env.SMOKE_BASE_URL || 'http://127.0.0.1:3000').replace(/\/$/, '');
+const baseUrl = ((process.argv[2] || process.env.SMOKE_BASE_URL || 'http://127.0.0.1:3000').replace(/\/$/, ''));
 
 async function check(name, path, expectedStatuses = [200]) {
   const response = await fetch(`${baseUrl}${path}`);
@@ -12,6 +12,10 @@ async function check(name, path, expectedStatuses = [200]) {
 }
 
 async function main() {
+  if (!/^https?:\/\//i.test(baseUrl)) {
+    throw new Error(`Invalid SMOKE_BASE_URL: ${baseUrl}`);
+  }
+
   console.log(`Smoke testing ${baseUrl}`);
   await check('health', '/health', [200]);
   await check('ready', '/ready', [200, 503]);

@@ -1,22 +1,17 @@
-# IDBS VPS Deployment
+# IDBS VPS + PostgreSQL Deployment
 
-IDBS can run on a VPS as a standalone Node.js service.
+IDBS runs on a VPS as a standalone Node.js service backed by PostgreSQL.
 
 Before deploying or using this project, read [DISCLAIMER.md](./DISCLAIMER.md).
-
-Important:
-
-- The app server can start in standalone mode.
-- The business APIs still require a database backend.
-- In the current codebase, the practical production setup is `USE_CLOUDBASE=true`.
-- If `USE_CLOUDBASE=false`, the service can boot, but API calls that need data access will fail because no local SQL adapter has been implemented.
 
 ## Runtime Layout
 
 - Backend entry: `server.js`
+- PostgreSQL access: `src/lib/db.js`
 - Static frontend: `public/`
 - Upload directory: `uploads/`
 - Health check: `GET /health`
+- Readiness check: `GET /ready`
 - API style:
   - New REST routes such as `GET /api/devices`, `POST /api/auth/login`
   - Legacy compatibility route `POST /api/:action`
@@ -57,7 +52,7 @@ chmod +x scripts/deploy-ubuntu.sh
 
 This script will:
 
-- install `nginx` and `nodejs`
+- install `nginx`, `nodejs`, and `postgresql` client tools
 - copy the app into `/var/www/idbs/current`
 - create `/var/www/idbs/shared/.env`
 - install a `systemd` service
@@ -82,24 +77,32 @@ WECHAT_APP_ID=your-wechat-official-account-appid
 WECHAT_APP_SECRET=your-wechat-official-account-secret
 WECHAT_ADMIN_OPENIDS=openid_a,openid_b
 UPLOAD_DIR=/var/www/idbs/uploads
-USE_CLOUDBASE=true
-CLOUDBASE_ENV_ID=your-cloudbase-env-id
-CLOUDBASE_REGION=ap-shanghai
+DATABASE_URL=postgresql://idbs_user:your-password@127.0.0.1:5432/idbs
+PGSSL=false
+CORS_ORIGIN=https://your-domain.com
 ```
 
-### 4. Run database schema or migration
-
-For a fresh database, run:
+### 4. Create the PostgreSQL database
 
 ```bash
-sql/schema.sql
+sudo -u postgres psql
 ```
 
-For an existing database, run:
+Example SQL:
+
+```sql
+CREATE DATABASE idbs;
+CREATE USER idbs_user WITH ENCRYPTED PASSWORD 'your-password';
+GRANT ALL PRIVILEGES ON DATABASE idbs TO idbs_user;
+```
+
+Then run the schema:
 
 ```bash
-sql/migrations/2026-06-24_wechat_security.sql
+psql "$DATABASE_URL" -f sql/schema.sql
 ```
+
+For later changes, apply migrations from `sql/migrations/`.
 
 ### 5. Restart the service
 
@@ -112,7 +115,8 @@ sudo systemctl status idbs
 
 ```bash
 curl http://127.0.0.1:3000/health
-curl http://127.0.0.1/api/devices
+curl http://127.0.0.1:3000/ready
+curl http://127.0.0.1:3000/api/devices
 npm run smoke -- http://127.0.0.1:3000
 ```
 
@@ -123,22 +127,12 @@ npm run smoke -- http://127.0.0.1:3000
 
 ## Frontend Config
 
-The frontend is already set to VPS HTTP mode in `public/js/config.js`:
-
-```js
-window.APP_CONFIG = {
-  envId: '',
-  region: 'ap-shanghai',
-  apiFunctionName: 'api',
-  apiBaseUrl: window.location.origin,
-  useCloudBase: false
-};
-```
+The frontend is set to VPS HTTP mode in `public/js/config.js`.
 
 This means:
 
 - browser requests go to your VPS HTTP API
-- the server itself talks to CloudBase when `USE_CLOUDBASE=true`
+- all backend data access is now through PostgreSQL on the server
 
 ## Common Commands
 
@@ -162,10 +156,10 @@ sudo nginx -t && sudo systemctl reload nginx
 
 ## Current Deployment Recommendation
 
-For this codebase, the safest production path is:
+For this codebase, the production path is:
 
-1. Run the Node.js app on Ubuntu VPS
-2. Use `nginx` as the reverse proxy
-3. Use `systemd` to keep the service alive
-4. Set `USE_CLOUDBASE=true`
-5. Provide a valid `CLOUDBASE_ENV_ID`
+1. Run the Node.js app on an Ubuntu VPS
+2. Use PostgreSQL as the backend database
+3. Use `nginx` as the reverse proxy
+4. Use `systemd` to keep the service alive
+5. Set `DATABASE_URL` and `PGSSL` appropriately

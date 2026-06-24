@@ -5,7 +5,7 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const crypto = require('crypto');
-const cloudbase = require('@cloudbase/node-sdk');
+const { createDb } = require('./src/lib/db');
 const { createRentalService } = require('./src/services/create-rental-service');
 const { createLegacyApiRouter } = require('./src/routes/legacy-api');
 const { createRestApiRouter } = require('./src/routes/rest-api');
@@ -20,22 +20,15 @@ const WECHAT_APP_ID = process.env.WECHAT_APP_ID || '';
 const WECHAT_APP_SECRET = process.env.WECHAT_APP_SECRET || '';
 const WECHAT_ADMIN_OPENIDS = process.env.WECHAT_ADMIN_OPENIDS || '';
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
-const USE_CLOUDBASE = String(process.env.USE_CLOUDBASE || 'false').toLowerCase() === 'true';
-const CDB_ENV_ID = process.env.CLOUDBASE_ENV_ID || process.env.ENV_ID || '';
-const CDB_REGION = process.env.CLOUDBASE_REGION || 'ap-shanghai';
+const DATABASE_URL = process.env.DATABASE_URL || '';
+const PGSSL = String(process.env.PGSSL || 'false').toLowerCase() === 'true';
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 
 if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 }
 
-const db = USE_CLOUDBASE && CDB_ENV_ID
-  ? cloudbase.init({ env: CDB_ENV_ID, region: CDB_REGION }).rdb()
-  : {
-      from() {
-        throw new Error('Database client is not configured. Set USE_CLOUDBASE=true and provide CLOUDBASE_ENV_ID.');
-      }
-    };
+const db = createDb({ connectionString: DATABASE_URL, ssl: PGSSL });
 
 const service = createRentalService({
   db,
@@ -70,12 +63,11 @@ function buildRuntimeStatus() {
   if (!ADMIN_PASSWORD) warnings.push('ADMIN_PASSWORD is not configured');
   if (!TOKEN_SECRET || TOKEN_SECRET === 'change-me-please') warnings.push('TOKEN_SECRET is using the default value');
   if ((WECHAT_APP_ID && !WECHAT_APP_SECRET) || (!WECHAT_APP_ID && WECHAT_APP_SECRET)) warnings.push('WECHAT_APP_ID and WECHAT_APP_SECRET should be configured together');
-  if (!USE_CLOUDBASE) warnings.push('USE_CLOUDBASE is false; business APIs require a real data backend');
-  if (USE_CLOUDBASE && !CDB_ENV_ID) warnings.push('CLOUDBASE_ENV_ID is missing');
+  if (!DATABASE_URL) warnings.push('DATABASE_URL is not configured');
 
   return {
     ready: warnings.length === 0,
-    mode: USE_CLOUDBASE && CDB_ENV_ID ? 'cloudbase' : 'standalone',
+    mode: DATABASE_URL ? 'postgres' : 'standalone',
     warnings
   };
 }
@@ -240,7 +232,7 @@ app.get('/health', (_, res) => {
   res.json(success({
     status: 'ok',
     time: new Date().toISOString(),
-    cloudbase: USE_CLOUDBASE
+    postgres: !!DATABASE_URL
   }));
 });
 
@@ -264,7 +256,7 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   const runtime = buildRuntimeStatus();
   console.log(`VPS server running at http://0.0.0.0:${PORT}`);
-  console.log(`Mode: ${USE_CLOUDBASE && CDB_ENV_ID ? 'CloudBase bridge' : 'Standalone HTTP API'}`);
+  console.log(`Mode: ${DATABASE_URL ? 'PostgreSQL pool' : 'Standalone HTTP API'}`);
   if (runtime.warnings.length) {
     console.warn(`Runtime warnings: ${runtime.warnings.join(' | ')}`);
   }
