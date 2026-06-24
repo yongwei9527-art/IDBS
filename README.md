@@ -2,6 +2,8 @@
 
 This project can run on a VPS as a standalone Node.js service.
 
+Before deploying or using this project, read [DISCLAIMER.md](./DISCLAIMER.md).
+
 Important:
 
 - The app server can start in standalone mode.
@@ -28,7 +30,7 @@ Recommended target system: `Ubuntu 22.04` or `Ubuntu 24.04`
 After this project is pushed to GitHub, run this on the VPS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install-vps.sh | bash
+bash <(curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install-vps.sh)
 ```
 
 Optional environment overrides:
