@@ -274,6 +274,7 @@ async function loadSecurity() {
     document.getElementById('admin_report_hour').value = config.admin_report_hour ?? 9;
     document.getElementById('admin_report_minute').value = config.admin_report_minute ?? 0;
     document.getElementById('admin_report_timezone').value = config.admin_report_timezone || 'Asia/Shanghai';
+    document.getElementById('site_domain').value = config.site_domain || '';
     document.getElementById('new_admin_password').value = '';
     document.getElementById('confirm_admin_password').value = '';
     document.getElementById('wechat_token').value = config.wechat_token || '';
@@ -327,6 +328,7 @@ async function saveSecurityConfig() {
         admin_report_hour: Number(document.getElementById('admin_report_hour').value || 9),
         admin_report_minute: Number(document.getElementById('admin_report_minute').value || 0),
         admin_report_timezone: document.getElementById('admin_report_timezone').value.trim() || 'Asia/Shanghai',
+        site_domain: document.getElementById('site_domain').value.trim(),
         new_admin_password: newAdminPassword,
         wechat_token: document.getElementById('wechat_token').value.trim(),
         wechat_app_id: document.getElementById('wechat_app_id').value.trim(),
@@ -340,6 +342,7 @@ async function saveSecurityConfig() {
         system_notice_content: document.getElementById('system_notice_content').value.trim()
       }
     });
+    localStorage.setItem('IDBS_SITE_DOMAIN', document.getElementById('site_domain').value.trim());
     showToast('success', '安全设置已保存');
     loadSecurity();
   } catch (error) {
