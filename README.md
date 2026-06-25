@@ -72,6 +72,20 @@ curl http://127.0.0.1:3000/ready
 bash <(curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install-vps.sh)
 ```
 
+卸载/清除 IDBS 相关文件与服务（如需彻底移除，请手动按顺序执行）：
+
+```bash
+sudo systemctl stop idbs
+sudo systemctl disable idbs
+sudo rm -f /etc/systemd/system/idbs.service
+sudo systemctl daemon-reload
+sudo rm -f /etc/nginx/conf.d/idbs.conf
+sudo rm -rf /var/www/idbs
+sudo systemctl reload nginx
+```
+
+如果数据库也需要一并清除，请先确认业务数据已备份，然后在 PostgreSQL 中删除对应数据库与用户。
+
 ## 自动备份
 
 安装脚本会创建每日备份定时器：
