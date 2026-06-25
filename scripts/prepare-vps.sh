@@ -84,6 +84,10 @@ Next step:
 
 If this is a brand-new destructive reinstall, run prepare with:
   RESET_IDBS_DATA=1 bash <(curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/prepare-vps.sh)
+
+After install, open:
+  - With domain: https://your-domain/
+  - Without domain: http://SERVER_IP/
 EOF
 }
 
