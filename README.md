@@ -12,7 +12,19 @@ IDBS 是一套面向 Ubuntu VPS 的设备预约、借还、图片归还、微信
 bash <(curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install-vps.sh)
 ```
 
-安装脚本会自动完成 Node.js、Nginx、PostgreSQL、数据库初始化、systemd 服务、反向代理、每日数据库备份和默认运行配置。
+安装脚本会先把 VPS 调整到适合安装 IDBS 的状态，然后自动完成 Node.js、Nginx、PostgreSQL、数据库初始化、systemd 服务、反向代理、每日数据库备份和默认运行配置。
+
+如果你想先单独整理 VPS 环境，再安装，可以执行：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/prepare-vps.sh)
+```
+
+准备脚本默认不会删除业务数据库。只有确认要彻底重装时，才使用下面这个危险命令：
+
+```bash
+RESET_IDBS_DATA=1 bash <(curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/prepare-vps.sh)
+```
 
 安装完成后终端会显示初始后台密码：
 

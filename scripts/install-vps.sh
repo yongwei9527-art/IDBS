@@ -29,7 +29,9 @@ else
   git clone --branch "${BRANCH}" "${REPO_URL}" "${SRC_DIR}"
 fi
 
-echo "[4/4] Running deployment"
+echo "[4/4] Preparing VPS and running deployment"
 cd "${SRC_DIR}"
+chmod +x scripts/prepare-vps.sh
 chmod +x scripts/deploy-ubuntu.sh
+sudo -E env RESET_IDBS_DATA=0 ./scripts/prepare-vps.sh
 sudo -E ./scripts/deploy-ubuntu.sh
