@@ -329,6 +329,15 @@ function createRentalService(options) {
     return payload;
   }
 
+  function userAccessMessage(user) {
+    if (!user) return '请先登录后再操作。';
+    if (user.is_banned) return '账号已被封禁，请联系管理员处理。';
+    if (user.status === 'pending') return '账号正在等待管理员审核，审核通过后才可以预约设备。';
+    if (user.status === 'disabled') return '账号已停用，请联系管理员处理。';
+    if (user.status !== 'active') return `账号状态为 ${user.status}，暂时无法预约设备。`;
+    return '';
+  }
+
   async function requireUser(token) {
     const payload = verifyToken(token);
     if (!payload || !payload.user_id) {
@@ -337,7 +346,7 @@ function createRentalService(options) {
 
     const user = await getById('users', payload.user_id);
     if (!user || user.status !== 'active' || user.is_banned) {
-      throw new AppError('User is disabled or not approved', { status: 403, code: 1003 });
+      throw new AppError(userAccessMessage(user), { status: 403, code: 1003 });
     }
     return user;
   }
@@ -539,10 +548,10 @@ function createRentalService(options) {
       return fail('Invalid phone or password', 401, 1001);
     }
     if (user.is_banned) {
-      return fail('Your account has been banned', 403, 1003);
+      return fail(userAccessMessage(user), 403, 1003);
     }
     if (user.status !== 'active') {
-      return fail(`User status is ${user.status}`, 403, 1003);
+      return fail(userAccessMessage(user), 403, 1003);
     }
     return finalizeUserLogin(user, { ...context, remark: 'password_login' });
   }
@@ -574,8 +583,7 @@ function createRentalService(options) {
     }
     const user = await getUserByOpenId(challenge.openid);
     if (user) {
-      if (user.is_banned) return fail('Your account has been banned', 403, 1003);
-      if (user.status !== 'active') return fail(`User status is ${user.status}`, 403, 1003);
+      if (user.is_banned || user.status !== 'active') return fail(userAccessMessage(user), 403, 1003);
       challenge.used_at = Date.now();
       challengeStore.delete(code);
       return finalizeUserLogin(user, { ...context, remark: 'wechat_login', deviceType: context.deviceType || 'wechat' });
