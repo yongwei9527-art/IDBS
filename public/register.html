@@ -3,28 +3,45 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>用户注册</title>
+  <title>微信注册 / 首次绑定</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 <main>
   <section class="hero">
-    <h2>用户注册</h2>
-    <p class="muted">提交后需管理员审核，通过后才可以正式预约设备。</p>
+    <h2>微信注册 / 首次绑定</h2>
+    <p class="muted">新用户必须通过公众号验证码注册，系统会自动读取微信 OpenID，再填写姓名、学号和联系方式完成绑定。</p>
+    <div class="hero-meta">
+      <span class="badge info">不再开放普通密码注册</span>
+      <span class="badge warn">绑定后需管理员审核</span>
+    </div>
   </section>
 
-  <section class="card">
-    <div id="message"></div>
-    <div class="form-grid">
-      <div><label for="name">姓名</label><input id="name" placeholder="请输入姓名"></div>
-      <div><label for="phone">联系方式</label><input id="phone" inputmode="tel" placeholder="请输入手机号"></div>
-      <div><label for="student_no">学号</label><input id="student_no" placeholder="请输入学号"></div>
-      <div><label for="password">密码</label><input id="password" type="password" placeholder="至少 6 位"></div>
-    </div>
-    <div class="actions">
-      <button id="register-btn">提交注册</button>
-      <a href="login.html">已有账号？去登录</a>
-    </div>
+  <section class="grid login-grid">
+    <section class="card stack">
+      <h3>注册流程</h3>
+      <div class="soft-panel">
+        <div class="metric-label">第一步</div>
+        <p>进入登录页，点击“生成验证码”。</p>
+      </div>
+      <div class="soft-panel">
+        <div class="metric-label">第二步</div>
+        <p>把验证码发送到公众号，系统自动读取你的微信 OpenID。</p>
+      </div>
+      <div class="soft-panel">
+        <div class="metric-label">第三步</div>
+        <p>页面弹出首次绑定表单后，填写姓名、学号、联系方式，提交后等待管理员审核。</p>
+      </div>
+      <div class="actions">
+        <a href="login.html" class="button-link">前往微信验证码注册/绑定</a>
+      </div>
+    </section>
+
+    <section class="card stack">
+      <h3>为什么这样做？</h3>
+      <p class="muted">强制微信绑定可以减少批量注册，管理员也能在后台看到真实用户与微信 OpenID 的绑定状态。</p>
+      <p class="muted">已有账号仍可使用账号密码登录；新账号必须走公众号验证码注册/绑定流程。</p>
+    </section>
   </section>
 </main>
 
@@ -32,26 +49,5 @@
 <script src="js/api.js"></script>
 <script src="js/ui.js"></script>
 <script src="js/common-header.js"></script>
-<script>
-async function registerUser() {
-  const messageEl = document.getElementById('message');
-  messageEl.innerHTML = '';
-
-  try {
-    const result = await callApi('registerUser', {
-      name: name.value.trim(),
-      phone: phone.value.trim(),
-      student_no: student_no.value.trim(),
-      password: password.value
-    });
-    showPageMessage(messageEl, 'success', result.message || '注册成功，请等待审核。');
-    setTimeout(() => { location.href = 'login.html'; }, 900);
-  } catch (error) {
-    showPageMessage(messageEl, 'danger', error.message);
-  }
-}
-
-document.getElementById('register-btn').addEventListener('click', registerUser);
-</script>
 </body>
 </html>

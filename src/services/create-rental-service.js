@@ -528,43 +528,7 @@ function createRentalService(options) {
   }
 
   async function registerUser(payload, context = {}) {
-    const name = assertText(payload.name, 'name', 50);
-    const phone = assertPhone(payload.phone);
-    const password = assertPassword(payload.password);
-    const studentNo = assertText(payload.student_no, 'student_no', 50);
-    const groupName = String(payload.group_name || '').trim();
-    const email = assertOptionalEmail(payload.email);
-    const exists = await queryOne('select id from users where phone = $1 limit 1', [phone]);
-    if (exists) return fail('Phone number already registered', 409, 3001);
-
-    const salt = crypto.randomBytes(8).toString('hex');
-    const row = {
-      id: uuid(),
-      name,
-      phone,
-      student_no: studentNo,
-      group_name: groupName,
-      email,
-      password_hash: hashPassword(password, salt),
-      password_salt: salt,
-      role: 'user',
-      status: 'pending',
-      is_banned: false,
-      created_at: nowIso(),
-      updated_at: nowIso()
-    };
-
-    await query('insert into users (id, name, phone, student_no, group_name, email, password_hash, password_salt, role, status, is_banned, created_at, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)', Object.values(row));
-    await recordUserEvent({
-      user_id: row.id,
-      user_name: row.name,
-      phone: row.phone,
-      event_type: 'register',
-      device_type: context.deviceType || '',
-      client_key: getClientKey(context),
-      ip_address: context.ip || ''
-    });
-    return ok({ message: 'Registered successfully, waiting for approval' });
+    return fail('普通账号密码注册已关闭，请通过公众号验证码完成首次注册/绑定。', 403, 1003);
   }
 
   async function loginUser(payload, context = {}) {

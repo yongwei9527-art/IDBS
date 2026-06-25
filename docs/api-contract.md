@@ -51,19 +51,31 @@ Failed response:
 
 ### `POST /api/auth/register`
 
+- Status: disabled for public registration
 - Auth: none
-- Body:
+- Response: `403`
+- Message: new users must complete first-time registration/binding through the official-account challenge flow.
+
+Use these endpoints instead:
+
+- `GET /api/login/challenge`
+- `GET /api/login/status?code=<challenge-code>`
+- `POST /api/login/bind`
+
+The bind endpoint requires the WeChat OpenID to be captured through the public-account challenge before it accepts identity details.
+
+Bind body:
 
 ```json
 {
+  "temp_code": "12345",
   "name": "Alice",
   "phone": "13800000000",
-  "password": "secret",
-  "student_no": "20260001",
-  "group_name": "Lab A",
-  "email": "alice@example.com"
+  "student_no": "20260001"
 }
 ```
+
+If no existing user matches the name and student number, the server creates a pending user with the captured WeChat OpenID and waits for administrator approval.
 
 ### `POST /api/auth/login`
 
@@ -364,7 +376,7 @@ Failed response:
 
 | Legacy action | New route |
 | --- | --- |
-| `registerUser` | `POST /api/auth/register` |
+| `registerUser` | `POST /api/auth/register` disabled; use `GET /api/login/challenge` + `POST /api/login/bind` |
 | `loginUser` | `POST /api/auth/login` |
 | `adminLogin` | `POST /api/admin/auth/login` |
 | `listDevices` | `GET /api/devices` |

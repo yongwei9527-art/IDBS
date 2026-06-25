@@ -10,7 +10,7 @@
 <main>
   <section class="hero">
     <h2>欢迎回来</h2>
-    <p class="muted">支持账号密码登录，也支持公众号验证码登录。首次通过微信进入时，系统会自动引导你绑定姓名和学号。</p>
+    <p class="muted">已有账号可继续使用账号密码登录；新用户必须通过公众号验证码完成首次注册/绑定，系统会自动读取微信 OpenID。</p>
     <div class="hero-meta">
       <span class="badge info">自动识别管理员/用户</span>
       <span class="badge warn">支持微信绑定与安全风控</span>
@@ -28,7 +28,7 @@
       <p class="field-help">管理员账号登录后会自动显示后台入口与管理面板。</p>
       <div class="actions">
         <button id="login-btn">登录</button>
-        <a href="register.html">还没有账号？去注册</a>
+        <a href="register.html">新用户？查看微信注册/绑定流程</a>
       </div>
     </section>
 
@@ -62,7 +62,7 @@
 
       <div id="bind-panel" class="soft-panel hidden">
         <div class="metric-label">首次绑定</div>
-        <p>该微信尚未绑定系统账号，请填写真实姓名和学号完成绑定。</p>
+        <p>该微信尚未绑定系统账号，请填写真实姓名、学号和联系方式完成首次注册/绑定。</p>
         <label for="bind-name">姓名</label>
         <input id="bind-name" placeholder="请输入姓名">
         <label for="bind-student-no">学号/工号</label>

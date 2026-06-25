@@ -17,7 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ${isAdminLoggedIn() ? '<a href="admin.html">管理后台</a>' : ''}
       ${isLoggedIn()
         ? `<span class="nav-user">${escapeHtml(user && user.name ? user.name : '已登录用户')}</span><span class="role-chip">${isCurrentUserAdmin() ? '管理员' : '用户'}</span><a href="#" id="logout-user-link">退出登录</a>`
-        : `<a href="login.html">用户登录</a><a href="register.html">用户注册</a>`}
+        : `<a href="login.html">用户登录</a><a href="register.html">微信注册/绑定</a>`}
       ${isAdminLoggedIn() ? `<a href="#" id="logout-admin-link">退出后台</a>` : ''}
     </nav>
   `;

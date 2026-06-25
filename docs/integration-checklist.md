@@ -45,19 +45,21 @@ WECHAT_ADMIN_OPENIDS=<openid_a,openid_b>
 
 Run this in order:
 
-1. Open `register.html`
-2. Create a new normal user
-3. Open `admin.html`
-4. Login as admin
-5. Approve the new user
-6. Login as the new user in `login.html`
-7. Open `index.html` and confirm device list loads
-8. Open a device detail page
-9. Create a reservation
-10. In admin, approve the reservation
-11. In user center, start using the approved reservation
-12. In user center, upload return photos and submit return
-13. In admin statistics, verify the usage record appears
+1. Open `login.html`
+2. Generate a WeChat challenge code
+3. Send the challenge code to the official account
+4. Complete first-time binding with name, student number, and phone
+5. Open `admin.html`
+6. Login as admin
+7. Approve the new pending user
+8. Login as the new user in `login.html`
+9. Open `index.html` and confirm device list loads
+10. Open a device detail page
+11. Create a reservation
+12. In admin, approve the reservation
+13. In user center, start using the approved reservation
+14. In user center, upload return photos and submit return
+15. In admin statistics, verify the usage record appears
 
 Expected result:
 
@@ -84,7 +86,10 @@ Expected result:
 
 Recommended requests:
 
-- `POST /api/auth/register`
+- `POST /api/auth/register` is intentionally disabled for public registration
+- `GET /api/login/challenge`
+- `GET /api/login/status`
+- `POST /api/login/bind`
 - `POST /api/auth/login`
 - `GET /api/devices`
 - `GET /api/devices/:deviceCode`

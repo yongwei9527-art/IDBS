@@ -105,7 +105,7 @@ roleCopyEl.textContent = isCurrentUserAdmin()
   : (isLoggedIn() ? '你当前是普通用户身份，可以直接预约、查看记录和提交归还。' : '你当前未登录，可先浏览设备，再决定是否登录。');
 roleActionsEl.innerHTML = isCurrentUserAdmin()
   ? '<a href="admin.html">进入管理后台</a><a href="my.html">查看用户闭环</a>'
-  : (isLoggedIn() ? '<a href="reserve.html">去预约设备</a><a href="my.html">查看我的记录</a>' : '<a href="login.html">前往登录</a><a href="register.html">创建账号</a>');
+  : (isLoggedIn() ? '<a href="reserve.html">去预约设备</a><a href="my.html">查看我的记录</a>' : '<a href="login.html">前往登录</a><a href="register.html">微信注册/绑定</a>');
 
 function renderSummary(devices) {
   const counts = {
