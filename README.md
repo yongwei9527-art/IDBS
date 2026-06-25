@@ -26,6 +26,14 @@ Initial admin password: IDBS_xxxxxxxxxxxx
 http://你的服务器IP/
 ```
 
+如果没有域名，请先使用 `http://服务器IP/`。公网 IP 默认无法申请浏览器信任的免费 HTTPS 证书，因此不建议预设为 `https://IP`。后续绑定域名后，再配置 HTTPS 会更稳。
+
+如果访问 IP 时看到 `Welcome to nginx!`，说明 Nginx 默认站点抢占了请求。重新执行一键安装命令即可自动修复默认站点：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install-vps.sh)
+```
+
 ## 后台必做
 
 登录后台后进入“系统配置”：

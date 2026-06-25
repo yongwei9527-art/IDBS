@@ -240,9 +240,12 @@ EOF
 }
 
 install_nginx() {
+  rm -f /etc/nginx/sites-enabled/default
+  rm -f /etc/nginx/conf.d/default.conf
+
   cat > "$NGINX_FILE" <<EOF
 server {
-  listen 80;
+  listen 80 default_server;
   server_name $DOMAIN_NAME;
 
   client_max_body_size 20m;
@@ -266,6 +269,8 @@ EOF
 
   ln -sf "$NGINX_FILE" "$NGINX_LINK"
   nginx -t
+  systemctl enable nginx
+  systemctl start nginx
   systemctl reload nginx
 }
 
