@@ -1,6 +1,8 @@
 let lastRows = [];
 let selectedUserIds = new Set();
 let reservationSlotPresets = window.ReservationSlots ? ReservationSlots.fallbackPresets : [];
+let permissionOptions = [];
+let roleDefaultPermissions = {};
 
 function fieldValue(id) {
   const element = document.getElementById(id);
@@ -45,12 +47,38 @@ function slotLabels(options = []) {
   return (options || []).map((slot) => slot.label || slot.key).filter(Boolean).join('、') || '-';
 }
 
+function renderPermissionPicker(selected = []) {
+  const box = document.getElementById('role_permissions_picker');
+  if (!box) return;
+  const options = permissionOptions.length ? permissionOptions : [
+    { key: 'user.approve', label: '同意用户注册' },
+    { key: 'reservation.approve', label: '同意用户预约' },
+    { key: 'stats.export', label: '导出统计' },
+    { key: 'device.manage', label: '管理设备' }
+  ];
+  box.innerHTML = options.map((item) => `
+    <label class="permission-card">
+      <input type="checkbox" value="${escapeHtml(item.key)}" ${selected.includes(item.key) ? 'checked' : ''}>
+      <span>${escapeHtml(item.label)}<small>${escapeHtml(item.key)}</small></span>
+    </label>
+  `).join('');
+}
+
+function selectedPermissions() {
+  return [...document.querySelectorAll('#role_permissions_picker input:checked')].map((input) => input.value);
+}
+
+function applyRoleDefaults() {
+  const roleKey = document.getElementById('role_key').value;
+  renderPermissionPicker(roleDefaultPermissions[roleKey] || []);
+}
+
 function showLoginOnly() {
   const accessDeniedBox = document.getElementById('admin-access-denied');
   if (accessDeniedBox) accessDeniedBox.classList.add('hidden');
   document.getElementById('login-box').classList.remove('hidden');
   document.getElementById('admin-box').classList.add('hidden');
-  ['devices', 'users', 'reservations', 'security', 'stats', 'roles', 'user-info', 'notice'].forEach((tab) => {
+  ['devices', 'users', 'reservations', 'security', 'stats', 'roles', 'faults', 'user-info', 'notice'].forEach((tab) => {
     const panel = document.getElementById(`tab_${tab}`);
     if (panel) panel.classList.add('hidden');
   });
@@ -105,7 +133,7 @@ function switchTab(name) {
   document.querySelectorAll('.tabs button').forEach((button) => {
     button.classList.toggle('active', button.dataset.tab === name);
   });
-  ['devices', 'users', 'reservations', 'security', 'stats', 'roles', 'user-info', 'notice'].forEach((tab) => {
+  ['devices', 'users', 'reservations', 'security', 'stats', 'roles', 'faults', 'user-info', 'notice'].forEach((tab) => {
     const panel = document.getElementById(`tab_${tab}`);
     if (panel) panel.classList.toggle('hidden', tab !== name);
   });
@@ -119,6 +147,7 @@ function switchTab(name) {
     loadRoleUserOptions();
     loadRoles();
   }
+  if (name === 'faults') loadFaultReports();
 }
 
 function setupAdminTabs() {
@@ -132,8 +161,11 @@ function renderAdminSummary(meta = {}) {
     <div class="card"><div class="metric-label">设备总览</div><div class="value">${meta.deviceCount ?? '-'}</div></div>
     <div class="card"><div class="metric-label">待审用户</div><div class="value">${meta.pendingUsers ?? '-'}</div></div>
     <div class="card"><div class="metric-label">待审预约</div><div class="value">${meta.pendingReservations ?? '-'}</div></div>
-    <div class="card"><div class="metric-label">异常设备</div><div class="value">${meta.abnormalDevices ?? '-'}</div></div>
+    <button class="card summary-action" data-summary-tab="faults"><div class="metric-label">异常设备</div><div class="value">${meta.abnormalDevices ?? '-'}</div><span class="muted">点击查看故障报备</span></button>
   `;
+  document.querySelectorAll('[data-summary-tab]').forEach((item) => {
+    item.addEventListener('click', () => switchTab(item.dataset.summaryTab));
+  });
 }
 
 function renderUserList(users = []) {
@@ -615,6 +647,9 @@ async function loadRoles() {
   setLoading(box, '正在加载管理员角色...');
   try {
     const result = await callRestApi('/admin/roles', { admin: true });
+    permissionOptions = result.permissions || permissionOptions;
+    roleDefaultPermissions = result.role_defaults || roleDefaultPermissions;
+    renderPermissionPicker(selectedPermissions().length ? selectedPermissions() : (roleDefaultPermissions[document.getElementById('role_key').value] || []));
     const roles = result.roles || [];
     box.innerHTML = roles.length ? `<div class="table-wrap"><table><tr><th>用户</th><th>角色</th><th>权限</th><th>备注</th></tr>${roles.map((row) => `<tr><td>${escapeHtml(row.user_name || row.user_id || '-')}<br><span class="muted">${escapeHtml(row.user_phone || '-')}</span></td><td>${escapeHtml(row.role_key || '-')}</td><td>${escapeHtml(Array.isArray(row.permissions) ? row.permissions.join(', ') : String(row.permissions || '-'))}</td><td>${escapeHtml(row.note || '-')}</td></tr>`).join('')}</table></div>` : '<div class="empty-state">暂无管理员角色。</div>';
   } catch (error) {
@@ -635,14 +670,13 @@ async function loadRoleUserOptions() {
 
 async function saveRole() {
   try {
-    const permissions = String(document.getElementById('role_permissions').value || '').split(',').map((item) => item.trim()).filter(Boolean);
     await callRestApi('/admin/roles', {
       method: 'PUT',
       admin: true,
       body: {
         user_id: document.getElementById('role_user_id').value.trim(),
         role_key: document.getElementById('role_key').value.trim(),
-        permissions,
+        permissions: selectedPermissions(),
         note: document.getElementById('role_note').value.trim()
       }
     });
@@ -666,6 +700,53 @@ async function revokeRole() {
     loadRoleUserOptions();
   } catch (error) {
     showToast('danger', error.message);
+  }
+}
+
+async function loadFaultReports() {
+  const box = document.getElementById('faultReportList');
+  setLoading(box, '正在加载故障报备...');
+  try {
+    const result = await callRestApi('/admin/fault-reports', { admin: true });
+    const reports = result.reports || [];
+    box.innerHTML = reports.length ? `
+      <div class="table-wrap">
+        <table>
+          <tr><th>设备</th><th>上报人</th><th>问题</th><th>状态</th><th>时间</th><th>处理</th></tr>
+          ${reports.map((report) => `
+            <tr>
+              <td>${escapeHtml(report.device_code)}<br><span class="muted">${escapeHtml(report.device_name || '-')} ${escapeHtml(report.device_location || '')}</span></td>
+              <td>${escapeHtml(report.user_name || '-')}<br><span class="muted">${escapeHtml(report.user_phone || '-')}</span></td>
+              <td><strong>${escapeHtml(report.issue_type || 'fault')}</strong><br>${escapeHtml(report.description || '-')}</td>
+              <td>${statusBadge(report.status)}</td>
+              <td>${escapeHtml(fmtTime(report.created_at))}</td>
+              <td class="actions">
+                <button onclick="markFaultReport('${report.id}', 'processing', false)">处理中</button>
+                <button class="success" onclick="markFaultReport('${report.id}', 'resolved', true)">解决并恢复可预约</button>
+              </td>
+            </tr>
+          `).join('')}
+        </table>
+      </div>
+    ` : '<div class="empty-state">暂无故障报备。</div>';
+  } catch (error) {
+    handleAdminError(error, box);
+  }
+}
+
+async function markFaultReport(id, status, setAvailable) {
+  const note = prompt('处理备注（可留空）') || '';
+  try {
+    await callRestApi(`/admin/fault-reports/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      admin: true,
+      body: { status, set_available: setAvailable, admin_note: note }
+    });
+    showToast('success', '故障报备已更新');
+    refreshAdminSummary().catch(() => {});
+    loadFaultReports();
+  } catch (error) {
+    handleAdminError(error);
   }
 }
 
@@ -730,6 +811,8 @@ document.getElementById('export-btn').addEventListener('click', exportStats);
 document.getElementById('save-role-btn').addEventListener('click', saveRole);
 document.getElementById('revoke-role-btn').addEventListener('click', revokeRole);
 document.getElementById('reload-role-btn').addEventListener('click', loadRoles);
+document.getElementById('role_key').addEventListener('change', applyRoleDefaults);
+document.getElementById('reload-faults-btn').addEventListener('click', loadFaultReports);
 document.getElementById('delete-selected-users-btn').addEventListener('click', deleteSelectedUsers);
 document.getElementById('select-all-users-btn').addEventListener('click', () => {
   const selectAll = document.getElementById('user-select-all');

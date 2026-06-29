@@ -65,10 +65,21 @@ function createRentalService(options) {
   const DEFAULT_ADMIN_PASSWORD = 'IDBS123456';
   const ROLE_PERMISSIONS = {
     super_admin: ['*'],
-    admin: ['user.manage', 'device.manage', 'reservation.approve', 'stats.view'],
+    admin: ['user.manage', 'user.approve', 'device.manage', 'device.view', 'reservation.approve', 'reservation.view', 'fault.manage', 'stats.view', 'stats.export'],
     ops: ['device.manage', 'reservation.approve', 'stats.view'],
     auditor: ['stats.view', 'reservation.view']
   };
+  const PERMISSION_OPTIONS = [
+    { key: 'user.approve', label: '同意用户注册' },
+    { key: 'user.manage', label: '管理用户/封禁/删除' },
+    { key: 'reservation.approve', label: '同意用户预约' },
+    { key: 'reservation.view', label: '查看预约记录' },
+    { key: 'device.manage', label: '管理设备与故障' },
+    { key: 'device.view', label: '查看设备' },
+    { key: 'fault.manage', label: '处理故障报备' },
+    { key: 'stats.view', label: '查看统计' },
+    { key: 'stats.export', label: '导出指定时间段使用统计' }
+  ];
   const RESERVATION_SLOT_PRESETS = [
     { key: 'morning', label: '上午 8:00-12:00', start: '08:00', end: '12:00', type: 'base' },
     { key: 'afternoon', label: '下午 12:00-17:00', start: '12:00', end: '17:00', type: 'base' },
@@ -224,9 +235,9 @@ function createRentalService(options) {
   }
 
   function buildReservationSlotsFromKeys(payload, devices = []) {
-    const dateText = String(payload.reservation_date || payload.reservationDate || '').trim();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) {
-      throw new AppError('reservation_date is required', { status: 400, code: 2001 });
+    const dateTexts = parseReservationDates(payload.reservation_dates || payload.reservationDates || payload.reservation_date || payload.reservationDate);
+    if (!dateTexts.length) {
+      throw new AppError('reservation_dates is required', { status: 400, code: 2001 });
     }
 
     const slotKeys = normalizeReservationSlotKeys(payload.slot_keys || payload.slotKeys, []);
@@ -242,9 +253,36 @@ function createRentalService(options) {
       }
     }
 
-    const slots = slotKeys.map((key) => slotToDateRange(dateText, getReservationSlotPreset(key)));
+    const slots = [];
+    for (const dateText of dateTexts) {
+      slots.push(...slotKeys.map((key) => slotToDateRange(dateText, getReservationSlotPreset(key))));
+    }
     assertNoOverlappingSlots(slots);
     return slots;
+  }
+
+  function parseReservationDates(value) {
+    const raw = Array.isArray(value)
+      ? value
+      : String(value || '').split(/[\s,，、]+/);
+    const dates = raw.map((item) => String(item || '').trim()).filter(Boolean);
+    const unique = [...new Set(dates)];
+    for (const dateText of unique) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) {
+        throw new AppError(`Invalid reservation date: ${dateText}`, { status: 400, code: 2001 });
+      }
+    }
+    return unique;
+  }
+
+  function parseReservationGroups(payload = {}) {
+    const groups = Array.isArray(payload.reservation_groups)
+      ? payload.reservation_groups
+      : Array.isArray(payload.reservationGroups)
+        ? payload.reservationGroups
+        : null;
+    if (groups && groups.length) return groups;
+    return [payload];
   }
 
   function parseReservationTimeSlot(value) {
@@ -348,6 +386,27 @@ function createRentalService(options) {
       || context.userAgent
       || 'anonymous'
     ).slice(0, 200);
+  }
+
+  function calendarColor(seed = '') {
+    const colors = ['#5d7f73', '#c59157', '#7c8fb5', '#b86f68', '#6e8f9e', '#8d7ab8', '#719f80', '#b9895f'];
+    const text = String(seed || '');
+    let hash = 0;
+    for (const char of text) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+    return colors[hash % colors.length];
+  }
+
+  function calendarRange(params = {}) {
+    const startText = String(params.start || params.date_from || params.from || '').slice(0, 10);
+    const endText = String(params.end || params.date_to || params.to || '').slice(0, 10);
+    const now = new Date();
+    const start = /^\d{4}-\d{2}-\d{2}$/.test(startText)
+      ? new Date(`${startText}T00:00:00+08:00`)
+      : new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = /^\d{4}-\d{2}-\d{2}$/.test(endText)
+      ? new Date(`${endText}T23:59:59+08:00`)
+      : new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+    return { start: start.toISOString(), end: end.toISOString() };
   }
 
   function maskOpenId(openid) {
@@ -994,6 +1053,75 @@ function createRentalService(options) {
     });
   }
 
+  async function getCalendarEvents(params = {}, token) {
+    let fullAccess = false;
+    try {
+      await requireAdminRole(token, ['super_admin', 'admin', 'ops', 'auditor'], ['reservation.view', 'device.view', 'stats.view']);
+      fullAccess = true;
+    } catch (_) {
+      await requireUser(token);
+    }
+
+    const { start, end } = calendarRange(params);
+    const visibility = fullAccess ? { showName: true, showPhone: true, showStudentNo: true } : await getReservationVisibilityConfig();
+    const rows = await query(`
+      select r.*, d.device_code, d.name as device_name, u.name as user_name, u.phone as user_phone, u.student_no as user_student_no
+      from reservations r
+      join devices d on d.id = r.device_id
+      join users u on u.id = r.user_id
+      where r.status = any($1) and r.start_time < $3 and r.end_time > $2
+      order by r.start_time asc
+    `, [activeReservationStatus, start, end]);
+    const borrowRows = await query(`
+      select b.*, d.device_code, d.name as device_name, u.name as user_name, u.phone as user_phone, u.student_no as user_student_no
+      from borrow_records b
+      join devices d on d.id = b.device_id
+      join users u on u.id = b.user_id
+      where b.reservation_id is null and b.status = any($1) and b.borrow_time < $3 and coalesce(b.expected_return_time, b.return_time, now()) > $2
+      order by b.borrow_time asc
+    `, [['in_use', 'abnormal_pending', 'overdue'], start, end]);
+
+    const reservationEvents = rows.map((row) => {
+      const visible = applyReservationVisibility(row, visibility, fullAccess);
+      return {
+        id: row.id,
+        type: 'reservation',
+        status: row.status,
+        title: `${row.device_code} ${row.device_name}`,
+        device_id: row.device_id,
+        device_code: row.device_code,
+        device_name: row.device_name,
+        user_name: visible.user_name,
+        user_phone: visible.user_phone,
+        user_student_no: visible.user_student_no,
+        start_time: row.start_time,
+        end_time: row.end_time,
+        purpose: row.purpose || '',
+        color: calendarColor(row.device_code)
+      };
+    });
+    const borrowEvents = borrowRows.map((row) => {
+      const visible = applyReservationVisibility(row, visibility, fullAccess);
+      return {
+        id: row.id,
+        type: 'borrow',
+        status: row.status,
+        title: `${row.device_code} ${row.device_name}`,
+        device_id: row.device_id,
+        device_code: row.device_code,
+        device_name: row.device_name,
+        user_name: visible.user_name,
+        user_phone: visible.user_phone,
+        user_student_no: visible.user_student_no,
+        start_time: row.borrow_time,
+        end_time: row.expected_return_time || row.return_time || nowIso(),
+        purpose: '现场借用',
+        color: calendarColor(row.device_code)
+      };
+    });
+    return ok({ events: [...reservationEvents, ...borrowEvents], range: { start, end }, full_access: fullAccess });
+  }
+
   async function adminListDevices(filters = {}, token) {
     await requireAdminRole(token, ['super_admin', 'admin', 'ops'], ['device.manage', 'device.view']);
     const result = await listDevices(filters);
@@ -1020,28 +1148,45 @@ function createRentalService(options) {
 
   async function createReservation(payload, token) {
     const user = await requireUser(token);
-    const deviceCodes = parseReservationDevices(payload);
     const purpose = String(payload.purpose || '').trim().slice(0, 200);
     const batchId = uuid();
     const unfinishedRecord = await queryOne('select id from borrow_records where user_id = $1 and status = any($2) limit 1', [user.id, ['in_use', 'abnormal_pending', 'overdue']]);
     if (unfinishedRecord) {
       return fail('Please finish the current device usage before creating another reservation', 409, 3001);
     }
-    const devices = [];
-    for (const deviceCode of deviceCodes) {
-      const device = await getDeviceByCode(deviceCode);
-      if (!device) return fail(`Device not found: ${deviceCode}`, 404, 3004);
-      if (!device.allow_reservation || ['maintenance', 'disabled', 'abnormal_pending'].includes(device.status)) {
-        return fail(`Device ${device.device_code} is not reservable`, 409, 3001);
+    const plans = [];
+    for (const group of parseReservationGroups(payload)) {
+      const deviceCodes = parseReservationDevices(group);
+      const devices = [];
+      for (const deviceCode of deviceCodes) {
+        const device = await getDeviceByCode(deviceCode);
+        if (!device) return fail(`Device not found: ${deviceCode}`, 404, 3004);
+        if (!device.allow_reservation || ['maintenance', 'disabled', 'abnormal_pending'].includes(device.status)) {
+          return fail(`Device ${device.device_code} is not reservable`, 409, 3001);
+        }
+        devices.push(device);
       }
-      devices.push(device);
+      const slots = parseReservationSlots(group, devices);
+      plans.push({ deviceCodes, devices, slots });
     }
-    const slots = parseReservationSlots(payload, devices);
+    if (!plans.length) return fail('reservation_groups is required', 400, 2001);
     const created = [];
-    for (const device of devices) {
-      for (const { start, end } of slots) {
+    const selectedKeys = new Set();
+    for (const plan of plans) {
+      for (const device of plan.devices) {
+        for (const { start, end } of plan.slots) {
+          const selectedKey = `${device.id}:${start.toISOString()}:${end.toISOString()}`;
+          if (selectedKeys.has(selectedKey)) return fail(`Duplicate selected time slot for ${device.device_code}`, 409, 3001);
+          selectedKeys.add(selectedKey);
+        }
+      }
+    }
+    for (const plan of plans) {
+      for (const device of plan.devices) {
+        for (const { start, end } of plan.slots) {
         const conflicts = await checkConflict(device.id, start.toISOString(), end.toISOString());
         if (conflicts.length) return fail(`Selected time slot is already occupied for ${device.device_code}`, 409, 3001);
+        }
       }
     }
     await withTransaction(async (client) => {
@@ -1049,19 +1194,21 @@ function createRentalService(options) {
       await client.query('insert into reservation_batches (id, user_id, device_codes, time_slots, purpose, status, created_at, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8)', [
         batchId,
         user.id,
-        deviceCodes.join(','),
-        slots.map(({ start, end }) => `${start.toISOString()} - ${end.toISOString()}`).join('\n'),
+        [...new Set(plans.flatMap((plan) => plan.deviceCodes))].join(','),
+        plans.flatMap((plan) => plan.slots.map(({ start, end }) => `${plan.deviceCodes.join(',')} | ${start.toISOString()} - ${end.toISOString()}`)).join('\n'),
         purpose,
         'pending',
         nowIso(),
         nowIso()
       ]);
-      for (const device of devices) {
-        for (const { start, end } of slots) {
-          const row = { id: uuid(), batch_id: batchId, device_id: device.id, user_id: user.id, start_time: start.toISOString(), end_time: end.toISOString(), purpose, status: 'pending', created_at: nowIso(), updated_at: nowIso() };
-          await client.query('insert into reservations (id, batch_id, device_id, user_id, start_time, end_time, purpose, status, created_at, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', Object.values(row));
-          created.push({ ...row, device_code: device.device_code });
-          await log('create_reservation', `Created reservation ${device.device_code} ${start.toISOString()} - ${end.toISOString()}`, user, device.id, row.id, txQuery);
+      for (const plan of plans) {
+        for (const device of plan.devices) {
+          for (const { start, end } of plan.slots) {
+            const row = { id: uuid(), batch_id: batchId, device_id: device.id, user_id: user.id, start_time: start.toISOString(), end_time: end.toISOString(), purpose, status: 'pending', created_at: nowIso(), updated_at: nowIso() };
+            await client.query('insert into reservations (id, batch_id, device_id, user_id, start_time, end_time, purpose, status, created_at, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', Object.values(row));
+            created.push({ ...row, device_code: device.device_code });
+            await log('create_reservation', `Created reservation ${device.device_code} ${start.toISOString()} - ${end.toISOString()}`, user, device.id, row.id, txQuery);
+          }
         }
       }
     });
@@ -1156,8 +1303,94 @@ function createRentalService(options) {
     return ok({ message: abnormal ? 'Abnormal return submitted' : 'Returned successfully' });
   }
 
+  async function reportDeviceFault(payload, token) {
+    const user = await requireUser(token);
+    const recordId = String(payload.record_id || payload.recordId || '').trim();
+    const deviceCode = String(payload.device_code || payload.deviceCode || '').trim();
+    const issueType = String(payload.issue_type || payload.issueType || 'fault').trim().slice(0, 50);
+    const description = assertText(payload.description || payload.note, 'description', 1000);
+    const photos = Array.isArray(payload.photos) ? payload.photos.slice(0, 5).map((value) => String(value).slice(0, 500)).filter(Boolean) : [];
+    let record = null;
+    let device = null;
+
+    if (recordId) {
+      record = await getById('borrow_records', recordId);
+      if (!record) return fail('Borrow record not found', 404, 3004);
+      if (record.user_id !== user.id) return fail('Cannot report another user record', 403, 1003);
+      device = await getById('devices', record.device_id);
+    } else if (deviceCode) {
+      device = await getDeviceByCode(deviceCode);
+    }
+
+    if (!device) return fail('Device not found', 404, 3004);
+    const report = {
+      id: uuid(),
+      device_id: device.id,
+      user_id: user.id,
+      borrow_record_id: record?.id || null,
+      reservation_id: record?.reservation_id || null,
+      issue_type: issueType,
+      description,
+      photos,
+      status: 'pending',
+      created_at: nowIso(),
+      updated_at: nowIso()
+    };
+    await withTransaction(async (client) => {
+      const txQuery = (sql, params = []) => client.query(sql, params);
+      await client.query('insert into device_fault_reports (id, device_id, user_id, borrow_record_id, reservation_id, issue_type, description, photos, status, created_at, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [
+        report.id, report.device_id, report.user_id, report.borrow_record_id, report.reservation_id, report.issue_type, report.description, JSON.stringify(report.photos), report.status, report.created_at, report.updated_at
+      ]);
+      await client.query('update devices set status = $1, last_condition = $2, updated_at = $3 where id = $4', ['abnormal_pending', issueType, nowIso(), device.id]);
+      await log('report_device_fault', `Reported device fault: ${issueType}`, user, device.id, report.id, txQuery);
+    });
+    return ok({ message: 'Fault report submitted', report });
+  }
+
+  async function adminListFaultReports(params = {}, token) {
+    await requireAdminRole(token, ['super_admin', 'admin', 'ops'], ['fault.manage', 'device.manage']);
+    const status = String(params.status || '').trim();
+    const sqlParams = [];
+    let where = '';
+    if (status) {
+      sqlParams.push(status);
+      where = `where f.status = $${sqlParams.length}`;
+    }
+    const rows = await query(`
+      select f.*, d.device_code, d.name as device_name, d.location as device_location, u.name as user_name, u.phone as user_phone, u.student_no as user_student_no
+      from device_fault_reports f
+      join devices d on d.id = f.device_id
+      left join users u on u.id = f.user_id
+      ${where}
+      order by f.created_at desc
+    `, sqlParams);
+    return ok({ reports: rows || [] });
+  }
+
+  async function adminResolveFaultReport(payload, token) {
+    const { admin } = await requireAdminRole(token, ['super_admin', 'admin', 'ops'], ['fault.manage', 'device.manage']);
+    const reportId = assertText(payload.report_id || payload.reportId, 'report_id', 60);
+    const status = String(payload.status || 'resolved').trim();
+    if (!['pending', 'processing', 'resolved'].includes(status)) return fail('Invalid fault report status', 400, 2001);
+    const adminNote = String(payload.admin_note || payload.adminNote || '').trim().slice(0, 500);
+    const setAvailable = parseBoolean(payload.set_available ?? payload.setAvailable);
+    const report = await getById('device_fault_reports', reportId);
+    if (!report) return fail('Fault report not found', 404, 3004);
+    await withTransaction(async (client) => {
+      const txQuery = (sql, params = []) => client.query(sql, params);
+      await client.query('update device_fault_reports set status = $1, admin_note = $2, updated_at = $3, resolved_at = $4 where id = $5', [
+        status, adminNote, nowIso(), status === 'resolved' ? nowIso() : null, reportId
+      ]);
+      if (status === 'resolved' && setAvailable) {
+        await client.query('update devices set status = $1, updated_at = $2 where id = $3', ['available', nowIso(), report.device_id]);
+      }
+      await log('resolve_device_fault', `Updated fault report to ${status}`, admin, report.device_id, reportId, txQuery);
+    });
+    return ok({ message: 'Fault report updated' });
+  }
+
   async function adminListUsers(_, token) {
-    await requireAdminRole(token, ['super_admin', 'admin'], ['user.manage']);
+    await requireAdminRole(token, ['super_admin', 'admin'], ['user.manage', 'user.approve']);
     const data = await query('select * from users order by created_at desc');
     return ok({ users: (data || []).map(safeUser) });
   }
@@ -1179,7 +1412,7 @@ function createRentalService(options) {
   }
 
   async function adminSetUserStatus(payload, token) {
-    const { admin } = await requireAdminRole(token, ['super_admin', 'admin'], ['user.manage']);
+    const { admin } = await requireAdminRole(token, ['super_admin', 'admin'], ['user.manage', 'user.approve']);
     const userId = assertText(payload.user_id, 'user_id', 60);
     const status = assertText(payload.status, 'status', 20);
     if (!['active', 'disabled', 'pending'].includes(status)) return fail('Invalid status', 400, 2001);
@@ -1287,7 +1520,7 @@ function createRentalService(options) {
   async function adminListRoles(_, token) {
     await requireAdminRole(token, ['super_admin']);
     const rows = await query('select ar.*, u.name as user_name, u.phone as user_phone from admin_roles ar left join users u on u.id = ar.user_id order by ar.created_at desc');
-    return ok({ roles: rows || [] });
+    return ok({ roles: rows || [], permissions: PERMISSION_OPTIONS, role_defaults: ROLE_PERMISSIONS });
   }
 
   async function adminUpsertRole(payload, token) {
@@ -1518,7 +1751,7 @@ function createRentalService(options) {
   }
 
   async function usageStats(payload, token) {
-    await requireAdminRole(token, ['super_admin', 'admin', 'ops', 'auditor'], ['stats.view']);
+    await requireAdminRole(token, ['super_admin', 'admin', 'ops', 'auditor'], ['stats.view', 'stats.export']);
     const { user_id: userId, device_id: deviceId, start_date: startDate, end_date: endDate } = payload;
     let sql = 'select * from borrow_records where return_time is not null';
     const params = [];
@@ -1538,10 +1771,10 @@ function createRentalService(options) {
   }
 
   async function adminOptions(_, token) {
-    await requireAdminRole(token, ['super_admin', 'admin', 'ops', 'auditor'], ['stats.view', 'device.manage', 'reservation.view']);
+    await requireAdminRole(token, ['super_admin', 'admin', 'ops', 'auditor'], ['stats.view', 'stats.export', 'device.manage', 'reservation.view']);
     const users = await query('select id, name, phone, status from users order by created_at desc');
     const devices = await query('select id, device_code, name from devices order by created_at desc');
-    return ok({ users: users || [], devices: devices || [] });
+    return ok({ users: users || [], devices: devices || [], permissions: PERMISSION_OPTIONS, role_defaults: ROLE_PERMISSIONS });
   }
 
   async function verifyWechatSignature({ signature, timestamp, nonce }) {
@@ -1575,9 +1808,9 @@ function createRentalService(options) {
     return `<xml>\n<ToUserName><![CDATA[${escapeXml(toUser)}]]></ToUserName>\n<FromUserName><![CDATA[${escapeXml(fromUser)}]]></FromUserName>\n<CreateTime>${timestamp}</CreateTime>\n<MsgType><![CDATA[text]]></MsgType>\n<Content><![CDATA[${escapeXml(content)}]]></Content>\n</xml>`;
   }
 
-  const legacyRoutes = { adminLogin, registerUser, loginUser, listDevices, getReservationSlotOptions, getDeviceDetail, createReservation, cancelReservation, myRecords, startUse, submitReturn, adminListUsers, adminSetUserStatus, adminSetUserBan, adminUnbindWechat, adminCreateDevice, adminListDevices, adminUpdateDevice, adminListReservations, adminApproveReservation, adminSetDeviceAvailable, adminGetSecurityConfig, adminUpdateSecurityConfig, adminGetActivitySummary, adminListRoles, adminUpsertRole, adminRevokeRole, usageStats, adminOptions, adminPreviewDailyUsageReport, adminSendDailyUsageReport, createLoginChallenge, getLoginChallengeStatus, bindWechatAccount, getSystemNotice };
+  const legacyRoutes = { adminLogin, registerUser, loginUser, listDevices, getReservationSlotOptions, getCalendarEvents, getDeviceDetail, createReservation, cancelReservation, myRecords, startUse, submitReturn, reportDeviceFault, adminListFaultReports, adminResolveFaultReport, adminListUsers, adminSetUserStatus, adminSetUserBan, adminUnbindWechat, adminCreateDevice, adminListDevices, adminUpdateDevice, adminListReservations, adminApproveReservation, adminSetDeviceAvailable, adminGetSecurityConfig, adminUpdateSecurityConfig, adminGetActivitySummary, adminListRoles, adminUpsertRole, adminRevokeRole, usageStats, adminOptions, adminPreviewDailyUsageReport, adminSendDailyUsageReport, createLoginChallenge, getLoginChallengeStatus, bindWechatAccount, getSystemNotice };
 
-  return { adminApproveReservation, adminCreateDevice, adminDeleteUser, adminGetActivitySummary, adminGetSecurityConfig, adminListDevices, adminListReservations, adminListRoles, adminListUsers, adminLogin, adminOptions, adminPreviewDailyUsageReport, adminSendDailyUsageReport, adminRevokeRole, adminSetDeviceAvailable, adminSetUserBan, adminSetUserStatus, adminUnbindWechat, adminUpdateDevice, adminUpdateSecurityConfig, adminUpsertRole, authTokenFromReq, bindWechatAccount, buildWechatReply, cancelReservation, createLoginChallenge, createReservation, getReportConfig, getDeviceDetail, getLoginChallengeStatus, getProfile, getReservationSlotOptions, getSystemNotice, handleWechatMessage, legacyRoutes, listDevices, loginUser, myRecords, registerUser, safeFilename, sendWechatCustomMessage, startUse, submitReturn, pushDailyUsageReport, usageStats, verifyWechatHandshake };
+  return { adminApproveReservation, adminCreateDevice, adminDeleteUser, adminGetActivitySummary, adminGetSecurityConfig, adminListDevices, adminListReservations, adminListRoles, adminListUsers, adminLogin, adminOptions, adminPreviewDailyUsageReport, adminSendDailyUsageReport, adminRevokeRole, adminSetDeviceAvailable, adminSetUserBan, adminSetUserStatus, adminUnbindWechat, adminUpdateDevice, adminUpdateSecurityConfig, adminUpsertRole, adminListFaultReports, adminResolveFaultReport, authTokenFromReq, bindWechatAccount, buildWechatReply, cancelReservation, createLoginChallenge, createReservation, getCalendarEvents, getReportConfig, getDeviceDetail, getLoginChallengeStatus, getProfile, getReservationSlotOptions, getSystemNotice, handleWechatMessage, legacyRoutes, listDevices, loginUser, myRecords, registerUser, reportDeviceFault, safeFilename, sendWechatCustomMessage, startUse, submitReturn, pushDailyUsageReport, usageStats, verifyWechatHandshake };
 }
 
 module.exports = { createRentalService };

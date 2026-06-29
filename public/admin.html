@@ -37,6 +37,8 @@
           <button data-tab="reservations">预约审核</button>
           <button data-tab="security">系统配置</button>
           <button data-tab="roles">管理员权限</button>
+          <button data-tab="faults">故障报备</button>
+          <a class="tab-link" href="calendar.html?admin=1">使用日历</a>
           <button data-tab="stats">统计导出</button>
           <button data-tab="user-info">用户信息</button>
           <button data-tab="notice">注意事项</button>
@@ -324,7 +326,10 @@
                 <option value="super_admin">super_admin</option>
               </select>
             </div>
-            <div><label for="role_permissions">权限</label><input id="role_permissions" placeholder="逗号分隔，如 device.manage,reservation.approve"></div>
+            <div>
+              <label>权限</label>
+              <div id="role_permissions_picker" class="permission-grid"></div>
+            </div>
             <div><label for="role_note">备注</label><input id="role_note" placeholder="可选"></div>
           </div>
           <div class="actions">
@@ -333,6 +338,17 @@
             <button id="reload-role-btn" class="secondary">刷新角色列表</button>
           </div>
           <div id="roleList"></div>
+        </section>
+
+        <section id="tab_faults" class="card hidden">
+          <div class="section-head">
+            <div>
+              <h3>故障报备</h3>
+              <p class="muted">用户在使用中上报后，设备会自动进入异常待处理状态。可在这里查看详情并处理。</p>
+            </div>
+            <button id="reload-faults-btn" class="secondary">刷新故障列表</button>
+          </div>
+          <div id="faultReportList"></div>
         </section>
       </div>
     </div>

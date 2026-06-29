@@ -14,7 +14,7 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
     </div>
     <nav class="main-nav" aria-label="主导航">
-      ${loggedIn ? '<a href="index.html">设备列表</a><a href="reserve.html">发起预约</a><a href="my.html">我的记录</a>' : ''}
+      ${loggedIn ? '<a href="index.html">设备列表</a><a href="reserve.html">发起预约</a><a href="my.html">我的记录</a><a href="calendar.html">使用日历</a>' : ''}
       ${showAdminEntry ? '<a href="admin.html">管理后台</a>' : ''}
     </nav>
     <div class="account-nav">

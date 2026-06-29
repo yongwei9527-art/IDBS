@@ -39,6 +39,7 @@ function createRestApiRouter(service) {
   router.get('/system/notice', wrap(() => service.getSystemNotice()));
 
   router.get('/reservation-slots', wrap((req) => service.getReservationSlotOptions(req.query || {})));
+  router.get('/calendar', wrap((req) => service.getCalendarEvents(req.query || {}, service.authTokenFromReq(req))));
   router.get('/devices', wrap((req) => service.listDevices(req.query || {})));
   router.get('/devices/:deviceCode', wrap((req) => service.getDeviceDetail({ deviceCode: req.params.deviceCode })));
 
@@ -58,6 +59,7 @@ function createRestApiRouter(service) {
     ...req.body,
     record_id: req.params.recordId
   }, service.authTokenFromReq(req))));
+  router.post('/fault-reports', wrap((req) => service.reportDeviceFault(req.body || {}, service.authTokenFromReq(req))));
 
   router.get('/admin/users', wrap((req) => service.adminListUsers(req.query || {}, service.authTokenFromReq(req))));
   router.delete('/admin/users/:userId', wrap((req) => service.adminDeleteUser({
@@ -104,6 +106,11 @@ function createRestApiRouter(service) {
   router.post('/admin/reports/daily-usage/send', wrap((req) => service.adminSendDailyUsageReport(req.body || {}, service.authTokenFromReq(req))));
   router.get('/admin/statistics/usage', wrap((req) => service.usageStats(req.query || {}, service.authTokenFromReq(req))));
   router.get('/admin/options', wrap((req) => service.adminOptions(req.query || {}, service.authTokenFromReq(req))));
+  router.get('/admin/fault-reports', wrap((req) => service.adminListFaultReports(req.query || {}, service.authTokenFromReq(req))));
+  router.patch('/admin/fault-reports/:reportId', wrap((req) => service.adminResolveFaultReport({
+    ...req.body,
+    report_id: req.params.reportId
+  }, service.authTokenFromReq(req))));
 
   return router;
 }

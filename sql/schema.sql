@@ -193,6 +193,22 @@ CREATE TABLE IF NOT EXISTS receive_records (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS device_fault_reports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  borrow_record_id UUID REFERENCES borrow_records(id) ON DELETE SET NULL,
+  reservation_id UUID REFERENCES reservations(id) ON DELETE SET NULL,
+  issue_type TEXT NOT NULL DEFAULT 'fault',
+  description TEXT,
+  photos JSONB NOT NULL DEFAULT '[]'::jsonb,
+  status TEXT NOT NULL DEFAULT 'pending', -- pending/processing/resolved
+  admin_note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_at TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS operation_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   operator_id UUID,
@@ -216,6 +232,8 @@ CREATE INDEX IF NOT EXISTS idx_user_activity_openid_time ON user_activity_logs(w
 CREATE INDEX IF NOT EXISTS idx_usage_log_created_at ON usage_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_usage_log_record_action ON usage_log(record_id, action);
 CREATE INDEX IF NOT EXISTS idx_wechat_push_logs_date ON wechat_push_logs(push_date, created_at);
+CREATE INDEX IF NOT EXISTS idx_fault_reports_device_time ON device_fault_reports(device_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_fault_reports_status_time ON device_fault_reports(status, created_at DESC);
 
 INSERT INTO system_configs (config_key, config_value, description)
 VALUES
@@ -254,3 +272,4 @@ ALTER TABLE system_configs DISABLE ROW LEVEL SECURITY;
 ALTER TABLE user_activity_logs DISABLE ROW LEVEL SECURITY;
 ALTER TABLE usage_log DISABLE ROW LEVEL SECURITY;
 ALTER TABLE wechat_push_logs DISABLE ROW LEVEL SECURITY;
+ALTER TABLE device_fault_reports DISABLE ROW LEVEL SECURITY;

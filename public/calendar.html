@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>使用日历</title>
+  <link rel="stylesheet" href="css/style.css?v=20260629d">
+</head>
+<body>
+<main>
+  <section class="hero">
+    <h2>设备使用日历</h2>
+    <p class="muted">不同设备用不同颜色标记；悬停在日期上可快速放大查看，当天点击可进入详细页面。</p>
+    <div class="hero-actions">
+      <a class="badge info" href="index.html">返回设备列表</a>
+      <a class="badge" href="admin.html">返回后台</a>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h3 id="month-title">使用安排</h3>
+        <p class="muted">包含待审、已通过和使用中的预约。</p>
+      </div>
+      <div class="actions">
+        <button id="prev-month" class="secondary">上个月</button>
+        <button id="next-month" class="secondary">下个月</button>
+      </div>
+    </div>
+    <div id="calendar-message"></div>
+    <div id="calendar"></div>
+  </section>
+</main>
+
+<script src="js/config.js"></script>
+<script src="js/api.js?v=20260629b"></script>
+<script src="js/ui.js"></script>
+<script src="js/common-header.js?v=20260629c"></script>
+<script src="js/calendar-ui.js?v=20260629d"></script>
+<script>
+if (!isLoggedIn() && !isAdminLoggedIn()) {
+  location.href = 'login.html';
+  throw new Error('Login required');
+}
+
+const adminView = qs('admin') === '1';
+let currentMonth = qs('month') || new Date().toISOString().slice(0, 7);
+
+function shiftMonth(delta) {
+  const [year, month] = currentMonth.split('-').map(Number);
+  const date = new Date(year, month - 1 + delta, 1);
+  currentMonth = date.toISOString().slice(0, 7);
+  loadCalendar();
+}
+
+async function loadCalendar() {
+  document.getElementById('month-title').textContent = `${currentMonth} 使用安排`;
+  const { start, end } = CalendarUi.monthRange(currentMonth);
+  const startText = CalendarUi.localDate(start);
+  const endText = CalendarUi.localDate(end);
+  try {
+    const result = await callRestApi(`/calendar?start=${encodeURIComponent(startText)}&end=${encodeURIComponent(endText)}`, { admin: adminView });
+    CalendarUi.renderMonth(document.getElementById('calendar'), result.events || [], currentMonth, { admin: adminView });
+  } catch (error) {
+    showPageMessage('calendar-message', 'danger', error.message);
+  }
+}
+
+document.getElementById('prev-month').addEventListener('click', () => shiftMonth(-1));
+document.getElementById('next-month').addEventListener('click', () => shiftMonth(1));
+loadCalendar();
+</script>
+</body>
+</html>

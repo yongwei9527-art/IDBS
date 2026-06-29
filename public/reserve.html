@@ -27,7 +27,12 @@
         <label for="reservation_date">预约日期</label>
         <input id="reservation_date" type="date">
       </div>
+      <div class="actions">
+        <button id="add-date-btn" class="secondary">添加日期</button>
+        <button id="clear-dates-btn" class="secondary">清空日期</button>
+      </div>
     </div>
+    <div id="selected_dates" class="chip-list"></div>
     <div class="section-head">
       <div>
         <h3>选择预约时间段</h3>
@@ -40,6 +45,11 @@
     </div>
     <div id="slot_options" class="slot-grid"></div>
     <div id="slot_preview"></div>
+    <div class="actions">
+      <button id="add-plan-btn" class="secondary">添加为一组预约计划</button>
+      <button id="clear-plans-btn" class="secondary">清空计划组</button>
+    </div>
+    <div id="plan_groups" class="stack"></div>
     <label for="purpose">使用目的</label>
     <textarea id="purpose" rows="4" placeholder="请说明用途，方便管理员审核"></textarea>
     <div class="actions">
@@ -62,11 +72,15 @@ const deviceSuggestionsEl = document.getElementById('device_suggestions');
 const selectedDevicesEl = document.getElementById('selected_devices');
 const deviceCodesInput = document.getElementById('device_codes');
 const reservationDateInput = document.getElementById('reservation_date');
+const selectedDatesEl = document.getElementById('selected_dates');
 const slotOptionsEl = document.getElementById('slot_options');
 const slotPreviewEl = document.getElementById('slot_preview');
+const planGroupsEl = document.getElementById('plan_groups');
 
 let allDevices = [];
 let selectedDeviceCodes = new Set();
+let selectedDates = new Set();
+let reservationGroups = [];
 let slotPresets = ReservationSlots.fallbackPresets;
 
 function dateText(date) {
@@ -80,6 +94,8 @@ function setupDefaultDate() {
   const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
   reservationDateInput.min = dateText(today);
   reservationDateInput.value = dateText(tomorrow);
+  selectedDates.add(dateText(tomorrow));
+  renderSelectedDates();
 }
 
 function isReservableDevice(device) {
@@ -112,6 +128,20 @@ function renderSelectedDevices() {
       selectedDeviceCodes.delete(button.dataset.code);
       renderSelectedDevices();
       refreshSlotOptions();
+    });
+  });
+}
+
+function renderSelectedDates() {
+  const dates = [...selectedDates].sort();
+  selectedDatesEl.innerHTML = dates.length ? dates.map((date) => `
+    <span class="chip">${escapeHtml(date)}<button class="chip-remove" data-date="${escapeHtml(date)}" aria-label="移除日期">×</button></span>
+  `).join('') : '<p class="muted">尚未选择日期。</p>';
+  selectedDatesEl.querySelectorAll('.chip-remove').forEach((button) => {
+    button.addEventListener('click', () => {
+      selectedDates.delete(button.dataset.date);
+      renderSelectedDates();
+      updateSlotPreview();
     });
   });
 }
@@ -159,7 +189,22 @@ function bindSlotEvents() {
 }
 
 function updateSlotPreview() {
-  return ReservationSlots.renderPreview(slotPreviewEl, reservationDateInput.value, selectedSlotKeys(), slotPresets);
+  const dates = [...selectedDates].sort();
+  if (!dates.length) {
+    slotPreviewEl.innerHTML = '<p class="muted">请先添加预约日期。</p>';
+    return { valid: false, ranges: [] };
+  }
+  const results = dates.map((date) => ReservationSlots.renderPreview(document.createElement('div'), date, selectedSlotKeys(), slotPresets));
+  const invalid = results.find((item) => !item.valid);
+  slotPreviewEl.innerHTML = dates.map((date, index) => `
+    <div class="soft-panel">
+      <div class="metric-label">${escapeHtml(date)}</div>
+      ${results[index].valid
+        ? `<div class="slot-preview">${results[index].ranges.map((range) => `<span class="badge info">${escapeHtml(range.label)}：${escapeHtml(range.start)} - ${escapeHtml(range.end)}</span>`).join('')}</div>`
+        : '<div class="alert warn">请选择互不重叠的预约时间段。</div>'}
+    </div>
+  `).join('');
+  return invalid || { valid: true, ranges: results.flatMap((item) => item.ranges || []) };
 }
 
 async function refreshSlotOptions() {
@@ -187,6 +232,53 @@ async function loadDeviceOptions() {
   await refreshSlotOptions();
 }
 
+function currentGroupPayload() {
+  return {
+    device_codes: [...selectedDeviceCodes],
+    reservation_dates: [...selectedDates].sort(),
+    slot_keys: selectedSlotKeys()
+  };
+}
+
+function renderPlanGroups() {
+  planGroupsEl.innerHTML = reservationGroups.length ? `
+    <section class="soft-panel">
+      <h3>待提交预约计划</h3>
+      ${reservationGroups.map((group, index) => `
+        <div class="plan-row">
+          <div>
+            <strong>计划 ${index + 1}</strong>
+            <p class="muted">设备：${escapeHtml(group.device_codes.join(', '))}</p>
+            <p class="muted">日期：${escapeHtml(group.reservation_dates.join(', '))}</p>
+            <p class="muted">时间段：${escapeHtml(group.slot_keys.map((key) => slotPresets.find((slot) => slot.key === key)?.label || key).join('、'))}</p>
+          </div>
+          <button class="danger" data-plan-index="${index}">移除</button>
+        </div>
+      `).join('')}
+    </section>
+  ` : '';
+  planGroupsEl.querySelectorAll('[data-plan-index]').forEach((button) => {
+    button.addEventListener('click', () => {
+      reservationGroups.splice(Number(button.dataset.planIndex), 1);
+      renderPlanGroups();
+    });
+  });
+}
+
+function addCurrentPlan() {
+  const messageEl = document.getElementById('message');
+  const group = currentGroupPayload();
+  const preview = updateSlotPreview();
+  messageEl.innerHTML = '';
+  if (!group.device_codes.length) return showPageMessage(messageEl, 'warn', '请先选择至少一台设备。');
+  if (!group.reservation_dates.length) return showPageMessage(messageEl, 'warn', '请至少添加一个预约日期。');
+  if (!group.slot_keys.length) return showPageMessage(messageEl, 'warn', '请至少选择一个预约时间段。');
+  if (!preview.valid) return showPageMessage(messageEl, 'warn', '请选择互不重叠的预约时间段。');
+  reservationGroups.push(group);
+  renderPlanGroups();
+  showPageMessage(messageEl, 'success', '已加入一组预约计划，可继续选择其他设备和日期。');
+}
+
 async function submitReserve() {
   if (!requireLogin()) return;
   const messageEl = document.getElementById('message');
@@ -195,15 +287,17 @@ async function submitReserve() {
   const deviceCodes = [...selectedDeviceCodes];
   const slotKeys = selectedSlotKeys();
   const preview = updateSlotPreview();
-  if (!deviceCodes.length) return showPageMessage(messageEl, 'warn', '请先选择至少一台设备。');
-  if (!slotKeys.length) return showPageMessage(messageEl, 'warn', '请至少选择一个预约时间段。');
-  if (!preview.valid) return showPageMessage(messageEl, 'warn', '请选择互不重叠的预约时间段。');
+  const groups = reservationGroups.length ? reservationGroups : [currentGroupPayload()];
+  if (!reservationGroups.length) {
+    if (!deviceCodes.length) return showPageMessage(messageEl, 'warn', '请先选择至少一台设备。');
+    if (!selectedDates.size) return showPageMessage(messageEl, 'warn', '请至少添加一个预约日期。');
+    if (!slotKeys.length) return showPageMessage(messageEl, 'warn', '请至少选择一个预约时间段。');
+    if (!preview.valid) return showPageMessage(messageEl, 'warn', '请选择互不重叠的预约时间段。');
+  }
 
   try {
     const result = await callApi('createReservation', {
-      device_codes: deviceCodes,
-      reservation_date: reservationDateInput.value,
-      slot_keys: slotKeys,
+      reservation_groups: groups,
       purpose: purpose.value.trim()
     });
     showPageMessage(messageEl, 'success', result.message || '预约已提交。');
@@ -220,6 +314,16 @@ document.addEventListener('click', (event) => {
   if (!event.target.closest('.combo-box')) deviceSuggestionsEl.classList.add('hidden');
 });
 reservationDateInput.addEventListener('change', updateSlotPreview);
+document.getElementById('add-date-btn').addEventListener('click', () => {
+  if (reservationDateInput.value) selectedDates.add(reservationDateInput.value);
+  renderSelectedDates();
+  updateSlotPreview();
+});
+document.getElementById('clear-dates-btn').addEventListener('click', () => {
+  selectedDates.clear();
+  renderSelectedDates();
+  updateSlotPreview();
+});
 document.getElementById('select-all-slots-btn').addEventListener('click', () => {
   ReservationSlots.renderCheckboxes(slotOptionsEl, slotPresets, ReservationSlots.baseKeys(slotPresets), { name: 'reserve_slot_keys' });
   bindSlotEvents();
@@ -229,6 +333,11 @@ document.getElementById('clear-slots-btn').addEventListener('click', () => {
   ReservationSlots.renderCheckboxes(slotOptionsEl, slotPresets, [], { name: 'reserve_slot_keys' });
   bindSlotEvents();
   updateSlotPreview();
+});
+document.getElementById('add-plan-btn').addEventListener('click', addCurrentPlan);
+document.getElementById('clear-plans-btn').addEventListener('click', () => {
+  reservationGroups = [];
+  renderPlanGroups();
 });
 document.getElementById('submit-btn').addEventListener('click', submitReserve);
 loadDeviceOptions().catch((error) => showPageMessage('message', 'danger', error.message));

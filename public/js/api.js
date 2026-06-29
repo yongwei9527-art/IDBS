@@ -13,7 +13,9 @@ const STATUS_LABELS = {
   no_show: '爽约',
   returned: '已归还',
   overdue: '逾期',
-  active: '启用'
+  active: '启用',
+  processing: '处理中',
+  resolved: '已解决'
 };
 
 function normalizeBaseUrl(url) {

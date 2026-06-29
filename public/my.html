@@ -59,6 +59,20 @@ function returnForm(id) {
     <div class="field-help">${requireReturnPhoto ? '归还前必须上传设备状态图片。' : '管理员当前未强制要求上传图片，可按需上传。'}</div>
     <input id="photo_${id}" type="file" accept="image/*" multiple>
     <button onclick="submitReturn('${id}')">提交归还</button>
+    <button class="warning" onclick="toggleFaultForm('${id}')">报备故障</button>
+    <div id="fault_${id}" class="soft-panel hidden">
+      <label for="fault_type_${id}">故障类型</label>
+      <select id="fault_type_${id}">
+        <option value="fault">设备故障</option>
+        <option value="damaged">设备损坏</option>
+        <option value="safety">安全隐患</option>
+        <option value="other">其他问题</option>
+      </select>
+      <label for="fault_note_${id}">故障描述</label>
+      <textarea id="fault_note_${id}" rows="2" placeholder="请描述故障现象、发生时间和当前设备状态"></textarea>
+      <input id="fault_photo_${id}" type="file" accept="image/*" multiple>
+      <button class="warning" onclick="submitFaultReport('${id}')">提交故障报备</button>
+    </div>
   `;
 }
 
@@ -141,6 +155,35 @@ async function submitReturn(id) {
       return_note: document.getElementById(`note_${id}`).value.trim(),
       return_photos: photos
     });
+    load();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+function toggleFaultForm(id) {
+  document.getElementById(`fault_${id}`).classList.toggle('hidden');
+}
+
+async function submitFaultReport(id) {
+  try {
+    const note = document.getElementById(`fault_note_${id}`).value.trim();
+    if (!note) throw new Error('请填写故障描述。');
+    const input = document.getElementById(`fault_photo_${id}`);
+    const photos = [];
+    for (const file of [...(input.files || [])].slice(0, 5)) {
+      photos.push(await uploadPhoto(file, 'fault-photos'));
+    }
+    await callRestApi('/fault-reports', {
+      method: 'POST',
+      body: {
+        record_id: id,
+        issue_type: document.getElementById(`fault_type_${id}`).value,
+        description: note,
+        photos
+      }
+    });
+    alert('故障已报备，设备已进入异常待处理状态。');
     load();
   } catch (error) {
     alert(error.message);

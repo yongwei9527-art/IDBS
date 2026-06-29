@@ -324,6 +324,18 @@ tr:hover td { background: rgba(245, 249, 246, 0.82); }
   position: relative;
   top: 0;
 }
+.tabs .tab-link {
+  display: block;
+  background: linear-gradient(180deg, rgba(244, 249, 246, 0.98), rgba(232, 241, 236, 0.98));
+  color: var(--primary-dark);
+  box-shadow: 0 6px 16px rgba(71, 84, 103, 0.06);
+  border: 1px solid rgba(93,127,115,0.12);
+  border-radius: 14px;
+  padding: 12px 18px;
+  min-height: 48px;
+  font-weight: 700;
+}
+.tabs .tab-link:hover { text-decoration: none; background: rgba(93,127,115,.12); }
 .tabs button.active { background: linear-gradient(180deg, var(--primary), var(--primary-dark)); color: #fff; box-shadow: 0 12px 24px rgba(93,127,115,.24); transform: translateY(-1px); }
 .hidden { display: none; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px 14px; }
@@ -347,6 +359,20 @@ tr:hover td { background: rgba(245, 249, 246, 0.82); }
 .stack > * + * { margin-top: 12px; }
 .kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
 .kpi .card { margin: 0; }
+.summary-action {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid rgba(255,255,255,0.65);
+  color: var(--text);
+  background: var(--surface);
+  margin: 0;
+  box-shadow: var(--shadow);
+}
+.summary-action:hover {
+  background: var(--surface-strong);
+  color: var(--text);
+}
 .kpi .value {
   font-size: 30px;
   font-weight: 800;
@@ -488,6 +514,39 @@ tr:hover td { background: rgba(245, 249, 246, 0.82); }
   gap: 8px;
   margin: 8px 0 14px;
 }
+.plan-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(93,127,115,0.12);
+}
+.plan-row:last-child { border-bottom: 0; }
+.permission-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+  margin-top: 6px;
+}
+.permission-card {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(93,127,115,0.14);
+  background: rgba(255,255,255,.76);
+}
+.permission-card input {
+  width: auto;
+  margin: 5px 0 0;
+}
+.permission-card small {
+  display: block;
+  color: var(--muted);
+  font-weight: 500;
+}
 .metric-label {
   color: var(--muted);
   font-size: 13px;
@@ -502,6 +561,79 @@ tr:hover td { background: rgba(245, 249, 246, 0.82); }
   grid-template-columns: 1.15fr .85fr;
   gap: 16px;
   margin-bottom: 8px;
+}
+.calendar-weekdays,
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+.calendar-weekdays {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+}
+.calendar-day {
+  position: relative;
+  min-height: 116px;
+  padding: 10px;
+  border-radius: 18px;
+  border: 1px solid rgba(93,127,115,0.12);
+  background: rgba(255,255,255,0.76);
+  color: var(--text);
+  box-shadow: var(--shadow-soft);
+}
+.calendar-day:hover {
+  text-decoration: none;
+  transform: translateY(-1px);
+  z-index: 8;
+}
+.calendar-day.muted-day { opacity: .48; }
+.calendar-date {
+  font-weight: 900;
+  color: var(--primary-dark);
+}
+.calendar-events {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 10px;
+}
+.calendar-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  box-shadow: 0 0 0 2px rgba(255,255,255,.9);
+}
+.calendar-more {
+  font-size: 12px;
+  color: var(--muted);
+}
+.calendar-popover {
+  position: absolute;
+  left: 14px;
+  top: 42px;
+  width: min(320px, 76vw);
+  display: none;
+  padding: 14px;
+  border-radius: 18px;
+  background: #fffefa;
+  border: 1px solid rgba(93,127,115,0.16);
+  box-shadow: 0 22px 58px rgba(42,59,51,.18);
+  color: var(--text);
+}
+.calendar-day:hover .calendar-popover {
+  display: block;
+}
+.calendar-popover-row {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  gap: 8px;
+  margin-top: 10px;
+  align-items: start;
 }
 .admin-layout {
   display: grid;
