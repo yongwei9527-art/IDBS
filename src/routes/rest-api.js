@@ -41,7 +41,11 @@ function createRestApiRouter(service) {
   router.get('/devices', wrap((req) => service.listDevices(req.query || {})));
   router.get('/devices/:deviceCode', wrap((req) => service.getDeviceDetail({ deviceCode: req.params.deviceCode })));
 
-  router.post('/bookings', wrap((req) => service.createReservation(req.body || {}, service.authTokenFromReq(req))));
+  router.post('/bookings', wrap((req) => service.createReservation({
+    ...(req.body || {}),
+    device_codes: req.body?.device_codes || req.body?.deviceCodes || (req.body?.device_code || req.body?.deviceCode ? [req.body.device_code || req.body.deviceCode] : []),
+    time_slots: req.body?.time_slots || req.body?.timeSlots || (req.body?.start_time && req.body?.end_time ? [`${req.body.start_time} - ${req.body.end_time}`] : [])
+  }, service.authTokenFromReq(req))));
   router.get('/bookings/me', wrap((req) => service.myRecords(req.query || {}, service.authTokenFromReq(req))));
   router.patch('/bookings/:reservationId/cancel', wrap((req) => service.cancelReservation({
     ...req.body,
@@ -55,6 +59,10 @@ function createRestApiRouter(service) {
   }, service.authTokenFromReq(req))));
 
   router.get('/admin/users', wrap((req) => service.adminListUsers(req.query || {}, service.authTokenFromReq(req))));
+  router.delete('/admin/users/:userId', wrap((req) => service.adminDeleteUser({
+    ...req.body,
+    user_id: req.params.userId
+  }, service.authTokenFromReq(req))));
   router.put('/admin/users/:userId/status', wrap((req) => service.adminSetUserStatus({
     ...req.body,
     user_id: req.params.userId
@@ -88,6 +96,9 @@ function createRestApiRouter(service) {
   router.get('/admin/security-config', wrap((req) => service.adminGetSecurityConfig(req.query || {}, service.authTokenFromReq(req))));
   router.put('/admin/security-config', wrap((req) => service.adminUpdateSecurityConfig(req.body || {}, service.authTokenFromReq(req))));
   router.get('/admin/activity-summary', wrap((req) => service.adminGetActivitySummary(req.query || {}, service.authTokenFromReq(req))));
+  router.get('/admin/roles', wrap((req) => service.adminListRoles(req.query || {}, service.authTokenFromReq(req))));
+  router.put('/admin/roles', wrap((req) => service.adminUpsertRole(req.body || {}, service.authTokenFromReq(req))));
+  router.delete('/admin/roles', wrap((req) => service.adminRevokeRole(req.body || {}, service.authTokenFromReq(req))));
   router.get('/admin/reports/daily-usage', wrap((req) => service.adminPreviewDailyUsageReport(req.query || {}, service.authTokenFromReq(req))));
   router.post('/admin/reports/daily-usage/send', wrap((req) => service.adminSendDailyUsageReport(req.body || {}, service.authTokenFromReq(req))));
   router.get('/admin/statistics/usage', wrap((req) => service.usageStats(req.query || {}, service.authTokenFromReq(req))));

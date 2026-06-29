@@ -7,7 +7,9 @@
     "start": "node server.js",
     "dev": "node server.js",
     "build": "node -e \"console.log('No build step required')\"",
-    "check": "node --check server.js && node --check src/app/create-app.js && node --check src/config/env.js && node --check src/routes/health.js && node --check src/routes/upload.js && node --check src/routes/wechat.js && node --check src/routes/rest-api.js && node --check src/routes/legacy-api.js && node --check src/lib/wechat-xml.js && node --check src/services/create-rental-service.js && node --check src/tasks/daily-report-scheduler.js && node --check public/js/admin.js && node --check public/js/common-header.js && node scripts/check-inline-scripts.js",
+    "db:setup-local": "powershell -ExecutionPolicy Bypass -File scripts/setup-local-db.ps1",
+    "db:seed-local": "node scripts/seed-local-db.js",
+    "check": "node --check server.js && node --check src/app/create-app.js && node --check src/config/env.js && node --check src/routes/health.js && node --check src/routes/upload.js && node --check src/routes/wechat.js && node --check src/routes/rest-api.js && node --check src/routes/legacy-api.js && node --check src/lib/wechat-xml.js && node --check src/services/create-rental-service.js && node --check src/tasks/daily-report-scheduler.js && node --check public/js/admin.js && node --check public/js/common-header.js && node --check scripts/seed-local-db.js && node --check scripts/check-mojibake.js && node scripts/check-inline-scripts.js && node scripts/check-mojibake.js",
     "smoke": "node scripts/smoke-test.js"
   },
   "dependencies": {

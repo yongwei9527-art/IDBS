@@ -23,6 +23,16 @@ CREATE TABLE IF NOT EXISTS users (
   last_login_at TIMESTAMPTZ
 );
 
+CREATE TABLE IF NOT EXISTS admin_roles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  role_key TEXT NOT NULL DEFAULT 'admin', -- admin/super_admin/ops/auditor
+  permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
+  note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS system_configs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   config_key TEXT NOT NULL UNIQUE,
@@ -43,29 +53,6 @@ CREATE TABLE IF NOT EXISTS user_activity_logs (
   client_key TEXT,
   ip_address TEXT,
   remark TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS usage_log (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  record_id UUID,
-  reservation_id UUID,
-  device_id UUID REFERENCES devices(id) ON DELETE SET NULL,
-  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-  action TEXT NOT NULL,
-  device_code TEXT,
-  device_name TEXT,
-  user_name TEXT,
-  user_phone TEXT,
-  user_student_no TEXT,
-  borrow_time TIMESTAMPTZ,
-  expected_return_time TIMESTAMPTZ,
-  return_time TIMESTAMPTZ,
-  duration_minutes INTEGER,
-  record_status TEXT,
-  return_condition TEXT,
-  return_note TEXT,
-  operator_name TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -101,6 +88,29 @@ CREATE TABLE IF NOT EXISTS devices (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS usage_log (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  record_id UUID,
+  reservation_id UUID,
+  device_id UUID REFERENCES devices(id) ON DELETE SET NULL,
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  device_code TEXT,
+  device_name TEXT,
+  user_name TEXT,
+  user_phone TEXT,
+  user_student_no TEXT,
+  borrow_time TIMESTAMPTZ,
+  expected_return_time TIMESTAMPTZ,
+  return_time TIMESTAMPTZ,
+  duration_minutes INTEGER,
+  record_status TEXT,
+  return_condition TEXT,
+  return_note TEXT,
+  operator_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS reservations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
@@ -132,6 +142,22 @@ BEGIN
       WHERE (status IN ('pending','approved','in_use'));
   END IF;
 END$$;
+
+CREATE TABLE IF NOT EXISTS reservation_batches (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  device_codes TEXT NOT NULL,
+  time_slots TEXT NOT NULL,
+  purpose TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE reservations
+  ADD COLUMN IF NOT EXISTS batch_id UUID REFERENCES reservation_batches(id) ON DELETE CASCADE;
+
+CREATE INDEX IF NOT EXISTS idx_reservation_batches_user_time ON reservation_batches(user_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS borrow_records (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -208,11 +234,13 @@ VALUES
   ('system_notice_enabled', '1', 'Whether login notice popup is enabled'),
   ('system_notice_title', '使用注意事项', 'Login notice popup title'),
   ('system_notice_content', '请按预约时间使用设备，归还前确认设备状态并按要求提交归还信息。', 'Login notice popup content'),
-  ('system_notice_version', '1', 'Login notice popup version')
+  ('system_notice_version', '1', 'Login notice popup version'),
+  ('admin_default_password_seed', 'IDBS123456', 'Default initial admin password seed')
 ON CONFLICT (config_key) DO NOTHING;
 
 -- This project writes through the VPS Node service. Keep RLS off for the first runnable version.
 ALTER TABLE users DISABLE ROW LEVEL SECURITY;
+ALTER TABLE admin_roles DISABLE ROW LEVEL SECURITY;
 ALTER TABLE devices DISABLE ROW LEVEL SECURITY;
 ALTER TABLE reservations DISABLE ROW LEVEL SECURITY;
 ALTER TABLE borrow_records DISABLE ROW LEVEL SECURITY;

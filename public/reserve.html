@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>发起预约</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=20260629a">
 </head>
 <body>
 <main>
@@ -15,16 +15,12 @@
 
   <section class="card">
     <div id="message"></div>
-    <label for="device_code">设备编号</label>
-    <input id="device_code" class="mono" placeholder="例如：EQ-001">
+    <label for="device_codes">设备编号（支持多个，逗号分隔）</label>
+    <input id="device_codes" class="mono" placeholder="例如：EQ-001, EQ-002">
     <div class="form-grid">
       <div>
-        <label for="start_time">开始时间</label>
-        <input id="start_time" type="datetime-local">
-      </div>
-      <div>
-        <label for="end_time">结束时间</label>
-        <input id="end_time" type="datetime-local">
+        <label for="time_slots">时间段（支持多个，按行填写）</label>
+        <textarea id="time_slots" rows="5" placeholder="2026-06-26 08:00 - 10:00\n2026-06-26 14:00 - 16:00"></textarea>
       </div>
     </div>
     <label for="purpose">使用目的</label>
@@ -37,22 +33,26 @@
 </main>
 
 <script src="js/config.js"></script>
-<script src="js/api.js"></script>
+<script src="js/api.js?v=20260629b"></script>
 <script src="js/ui.js"></script>
-<script src="js/common-header.js"></script>
+<script src="js/common-header.js?v=20260629a"></script>
 <script>
-device_code.value = qs('device_code') || '';
+if (!requireLogin()) throw new Error('User login required');
+
+device_codes.value = qs('device_code') || qs('device_codes') || '';
 
 async function submitReserve() {
   if (!requireLogin()) return;
   const messageEl = document.getElementById('message');
   messageEl.innerHTML = '';
 
+  const deviceCodes = device_codes.value.split(',').map((item) => item.trim()).filter(Boolean);
+  const timeSlots = time_slots.value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+
   try {
     const result = await callApi('createReservation', {
-      device_code: device_code.value.trim(),
-      start_time: start_time.value,
-      end_time: end_time.value,
+      device_codes: deviceCodes,
+      time_slots: timeSlots,
       purpose: purpose.value.trim()
     });
     showPageMessage(messageEl, 'success', result.message || '预约已提交。');

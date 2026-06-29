@@ -74,11 +74,13 @@ function isLoggedIn() {
 }
 
 function isAdminLoggedIn() {
-  return !!getAdminToken() || isCurrentUserAdmin();
+  if (isLoggedIn()) return isCurrentUserAdmin();
+  return !!getAdminToken();
 }
 
 function getEffectiveAdminToken() {
-  return getAdminToken() || (isCurrentUserAdmin() ? getUserToken() : '');
+  if (isLoggedIn()) return isCurrentUserAdmin() ? (getAdminToken() || getUserToken()) : '';
+  return getAdminToken();
 }
 
 function escapeHtml(value) {
@@ -198,6 +200,24 @@ function formatDateTimeLocal(value) {
   const date = new Date(value);
   date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
   return date.toISOString().slice(0, 16);
+}
+
+function parseReservationApiPayload(payload = {}) {
+  const deviceCodes = Array.isArray(payload.device_codes)
+    ? payload.device_codes
+    : payload.device_code
+      ? [payload.device_code]
+      : [];
+  const timeSlots = Array.isArray(payload.time_slots)
+    ? payload.time_slots
+    : payload.start_time && payload.end_time
+      ? [`${payload.start_time} - ${payload.end_time}`]
+      : [];
+  return {
+    ...payload,
+    device_codes: deviceCodes,
+    time_slots: timeSlots
+  };
 }
 
 function csvDownload(filename, rows) {

@@ -1,18 +1,86 @@
 let lastRows = [];
+let selectedUserIds = new Set();
+
+function showLoginOnly() {
+  const accessDeniedBox = document.getElementById('admin-access-denied');
+  if (accessDeniedBox) accessDeniedBox.classList.add('hidden');
+  document.getElementById('login-box').classList.remove('hidden');
+  document.getElementById('admin-box').classList.add('hidden');
+  ['devices', 'users', 'reservations', 'security', 'stats', 'roles', 'user-info', 'notice'].forEach((tab) => {
+    const panel = document.getElementById(`tab_${tab}`);
+    if (panel) panel.classList.add('hidden');
+  });
+  document.querySelectorAll('.tabs button').forEach((button) => {
+    button.classList.remove('active');
+  });
+}
+
+function showAccessDenied() {
+  document.getElementById('login-box').classList.add('hidden');
+  document.getElementById('admin-box').classList.add('hidden');
+  let box = document.getElementById('admin-access-denied');
+  if (!box) {
+    box = document.createElement('section');
+    box.id = 'admin-access-denied';
+    box.className = 'card';
+    box.innerHTML = `
+      <div class="section-head">
+        <div>
+          <h3>无后台权限</h3>
+          <p class="muted">当前登录的是普通用户账号，只能预约设备、查看记录和提交归还。如需进入后台，请先退出当前用户，再使用管理员账号或后台密码登录。</p>
+        </div>
+      </div>
+      <div class="actions">
+        <a href="index.html">返回设备列表</a>
+        <a href="#" id="admin-access-logout">退出当前用户</a>
+      </div>
+    `;
+    document.getElementById('login-box').after(box);
+  }
+  box.classList.remove('hidden');
+  const logoutLink = document.getElementById('admin-access-logout');
+  if (logoutLink) {
+    logoutLink.addEventListener('click', (event) => {
+      event.preventDefault();
+      logoutUser();
+      logoutAdmin();
+      location.href = 'login.html';
+    }, { once: true });
+  }
+}
+
+function bootAdminPage() {
+  if (isLoggedIn() && !isCurrentUserAdmin()) {
+    showAccessDenied();
+    return;
+  }
+  showLoginOnly();
+}
 
 function switchTab(name) {
   document.querySelectorAll('.tabs button').forEach((button) => {
     button.classList.toggle('active', button.dataset.tab === name);
   });
-  ['devices', 'users', 'reservations', 'security', 'stats'].forEach((tab) => {
-    document.getElementById(`tab_${tab}`).classList.toggle('hidden', tab !== name);
+  ['devices', 'users', 'reservations', 'security', 'stats', 'roles', 'user-info', 'notice'].forEach((tab) => {
+    const panel = document.getElementById(`tab_${tab}`);
+    if (panel) panel.classList.toggle('hidden', tab !== name);
   });
 
   if (name === 'devices') loadDevices();
   if (name === 'users') loadUsers();
   if (name === 'reservations') loadReservations();
-  if (name === 'security') loadSecurity();
+  if (['security', 'user-info', 'notice'].includes(name)) loadSecurity();
   if (name === 'stats') loadOptions();
+  if (name === 'roles') {
+    loadRoleUserOptions();
+    loadRoles();
+  }
+}
+
+function setupAdminTabs() {
+  document.querySelectorAll('.tabs button').forEach((button) => {
+    button.addEventListener('click', () => switchTab(button.dataset.tab));
+  });
 }
 
 function renderAdminSummary(meta = {}) {
@@ -22,6 +90,63 @@ function renderAdminSummary(meta = {}) {
     <div class="card"><div class="metric-label">待审预约</div><div class="value">${meta.pendingReservations ?? '-'}</div></div>
     <div class="card"><div class="metric-label">异常设备</div><div class="value">${meta.abnormalDevices ?? '-'}</div></div>
   `;
+}
+
+function renderUserList(users = []) {
+  const container = document.getElementById('userList');
+  const allSelected = users.length > 0 && users.every((user) => selectedUserIds.has(user.id));
+  container.innerHTML = users.length ? `
+    <div class="table-wrap">
+      <table>
+        <tr>
+          <th><input type="checkbox" id="user-select-all" ${allSelected ? 'checked' : ''}></th>
+          <th>姓名</th><th>手机号</th><th>学号/工号</th><th>状态</th><th>微信绑定</th><th>封禁</th><th>操作</th>
+        </tr>
+        ${users.map((user) => `
+          <tr>
+            <td><input type="checkbox" class="user-select-box" data-user-id="${escapeHtml(user.id)}" ${selectedUserIds.has(user.id) ? 'checked' : ''}></td>
+            <td>${escapeHtml(user.name || '-')}</td>
+            <td>${escapeHtml(user.phone || '-')}</td>
+            <td>${escapeHtml(user.student_no || '-')}</td>
+            <td>${statusBadge(user.status)}</td>
+            <td>${user.wechat_bound ? `<span class="badge info">${escapeHtml(user.wechat_openid_masked || '已绑定')}</span>` : '<span class="muted">未绑定</span>'}</td>
+            <td>${user.is_banned ? '<span class="badge danger">已封禁</span>' : '<span class="badge success">正常</span>'}</td>
+            <td class="actions">
+              <button onclick="setUserStatus('${user.id}','active')">通过</button>
+              <button class="secondary" onclick="toggleBan('${user.id}', ${user.is_banned ? 'false' : 'true'})">${user.is_banned ? '解除封禁' : '封禁'}</button>
+              <button class="danger" onclick="deleteUser('${user.id}')">删除</button>
+              ${user.wechat_bound ? `<button class="warning" onclick="unbindWechat('${user.id}')">解绑微信</button>` : ''}
+            </td>
+          </tr>
+        `).join('')}
+      </table>
+    </div>` : '<div class="empty-state">暂无用户。</div>';
+
+  const selectAll = document.getElementById('user-select-all');
+  if (selectAll) {
+    selectAll.addEventListener('change', (event) => {
+      const checked = event.target.checked;
+      users.forEach((user) => {
+        if (checked) selectedUserIds.add(user.id);
+        else selectedUserIds.delete(user.id);
+      });
+      renderUserList(users);
+    });
+  }
+
+  container.querySelectorAll('.user-select-box').forEach((box) => {
+    box.addEventListener('change', (event) => {
+      const userId = event.target.dataset.userId;
+      if (event.target.checked) selectedUserIds.add(userId);
+      else selectedUserIds.delete(userId);
+      renderUserList(users);
+    });
+  });
+}
+
+function syncUserSelectionButtons() {
+  const deleteButton = document.getElementById('delete-selected-users-btn');
+  if (deleteButton) deleteButton.disabled = selectedUserIds.size === 0;
 }
 
 async function refreshAdminSummary() {
@@ -144,28 +269,8 @@ async function loadUsers() {
   try {
     const result = await callRestApi('/admin/users', { admin: true });
     const users = result.users || [];
-    container.innerHTML = users.length ? `
-      <div class="table-wrap">
-        <table>
-          <tr><th>姓名</th><th>手机号</th><th>学号/工号</th><th>状态</th><th>微信绑定</th><th>封禁</th><th>操作</th></tr>
-          ${users.map((user) => `
-            <tr>
-              <td>${escapeHtml(user.name)}</td>
-              <td>${escapeHtml(user.phone)}</td>
-              <td>${escapeHtml(user.student_no || '-')}</td>
-              <td>${statusBadge(user.status)}</td>
-              <td>${user.wechat_bound ? `<span class="badge info">${escapeHtml(user.wechat_openid_masked || '已绑定')}</span>` : '<span class="muted">未绑定</span>'}</td>
-              <td>${user.is_banned ? '<span class="badge danger">已封禁</span>' : '<span class="badge success">正常</span>'}</td>
-              <td class="actions">
-                <button onclick="setUserStatus('${user.id}','active')">通过</button>
-                <button class="secondary" onclick="toggleBan('${user.id}', ${user.is_banned ? 'false' : 'true'})">${user.is_banned ? '解除封禁' : '封禁'}</button>
-                <button class="danger" onclick="setUserStatus('${user.id}','disabled')">停用</button>
-                ${user.wechat_bound ? `<button class="warning" onclick="unbindWechat('${user.id}')">解绑微信</button>` : ''}
-              </td>
-            </tr>
-          `).join('')}
-        </table>
-      </div>` : '<div class="empty-state">暂无用户。</div>';
+    renderUserList(users);
+    syncUserSelectionButtons();
   } catch (error) {
     showPageMessage(container, 'danger', error.message);
   }
@@ -209,6 +314,41 @@ async function unbindWechat(id) {
     });
     showToast('success', '微信绑定已解除');
     loadUsers();
+  } catch (error) {
+    showToast('danger', error.message);
+  }
+}
+
+async function deleteUser(id) {
+  if (!confirm('确认删除该用户吗？该操作不可恢复。')) return;
+  try {
+    await callRestApi(`/admin/users/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      admin: true
+    });
+    showToast('success', '用户已删除');
+    selectedUserIds.delete(id);
+    refreshAdminSummary().catch(() => {});
+    loadUsers();
+    syncUserSelectionButtons();
+  } catch (error) {
+    showToast('danger', error.message);
+  }
+}
+
+async function deleteSelectedUsers() {
+  const ids = [...selectedUserIds];
+  if (!ids.length) return showToast('warning', '请先选择要删除的用户');
+  if (!confirm(`确认删除选中的 ${ids.length} 个用户吗？该操作不可恢复。`)) return;
+  try {
+    for (const id of ids) {
+      await callRestApi(`/admin/users/${encodeURIComponent(id)}`, { method: 'DELETE', admin: true });
+    }
+    showToast('success', '选中用户已删除');
+    selectedUserIds.clear();
+    refreshAdminSummary().catch(() => {});
+    loadUsers();
+    syncUserSelectionButtons();
   } catch (error) {
     showToast('danger', error.message);
   }
@@ -269,7 +409,6 @@ async function loadSecurity() {
     document.getElementById('captcha_hourly_limit').value = config.captcha_hourly_limit ?? 3;
     document.getElementById('openid_daily_register_limit').value = config.openid_daily_register_limit ?? 1;
     document.getElementById('enable_image_captcha').value = config.enable_image_captcha ? '1' : '0';
-    document.getElementById('require_return_photo').value = config.require_return_photo ? '1' : '0';
     document.getElementById('admin_report_enabled').value = config.admin_report_enabled ? '1' : '0';
     document.getElementById('admin_report_hour').value = config.admin_report_hour ?? 9;
     document.getElementById('admin_report_minute').value = config.admin_report_minute ?? 0;
@@ -282,6 +421,9 @@ async function loadSecurity() {
     document.getElementById('wechat_app_secret').value = '';
     document.getElementById('wechat_app_secret').placeholder = config.has_wechat_app_secret ? '已保存，留空则不修改' : '尚未设置，请填写 AppSecret';
     document.getElementById('wechat_admin_openids').value = config.wechat_admin_openids || '';
+    if (document.getElementById('admin_default_password_seed')) {
+      document.getElementById('admin_default_password_seed').value = config.admin_default_password_seed || 'IDBS123456';
+    }
     document.getElementById('public_show_reserver_name').value = config.public_show_reserver_name ? '1' : '0';
     document.getElementById('public_show_reserver_phone').value = config.public_show_reserver_phone ? '1' : '0';
     document.getElementById('public_show_reserver_student_no').value = config.public_show_reserver_student_no ? '1' : '0';
@@ -323,7 +465,6 @@ async function saveSecurityConfig() {
         captcha_hourly_limit: Number(document.getElementById('captcha_hourly_limit').value || 3),
         openid_daily_register_limit: Number(document.getElementById('openid_daily_register_limit').value || 1),
         enable_image_captcha: document.getElementById('enable_image_captcha').value === '1',
-        require_return_photo: document.getElementById('require_return_photo').value === '1',
         admin_report_enabled: document.getElementById('admin_report_enabled').value === '1',
         admin_report_hour: Number(document.getElementById('admin_report_hour').value || 9),
         admin_report_minute: Number(document.getElementById('admin_report_minute').value || 0),
@@ -334,6 +475,7 @@ async function saveSecurityConfig() {
         wechat_app_id: document.getElementById('wechat_app_id').value.trim(),
         ...(wechatAppSecret ? { wechat_app_secret: wechatAppSecret } : {}),
         wechat_admin_openids: document.getElementById('wechat_admin_openids').value.trim(),
+        ...(document.getElementById('admin_default_password_seed') ? { admin_default_password_seed: document.getElementById('admin_default_password_seed').value.trim() } : {}),
         public_show_reserver_name: document.getElementById('public_show_reserver_name').value === '1',
         public_show_reserver_phone: document.getElementById('public_show_reserver_phone').value === '1',
         public_show_reserver_student_no: document.getElementById('public_show_reserver_student_no').value === '1',
@@ -342,8 +484,43 @@ async function saveSecurityConfig() {
         system_notice_content: document.getElementById('system_notice_content').value.trim()
       }
     });
-    localStorage.setItem('IDBS_SITE_DOMAIN', document.getElementById('site_domain').value.trim());
     showToast('success', '安全设置已保存');
+    loadSecurity();
+  } catch (error) {
+    showToast('danger', error.message);
+  }
+}
+
+async function saveUserInfoConfig() {
+  try {
+    await callRestApi('/admin/security-config', {
+      method: 'PUT',
+      admin: true,
+      body: {
+        public_show_reserver_name: document.getElementById('public_show_reserver_name').value === '1',
+        public_show_reserver_phone: document.getElementById('public_show_reserver_phone').value === '1',
+        public_show_reserver_student_no: document.getElementById('public_show_reserver_student_no').value === '1'
+      }
+    });
+    showToast('success', '用户信息设置已保存');
+    loadSecurity();
+  } catch (error) {
+    showToast('danger', error.message);
+  }
+}
+
+async function saveNoticeConfig() {
+  try {
+    await callRestApi('/admin/security-config', {
+      method: 'PUT',
+      admin: true,
+      body: {
+        system_notice_enabled: document.getElementById('system_notice_enabled').value === '1',
+        system_notice_title: document.getElementById('system_notice_title').value.trim(),
+        system_notice_content: document.getElementById('system_notice_content').value.trim()
+      }
+    });
+    showToast('success', '注意事项已保存');
     loadSecurity();
   } catch (error) {
     showToast('danger', error.message);
@@ -382,6 +559,65 @@ async function loadOptions() {
     stat_device.innerHTML = '<option value="">全部设备</option>' + (result.devices || []).map((device) => `<option value="${device.id}">${escapeHtml(device.device_code)} ${escapeHtml(device.name)}</option>`).join('');
   } catch (error) {
     showPageMessage(document.getElementById('statsBox'), 'danger', error.message);
+  }
+}
+
+async function loadRoles() {
+  const box = document.getElementById('roleList');
+  setLoading(box, '正在加载管理员角色...');
+  try {
+    const result = await callRestApi('/admin/roles', { admin: true });
+    const roles = result.roles || [];
+    box.innerHTML = roles.length ? `<div class="table-wrap"><table><tr><th>用户</th><th>角色</th><th>权限</th><th>备注</th></tr>${roles.map((row) => `<tr><td>${escapeHtml(row.user_name || row.user_id || '-')}<br><span class="muted">${escapeHtml(row.user_phone || '-')}</span></td><td>${escapeHtml(row.role_key || '-')}</td><td>${escapeHtml(Array.isArray(row.permissions) ? row.permissions.join(', ') : String(row.permissions || '-'))}</td><td>${escapeHtml(row.note || '-')}</td></tr>`).join('')}</table></div>` : '<div class="empty-state">暂无管理员角色。</div>';
+  } catch (error) {
+    showPageMessage(box, 'danger', error.message);
+  }
+}
+
+async function loadRoleUserOptions() {
+  try {
+    const result = await callRestApi('/admin/options', { admin: true });
+    const users = result.users || [];
+    const select = document.getElementById('role_user_id');
+    select.innerHTML = '<option value="">请选择用户</option>' + users.map((user) => `<option value="${user.id}">${escapeHtml(user.name)} ${escapeHtml(user.phone || '')}</option>`).join('');
+  } catch (error) {
+    showToast('danger', error.message);
+  }
+}
+
+async function saveRole() {
+  try {
+    const permissions = String(document.getElementById('role_permissions').value || '').split(',').map((item) => item.trim()).filter(Boolean);
+    await callRestApi('/admin/roles', {
+      method: 'PUT',
+      admin: true,
+      body: {
+        user_id: document.getElementById('role_user_id').value.trim(),
+        role_key: document.getElementById('role_key').value.trim(),
+        permissions,
+        note: document.getElementById('role_note').value.trim()
+      }
+    });
+    showToast('success', '管理员角色已保存');
+    loadRoles();
+    loadRoleUserOptions();
+  } catch (error) {
+    showToast('danger', error.message);
+  }
+}
+
+async function revokeRole() {
+  try {
+    await callRestApi('/admin/roles', {
+      method: 'DELETE',
+      admin: true,
+      body: { user_id: document.getElementById('role_user_id').value.trim() }
+    });
+    showToast('success', '管理员权限已撤销');
+    loadRoles();
+    loadRoleUserOptions();
+  } catch (error) {
+    showToast('danger', error.message);
   }
 }
 
@@ -432,16 +668,25 @@ function exportStats() {
 }
 
 document.getElementById('admin-login-btn').addEventListener('click', adminLogin);
+document.getElementById('adminPwd').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') adminLogin();
+});
 document.getElementById('create-device-btn').addEventListener('click', createDevice);
 document.getElementById('save-security-btn').addEventListener('click', saveSecurityConfig);
+document.getElementById('save-user-info-btn').addEventListener('click', saveUserInfoConfig);
+document.getElementById('save-notice-btn').addEventListener('click', saveNoticeConfig);
 document.getElementById('preview-report-btn').addEventListener('click', previewDailyReport);
 document.getElementById('send-report-btn').addEventListener('click', sendDailyReportNow);
 document.getElementById('stats-btn').addEventListener('click', loadStats);
 document.getElementById('export-btn').addEventListener('click', exportStats);
-document.querySelectorAll('.tabs button').forEach((button) => {
-  button.addEventListener('click', () => switchTab(button.dataset.tab));
+document.getElementById('save-role-btn').addEventListener('click', saveRole);
+document.getElementById('revoke-role-btn').addEventListener('click', revokeRole);
+document.getElementById('reload-role-btn').addEventListener('click', loadRoles);
+document.getElementById('delete-selected-users-btn').addEventListener('click', deleteSelectedUsers);
+document.getElementById('select-all-users-btn').addEventListener('click', () => {
+  const selectAll = document.getElementById('user-select-all');
+  if (selectAll) selectAll.click();
 });
+setupAdminTabs();
 
-if (requireAdminLogin()) {
-  enterAdminConsole();
-}
+bootAdminPage();

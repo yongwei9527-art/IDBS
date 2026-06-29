@@ -1,25 +1,28 @@
 document.addEventListener('DOMContentLoaded', () => {
   const header = document.createElement('header');
   const user = getUserInfo();
+  const loggedIn = isLoggedIn();
+  const currentUserIsAdmin = loggedIn && isCurrentUserAdmin();
+  const showAdminEntry = currentUserIsAdmin || (!loggedIn && !!getAdminToken());
 
   header.innerHTML = `
     <div class="brand">
       <div class="brand-mark">R</div>
       <div>
         <h1>实验室设备预约系统</h1>
-        <p class="brand-subtitle">稳定运行、清晰流程、轻柔界面</p>
+        <p class="brand-subtitle">稳定运行、清晰流程、轻量界面</p>
       </div>
     </div>
-    <nav>
-      <a href="index.html">设备列表</a>
-      <a href="reserve.html">发起预约</a>
-      <a href="my.html">我的记录</a>
-      ${isAdminLoggedIn() ? '<a href="admin.html">管理后台</a>' : ''}
-      ${isLoggedIn()
-        ? `<span class="nav-user">${escapeHtml(user && user.name ? user.name : '已登录用户')}</span><span class="role-chip">${isCurrentUserAdmin() ? '管理员' : '用户'}</span><a href="#" id="logout-user-link">退出登录</a>`
-        : `<a href="login.html">用户登录</a><a href="register.html">微信注册/绑定</a>`}
-      ${isAdminLoggedIn() ? `<a href="#" id="logout-admin-link">退出后台</a>` : ''}
+    <nav class="main-nav" aria-label="主导航">
+      ${loggedIn ? '<a href="index.html">设备列表</a><a href="reserve.html">发起预约</a><a href="my.html">我的记录</a>' : ''}
+      ${showAdminEntry ? '<a href="admin.html">管理后台</a>' : ''}
     </nav>
+    <div class="account-nav">
+      ${loggedIn
+        ? `<span class="nav-user">${escapeHtml(user && user.name ? user.name : '已登录用户')}</span><span class="role-chip">${currentUserIsAdmin ? '管理员' : '用户'}</span><a href="#" id="logout-user-link">退出登录</a>`
+        : '<a href="login.html">用户登录</a><a href="register.html">微信注册/绑定</a>'}
+      ${showAdminEntry ? '<a href="#" id="logout-admin-link">退出后台</a>' : ''}
+    </div>
   `;
 
   document.body.prepend(header);

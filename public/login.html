@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>用户登录</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=20260629a">
 </head>
 <body>
 <main>
@@ -78,9 +78,9 @@
 </main>
 
 <script src="js/config.js"></script>
-<script src="js/api.js"></script>
+<script src="js/api.js?v=20260629b"></script>
 <script src="js/ui.js"></script>
-<script src="js/common-header.js"></script>
+<script src="js/common-header.js?v=20260629a"></script>
 <script>
 let activeChallengeCode = '';
 let activePollTimer = null;
@@ -103,6 +103,8 @@ function handleLoginResult(result) {
   setUserInfo(result.user);
   if (result.role === 'admin' || result.role === 'super_admin') {
     setAdminToken(result.token);
+  } else {
+    clearAdminToken();
   }
   showToast('success', '登录成功');
   setTimeout(() => {

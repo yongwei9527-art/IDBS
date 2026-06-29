@@ -175,6 +175,17 @@ ensure_local_database() {
 
   sudo -u postgres psql -d idbs -c "GRANT ALL PRIVILEGES ON DATABASE idbs TO idbs_user;"
   sudo -u postgres psql -d idbs -f "$APP_CURRENT/sql/schema.sql"
+  if [ -d "$APP_CURRENT/sql/migrations" ]; then
+    sudo -u postgres psql -d idbs -c "CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now());"
+    for migration in "$APP_CURRENT"/sql/migrations/*.sql; do
+      [ -e "$migration" ] || continue
+      version="$(basename "$migration" .sql)"
+      if ! sudo -u postgres psql -d idbs -tAc "SELECT 1 FROM schema_migrations WHERE version='${version}'" | grep -q 1; then
+        sudo -u postgres psql -d idbs -f "$migration"
+        sudo -u postgres psql -d idbs -c "INSERT INTO schema_migrations (version) VALUES ('${version}')"
+      fi
+    done
+  fi
   sudo -u postgres psql -d idbs -c "GRANT ALL ON SCHEMA public TO idbs_user;"
   sudo -u postgres psql -d idbs -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO idbs_user;"
   sudo -u postgres psql -d idbs -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO idbs_user;"

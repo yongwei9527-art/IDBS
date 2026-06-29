@@ -204,12 +204,16 @@ If no existing user matches the name and student number, the server creates a pe
 
 ```json
 {
-  "device_code": "EQ-001",
-  "start_time": "2026-06-25T01:00:00.000Z",
-  "end_time": "2026-06-25T03:00:00.000Z",
+  "device_codes": ["EQ-001", "EQ-002"],
+  "time_slots": [
+    "2026-06-25T01:00:00.000Z - 2026-06-25T03:00:00.000Z",
+    "2026-06-26T01:00:00.000Z - 2026-06-26T03:00:00.000Z"
+  ],
   "purpose": "Course experiment"
 }
 ```
+
+- Response includes `batch_id` plus the created reservation rows. Legacy `device_code` with `start_time`/`end_time` is still accepted and normalized by the API.
 
 ### `POST /api/borrow-records`
 

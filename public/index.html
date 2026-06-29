@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="description" content="实验室设备预约系统，支持设备查询、预约、借还和后台管理">
   <title>设备列表</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=20260629a">
 </head>
 <body>
 <main>
@@ -13,11 +13,7 @@
     <h2>设备总览</h2>
     <p class="muted">统一查看设备状态、当前位置和可预约情况，让用户操作和管理员联调都更顺手。</p>
     <div class="hero-meta" id="hero-meta"></div>
-    <div class="hero-actions">
-      <a class="badge info" href="reserve.html">快速预约</a>
-      <a class="badge success" href="my.html">查看我的记录</a>
-      <a class="badge" href="admin.html">进入管理后台</a>
-    </div>
+    <div class="hero-actions" id="hero-actions"></div>
   </section>
 
   <section class="card">
@@ -82,9 +78,9 @@
 </main>
 
 <script src="js/config.js"></script>
-<script src="js/api.js"></script>
+<script src="js/api.js?v=20260629b"></script>
 <script src="js/ui.js"></script>
-<script src="js/common-header.js"></script>
+<script src="js/common-header.js?v=20260629a"></script>
 <script>
 const deployMode = document.getElementById('deploy-mode');
 const keywordInput = document.getElementById('keyword');
@@ -92,14 +88,49 @@ const statusInput = document.getElementById('status');
 const devicesEl = document.getElementById('devices');
 const summaryEl = document.getElementById('summary');
 const heroMetaEl = document.getElementById('hero-meta');
+const heroActionsEl = document.getElementById('hero-actions');
 const roleCopyEl = document.getElementById('role-copy');
 const roleActionsEl = document.getElementById('role-actions');
+
+function showUserLoginOnly() {
+  [
+    document.querySelector('.hero-actions'),
+    document.querySelector('main > section.card'),
+    summaryEl,
+    document.querySelector('.panel-grid'),
+    devicesEl
+  ].forEach((element) => {
+    if (element) element.classList.add('hidden');
+  });
+  document.querySelector('main').insertAdjacentHTML('beforeend', `
+    <section class="card" id="login-required-box">
+      <div class="section-head">
+        <div>
+          <h3>请先登录</h3>
+          <p class="muted">登录后才能查看设备列表、发起预约和查看个人记录。</p>
+        </div>
+      </div>
+      <div class="actions">
+        <a href="login.html">用户登录</a>
+        <a href="register.html">微信注册 / 绑定</a>
+      </div>
+    </section>
+  `);
+}
+
+if (!isLoggedIn()) {
+  showUserLoginOnly();
+  throw new Error('User login required');
+}
 
 deployMode.textContent = 'VPS / HTTP API';
 heroMetaEl.innerHTML = `
   <span class="badge info">${isLoggedIn() ? '已登录' : '访客模式'}</span>
   <span class="badge ${isCurrentUserAdmin() ? 'warn' : 'success'}">${isCurrentUserAdmin() ? '管理员视角' : '用户视角'}</span>
 `;
+heroActionsEl.innerHTML = isCurrentUserAdmin()
+  ? '<a class="badge info" href="reserve.html">快速预约</a><a class="badge success" href="my.html">查看我的记录</a><a class="badge" href="admin.html">进入管理后台</a>'
+  : '<a class="badge info" href="reserve.html">快速预约</a><a class="badge success" href="my.html">查看我的记录</a>';
 roleCopyEl.textContent = isCurrentUserAdmin()
   ? '你当前是管理员身份，可以直接进入后台处理设备、审核和统计。'
   : (isLoggedIn() ? '你当前是普通用户身份，可以直接预约、查看记录和提交归还。' : '你当前未登录，可先浏览设备，再决定是否登录。');

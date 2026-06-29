@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>管理后台</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=20260629b">
 </head>
 <body>
 <main>
@@ -29,206 +29,306 @@
   <section id="admin-box" class="hidden">
     <section id="admin-summary" class="kpi"></section>
 
-    <div class="tabs">
-      <button data-tab="devices">设备管理</button>
-      <button data-tab="users">用户审核</button>
-      <button data-tab="reservations">预约审核</button>
-      <button data-tab="security">系统配置</button>
-      <button data-tab="stats">统计导出</button>
-    </div>
+    <div class="admin-layout">
+      <aside class="admin-sidebar card">
+        <div class="tabs tabs-vertical">
+          <button data-tab="devices">设备管理</button>
+          <button data-tab="users">用户审核</button>
+          <button data-tab="reservations">预约审核</button>
+          <button data-tab="security">系统配置</button>
+          <button data-tab="roles">管理员权限</button>
+          <button data-tab="stats">统计导出</button>
+          <button data-tab="user-info">用户信息</button>
+          <button data-tab="notice">注意事项</button>
+        </div>
+      </aside>
 
-    <section id="tab_devices" class="card hidden">
-      <div class="section-head">
-        <div>
-          <h3>新增设备</h3>
-          <p class="muted">完善设备资料后，用户可在列表、详情和预约页面看到统一信息。</p>
-        </div>
-      </div>
-      <div class="form-grid">
-        <div><label for="device_code">设备编号</label><input id="device_code"></div>
-        <div><label for="device_name">设备名称</label><input id="device_name"></div>
-        <div><label for="category">类别</label><input id="category"></div>
-        <div><label for="location">位置</label><input id="location"></div>
-        <div><label for="manager">负责人</label><input id="manager"></div>
-        <div>
-          <label for="status">状态</label>
-          <select id="status">
-            <option value="available">可预约</option>
-            <option value="maintenance">维修中</option>
-            <option value="disabled">停用</option>
-          </select>
-        </div>
-      </div>
-      <label for="description">设备说明</label>
-      <textarea id="description"></textarea>
-      <label for="usage_notice">使用说明 / 注意事项</label>
-      <textarea id="usage_notice"></textarea>
-      <label for="cover_photo">设备照片</label>
-      <input id="cover_photo" type="file" accept="image/*">
-      <div class="actions"><button id="create-device-btn">添加设备</button></div>
-      <div id="deviceList"></div>
-    </section>
-
-    <section id="tab_users" class="card hidden">
-      <div class="section-head">
-        <div>
-          <h3>用户审核与微信绑定</h3>
-          <p class="muted">支持审核、封禁、解除封禁和解绑微信，便于处理首次绑定与异常账号。</p>
-        </div>
-      </div>
-      <div id="userList"></div>
-    </section>
-
-    <section id="tab_reservations" class="card hidden">
-      <div class="section-head">
-        <div>
-          <h3>预约审核</h3>
-          <p class="muted">审核通过后，用户才能在预约时间附近开始使用设备。</p>
-        </div>
-      </div>
-      <div id="reservationList"></div>
-    </section>
-
-    <section id="tab_security" class="card hidden">
-      <div class="section-head">
-        <div>
-          <h3>系统配置</h3>
-          <p class="muted">这里的设置保存后即时生效，包括公众号、管理员密码、预约信息可见性、归还图片规则和登录提醒。</p>
-        </div>
-      </div>
-      <div class="form-grid">
-        <div>
-          <label for="captcha_expire_minutes">验证码有效期（分钟）</label>
-          <input id="captcha_expire_minutes" type="number" min="1" max="30">
-        </div>
-        <div>
-          <label for="captcha_hourly_limit">每小时获取验证码次数</label>
-          <input id="captcha_hourly_limit" type="number" min="1" max="50">
-        </div>
-        <div>
-          <label for="openid_daily_register_limit">同一微信每日绑定上限</label>
-          <input id="openid_daily_register_limit" type="number" min="1" max="20">
-        </div>
-        <div>
-          <label for="enable_image_captcha">图形验证码</label>
-          <select id="enable_image_captcha"><option value="0">关闭</option><option value="1">开启</option></select>
-        </div>
-        <div>
+      <div class="admin-content">
+        <section id="tab_devices" class="card hidden">
+          <div class="section-head">
+            <div>
+              <h3>新增设备</h3>
+              <p class="muted">完善设备资料后，用户可在列表、详情和预约页面看到统一信息。</p>
+            </div>
+          </div>
+          <div class="form-grid">
+            <div><label for="device_code">设备编号</label><input id="device_code"></div>
+            <div><label for="device_name">设备名称</label><input id="device_name"></div>
+            <div><label for="category">类别</label><input id="category"></div>
+            <div><label for="location">位置</label><input id="location"></div>
+            <div><label for="manager">负责人</label><input id="manager"></div>
+            <div>
+              <label for="status">状态</label>
+              <select id="status">
+                <option value="available">可预约</option>
+                <option value="maintenance">维修中</option>
+                <option value="disabled">停用</option>
+              </select>
+            </div>
+          </div>
+          <label for="description">设备说明</label>
+          <textarea id="description"></textarea>
+          <label for="usage_notice">使用说明 / 注意事项</label>
+          <textarea id="usage_notice"></textarea>
           <label for="require_return_photo">结束使用是否必须上传图片</label>
           <select id="require_return_photo"><option value="1">必须上传</option><option value="0">不强制</option></select>
-        </div>
-        <div>
-          <label for="admin_report_enabled">日报推送</label>
-          <select id="admin_report_enabled"><option value="0">关闭</option><option value="1">开启</option></select>
-        </div>
-        <div>
-          <label for="admin_report_hour">日报小时</label>
-          <input id="admin_report_hour" type="number" min="0" max="23">
-        </div>
-        <div>
-          <label for="admin_report_minute">日报分钟</label>
-          <input id="admin_report_minute" type="number" min="0" max="59">
-        </div>
-        <div>
-          <label for="admin_report_timezone">日报时区</label>
-          <input id="admin_report_timezone" placeholder="Asia/Shanghai">
-        </div>
-        <div>
-          <label for="site_domain">访问域名</label>
-          <input id="site_domain" placeholder="例如：www.example.com">
-        </div>
-        <div>
-          <label for="new_admin_password">新管理员密码</label>
-          <input id="new_admin_password" type="password" placeholder="留空则不修改，至少 8 位">
-        </div>
-        <div>
-          <label for="confirm_admin_password">确认新密码</label>
-          <input id="confirm_admin_password" type="password" placeholder="再次输入新管理员密码">
-        </div>
-        <div>
-          <label for="wechat_token">公众号回调 Token</label>
-          <input id="wechat_token" placeholder="微信公众平台服务器配置 Token">
-        </div>
-        <div>
-          <label for="wechat_app_id">公众号 AppID</label>
-          <input id="wechat_app_id" placeholder="微信公众号 AppID">
-        </div>
-        <div>
-          <label for="wechat_app_secret">公众号 AppSecret</label>
-          <input id="wechat_app_secret" type="password" placeholder="留空则不修改已保存的 AppSecret">
-        </div>
-        <div>
-          <label for="wechat_admin_openids">管理员 OpenID</label>
-          <input id="wechat_admin_openids" placeholder="多个 OpenID 用英文逗号分隔">
-        </div>
-        <div>
-          <label for="public_show_reserver_name">公开显示预约人姓名</label>
-          <select id="public_show_reserver_name"><option value="1">显示</option><option value="0">隐藏</option></select>
-        </div>
-        <div>
-          <label for="public_show_reserver_phone">公开显示联系方式</label>
-          <select id="public_show_reserver_phone"><option value="1">显示</option><option value="0">隐藏</option></select>
-        </div>
-        <div>
-          <label for="public_show_reserver_student_no">公开显示学号</label>
-          <select id="public_show_reserver_student_no"><option value="1">显示</option><option value="0">隐藏</option></select>
-        </div>
-        <div>
-          <label for="system_notice_enabled">登录注意事项弹窗</label>
-          <select id="system_notice_enabled"><option value="1">开启</option><option value="0">关闭</option></select>
-        </div>
-        <div>
-          <label for="system_notice_title">注意事项标题</label>
-          <input id="system_notice_title" maxlength="120" placeholder="例如：设备使用注意事项">
-        </div>
-        <div>
-          <label for="system_notice_content">注意事项内容</label>
-          <textarea id="system_notice_content" rows="5" placeholder="用户登录后会自动弹出，需自行关闭。"></textarea>
-        </div>
-      </div>
-      <div class="actions">
-        <button id="save-security-btn">保存系统配置</button>
-        <button id="preview-report-btn" class="secondary">预览日报</button>
-        <button id="send-report-btn" class="warning">立即发送日报</button>
-      </div>
+          <label for="cover_photo">设备照片</label>
+          <input id="cover_photo" type="file" accept="image/*">
+          <div class="actions"><button id="create-device-btn">添加设备</button></div>
+          <div id="deviceList"></div>
+        </section>
 
-      <div id="activitySummary" class="soft-panel">
-        <div class="metric-label">今日运营概览</div>
-        <div id="activitySummaryInner" class="kpi"></div>
-      </div>
-      <div id="reportPreview" class="soft-panel hidden">
-        <div class="metric-label">日报预览</div>
-        <pre id="reportPreviewText" class="report-preview"></pre>
-      </div>
-      <div id="activityList"></div>
-    </section>
+        <section id="tab_users" class="card hidden">
+          <div class="section-head">
+            <div>
+              <h3>用户审核与微信绑定</h3>
+              <p class="muted">支持查看注册用户信息、批量勾选、全选/取消全选以及删除用户，便于处理异常账号。</p>
+            </div>
+          </div>
+          <div class="actions" style="margin-bottom: 12px;">
+            <button id="select-all-users-btn" class="secondary">全选</button>
+            <button id="delete-selected-users-btn" class="danger">删除选中用户</button>
+          </div>
+          <div id="userList"></div>
+        </section>
 
-    <section id="tab_stats" class="card hidden">
-      <div class="section-head">
-        <div>
-          <h3>使用统计与导出</h3>
-          <p class="muted">可按用户、设备、时间筛选，用于验收、复盘和留档。</p>
-        </div>
+        <section id="tab_reservations" class="card hidden">
+          <div class="section-head">
+            <div>
+              <h3>预约审核</h3>
+              <p class="muted">审核通过后，用户才能在预约时间附近开始使用设备。</p>
+            </div>
+          </div>
+          <div id="reservationList"></div>
+        </section>
+
+        <section id="tab_security" class="card hidden">
+          <div class="section-head">
+            <div>
+              <h3>系统配置</h3>
+              <p class="muted">这里的设置保存后即时生效，包括公众号、管理员密码、预约信息可见性、登录提醒。</p>
+            </div>
+          </div>
+          <div class="settings-sections settings-grid-two">
+            <div class="soft-panel settings-group">
+              <div class="metric-label">安全与验证码</div>
+              <div class="form-grid">
+                <div>
+                  <label for="captcha_expire_minutes">验证码有效期（分钟）</label>
+                  <input id="captcha_expire_minutes" type="number" min="1" max="30">
+                </div>
+                <div>
+                  <label for="captcha_hourly_limit">每小时获取验证码次数</label>
+                  <input id="captcha_hourly_limit" type="number" min="1" max="50">
+                </div>
+                <div>
+                  <label for="openid_daily_register_limit">同一微信每日绑定上限</label>
+                  <input id="openid_daily_register_limit" type="number" min="1" max="20">
+                </div>
+                <div>
+                  <label for="enable_image_captcha">图形验证码</label>
+                  <select id="enable_image_captcha"><option value="0">关闭</option><option value="1">开启</option></select>
+                </div>
+                <div>
+                  <label for="admin_report_enabled">日报推送</label>
+                  <select id="admin_report_enabled"><option value="0">关闭</option><option value="1">开启</option></select>
+                </div>
+                <div>
+                  <label for="admin_report_hour">日报小时</label>
+                  <input id="admin_report_hour" type="number" min="0" max="23">
+                </div>
+                <div>
+                  <label for="admin_report_minute">日报分钟</label>
+                  <input id="admin_report_minute" type="number" min="0" max="59">
+                </div>
+                <div>
+                  <label for="admin_report_timezone">日报时区</label>
+                  <input id="admin_report_timezone" placeholder="Asia/Shanghai">
+                </div>
+              </div>
+            </div>
+
+            <div class="soft-panel settings-group">
+              <div class="metric-label">公开与账号</div>
+              <div class="form-grid">
+                <div>
+                  <label for="site_domain">访问域名</label>
+                  <input id="site_domain" placeholder="例如：www.example.com">
+                </div>
+                <div>
+                  <label for="new_admin_password">新管理员密码</label>
+                  <input id="new_admin_password" type="password" placeholder="留空则不修改，至少 8 位">
+                </div>
+                <div>
+                  <label for="confirm_admin_password">确认新密码</label>
+                  <input id="confirm_admin_password" type="password" placeholder="再次输入新管理员密码">
+                </div>
+                <div>
+                  <label for="wechat_token">公众号回调 Token</label>
+                  <input id="wechat_token" placeholder="微信公众平台服务器配置 Token">
+                </div>
+                <div>
+                  <label for="wechat_app_id">公众号 AppID</label>
+                  <input id="wechat_app_id" placeholder="微信公众号 AppID">
+                </div>
+                <div>
+                  <label for="wechat_app_secret">公众号 AppSecret</label>
+                  <input id="wechat_app_secret" type="password" placeholder="留空则不修改已保存的 AppSecret">
+                </div>
+                <div>
+                  <label for="wechat_admin_openids">管理员 OpenID</label>
+                  <input id="wechat_admin_openids" placeholder="多个 OpenID 用英文逗号分隔">
+                </div>
+                <div>
+                  <label for="admin_default_password_seed">初始管理员密码</label>
+                  <input id="admin_default_password_seed" placeholder="IDBS123456">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button id="save-security-btn">保存系统配置</button>
+            <button id="preview-report-btn" class="secondary">预览日报</button>
+            <button id="send-report-btn" class="warning">立即发送日报</button>
+          </div>
+
+          <div class="dashboard-grid">
+            <div id="activitySummary" class="soft-panel">
+              <div class="metric-label">今日运营概览</div>
+              <div id="activitySummaryInner" class="kpi"></div>
+            </div>
+            <div class="stack">
+              <div id="reportPreview" class="soft-panel hidden">
+                <div class="metric-label">日报预览</div>
+                <pre id="reportPreviewText" class="report-preview"></pre>
+              </div>
+              <div id="activityList"></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="tab_stats" class="card hidden">
+          <div class="section-head">
+            <div>
+              <h3>使用统计与导出</h3>
+              <p class="muted">可按用户、设备、时间筛选，用于验收、复盘和留档。</p>
+            </div>
+          </div>
+          <div class="toolbar">
+            <div><label for="stat_user">用户</label><select id="stat_user"><option value="">全部用户</option></select></div>
+            <div><label for="stat_device">设备</label><select id="stat_device"><option value="">全部设备</option></select></div>
+            <div><label for="stat_start">开始日期</label><input id="stat_start" type="date"></div>
+            <div><label for="stat_end">结束日期</label><input id="stat_end" type="date"></div>
+          </div>
+          <div class="actions">
+            <button id="stats-btn">查询统计</button>
+            <button id="export-btn" class="secondary">导出 CSV</button>
+          </div>
+          <div id="statsBox"></div>
+        </section>
+
+        <section id="tab_user-info" class="card hidden">
+          <div class="section-head">
+            <div>
+              <h3>用户信息</h3>
+              <p class="muted">控制登录后弹窗提示和预约信息可见性，方便管理显示内容。</p>
+            </div>
+          </div>
+          <div class="form-grid">
+            <div>
+              <label for="public_show_reserver_name">公开显示预约人姓名</label>
+              <select id="public_show_reserver_name"><option value="1">显示</option><option value="0">隐藏</option></select>
+            </div>
+            <div>
+              <label for="public_show_reserver_phone">公开显示联系方式</label>
+              <select id="public_show_reserver_phone"><option value="1">显示</option><option value="0">隐藏</option></select>
+            </div>
+            <div>
+              <label for="public_show_reserver_student_no">公开显示学号</label>
+              <select id="public_show_reserver_student_no"><option value="1">显示</option><option value="0">隐藏</option></select>
+            </div>
+          </div>
+          <div class="soft-panel">
+            <div class="metric-label">说明</div>
+            <p class="muted">开启后，前台预约详情会显示对应信息；关闭后将隐藏，以减少非必要信息暴露。</p>
+          </div>
+          <div class="actions">
+            <button id="save-user-info-btn">保存用户信息设置</button>
+          </div>
+        </section>
+
+        <section id="tab_notice" class="card hidden">
+          <div class="section-head">
+            <div>
+              <h3>注意事项</h3>
+              <p class="muted">设置登录后弹出的提示内容，提醒用户按规范使用设备并完成归还。</p>
+            </div>
+          </div>
+          <div class="form-grid">
+            <div>
+              <label for="system_notice_enabled">登录注意事项弹窗</label>
+              <select id="system_notice_enabled"><option value="1">开启</option><option value="0">关闭</option></select>
+            </div>
+            <div>
+              <label for="system_notice_title">注意事项标题</label>
+              <input id="system_notice_title" maxlength="120" placeholder="例如：设备使用注意事项">
+            </div>
+            <div>
+              <label for="system_notice_content">注意事项内容</label>
+              <textarea id="system_notice_content" rows="5" placeholder="用户登录后会自动弹出，需自行关闭。"></textarea>
+            </div>
+          </div>
+          <div class="soft-panel">
+            <div class="metric-label">使用提示</div>
+            <p class="muted">建议写清楚预约时间、设备状态检查、归还确认和异常上报等规则，避免用户误操作。</p>
+          </div>
+          <div class="actions">
+            <button id="save-notice-btn">保存注意事项</button>
+          </div>
+        </section>
+
+        <section id="tab_roles" class="card hidden">
+          <div class="section-head">
+            <div>
+              <h3>管理员与权限</h3>
+              <p class="muted">可为多个管理员分配不同角色和权限，支持扩展超级管理员、运营和审计等职责。</p>
+            </div>
+          </div>
+          <div class="form-grid">
+            <div>
+              <label for="role_user_id">选择用户</label>
+              <select id="role_user_id">
+                <option value="">请选择用户</option>
+              </select>
+            </div>
+            <div>
+              <label for="role_key">角色</label>
+              <select id="role_key">
+                <option value="admin">admin</option>
+                <option value="ops">ops</option>
+                <option value="auditor">auditor</option>
+                <option value="super_admin">super_admin</option>
+              </select>
+            </div>
+            <div><label for="role_permissions">权限</label><input id="role_permissions" placeholder="逗号分隔，如 device.manage,reservation.approve"></div>
+            <div><label for="role_note">备注</label><input id="role_note" placeholder="可选"></div>
+          </div>
+          <div class="actions">
+            <button id="save-role-btn">保存管理员角色</button>
+            <button id="revoke-role-btn" class="danger">撤销管理员权限</button>
+            <button id="reload-role-btn" class="secondary">刷新角色列表</button>
+          </div>
+          <div id="roleList"></div>
+        </section>
       </div>
-      <div class="toolbar">
-        <div><label for="stat_user">用户</label><select id="stat_user"><option value="">全部用户</option></select></div>
-        <div><label for="stat_device">设备</label><select id="stat_device"><option value="">全部设备</option></select></div>
-        <div><label for="stat_start">开始日期</label><input id="stat_start" type="date"></div>
-        <div><label for="stat_end">结束日期</label><input id="stat_end" type="date"></div>
-      </div>
-      <div class="actions">
-        <button id="stats-btn">查询统计</button>
-        <button id="export-btn" class="secondary">导出 CSV</button>
-      </div>
-      <div id="statsBox"></div>
-    </section>
+    </div>
   </section>
 </main>
 
-<script src="js/config.js"></script>
-<script src="js/api.js"></script>
-<script src="js/ui.js"></script>
-<script src="js/common-header.js"></script>
-<script src="js/admin.js"></script>
+<script src="js/config.js?v=20260625b"></script>
+<script src="js/api.js?v=20260629b"></script>
+<script src="js/ui.js?v=20260625b"></script>
+<script src="js/admin.js?v=20260629b"></script>
 </body>
 </html>

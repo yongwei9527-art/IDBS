@@ -29,8 +29,27 @@ function createDb(options = {}) {
   const activePool = createPool(options);
 
   return {
+    pool: activePool,
     async query(text, params = []) {
       return activePool.query(text, params);
+    },
+    async transaction(work) {
+      const client = await activePool.connect();
+      try {
+        await client.query('BEGIN');
+        const result = await work(client);
+        await client.query('COMMIT');
+        return result;
+      } catch (error) {
+        try {
+          await client.query('ROLLBACK');
+        } catch (rollbackError) {
+          console.error('PostgreSQL rollback error:', rollbackError);
+        }
+        throw error;
+      } finally {
+        client.release();
+      }
     },
     async healthCheck() {
       const result = await activePool.query('select 1 as ok');

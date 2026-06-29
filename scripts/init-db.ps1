@@ -1,6 +1,7 @@
 param(
   [string]$DatabaseUrl = $env:DATABASE_URL,
-  [string]$SchemaPath = "./sql/schema.sql"
+  [string]$SchemaPath = "./sql/schema.sql",
+  [string]$MigrationsDir = "./sql/migrations"
 )
 
 if (-not $DatabaseUrl) {
@@ -15,4 +16,24 @@ if (-not (Get-Command psql -ErrorAction SilentlyContinue)) {
 
 Write-Host "Initializing PostgreSQL schema from $SchemaPath"
 psql $DatabaseUrl -f $SchemaPath
+
+if (Test-Path $MigrationsDir) {
+  $markerQuery = @"
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version TEXT PRIMARY KEY,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+"@
+  psql $DatabaseUrl -c $markerQuery | Out-Null
+  Get-ChildItem $MigrationsDir -Filter *.sql | Sort-Object Name | ForEach-Object {
+    $version = $_.BaseName
+    $check = psql $DatabaseUrl -tAc "SELECT 1 FROM schema_migrations WHERE version = '$version'"
+    if ($check -ne '1') {
+      Write-Host "Applying migration $($_.Name)"
+      psql $DatabaseUrl -f $_.FullName
+      psql $DatabaseUrl -c "INSERT INTO schema_migrations (version) VALUES ('$version')"
+    }
+  }
+}
+
 Write-Host "Done."
