@@ -38,6 +38,7 @@ function createRestApiRouter(service) {
   router.get('/users/profile', wrap((req) => service.getProfile(service.authTokenFromReq(req))));
   router.get('/system/notice', wrap(() => service.getSystemNotice()));
 
+  router.get('/reservation-slots', wrap((req) => service.getReservationSlotOptions(req.query || {})));
   router.get('/devices', wrap((req) => service.listDevices(req.query || {})));
   router.get('/devices/:deviceCode', wrap((req) => service.getDeviceDetail({ deviceCode: req.params.deviceCode })));
 

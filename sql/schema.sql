@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS devices (
   usage_notice TEXT,
   cover_photo TEXT,
   instruction_photos JSONB NOT NULL DEFAULT '[]'::jsonb,
+  reservation_slot_keys JSONB NOT NULL DEFAULT '["morning","afternoon","evening","night","daytime"]'::jsonb,
   last_return_photo TEXT,
   last_return_user TEXT,
   last_return_time TIMESTAMPTZ,
@@ -87,6 +88,9 @@ CREATE TABLE IF NOT EXISTS devices (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE devices
+  ADD COLUMN IF NOT EXISTS reservation_slot_keys JSONB NOT NULL DEFAULT '["morning","afternoon","evening","night","daytime"]'::jsonb;
 
 CREATE TABLE IF NOT EXISTS usage_log (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

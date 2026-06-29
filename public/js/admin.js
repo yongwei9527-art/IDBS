@@ -1,5 +1,49 @@
 let lastRows = [];
 let selectedUserIds = new Set();
+let reservationSlotPresets = window.ReservationSlots ? ReservationSlots.fallbackPresets : [];
+
+function fieldValue(id) {
+  const element = document.getElementById(id);
+  return element && typeof element.value === 'string' ? element.value.trim() : '';
+}
+
+function handleAdminError(error, target = null) {
+  if (error.status === 401) {
+    logoutAdmin();
+    showLoginOnly();
+    showPageMessage('login-message', 'danger', '后台登录已过期，请重新登录后再操作。');
+    return;
+  }
+  if (target) showPageMessage(target, 'danger', error.message);
+  else showToast('danger', error.message);
+}
+
+function renderDeviceSlotOptions(selectedKeys = reservationSlotPresets.map((slot) => slot.key)) {
+  const container = document.getElementById('device-slot-options');
+  if (!container || !window.ReservationSlots) return;
+  ReservationSlots.renderCheckboxes(container, reservationSlotPresets, selectedKeys, { name: 'device_reservation_slot_keys' });
+}
+
+function getDeviceSlotKeys() {
+  const container = document.getElementById('device-slot-options');
+  const keys = container && window.ReservationSlots ? ReservationSlots.selectedKeys(container) : [];
+  if (!keys.length) throw new Error('请至少选择一个允许预约时间段');
+  return keys;
+}
+
+async function loadReservationSlotPresets() {
+  try {
+    const result = await callRestApi('/reservation-slots');
+    reservationSlotPresets = result.all_presets || result.presets || reservationSlotPresets;
+    renderDeviceSlotOptions();
+  } catch (_) {
+    renderDeviceSlotOptions();
+  }
+}
+
+function slotLabels(options = []) {
+  return (options || []).map((slot) => slot.label || slot.key).filter(Boolean).join('、') || '-';
+}
 
 function showLoginOnly() {
   const accessDeniedBox = document.getElementById('admin-access-denied');
@@ -191,21 +235,23 @@ async function adminLogin() {
 async function createDevice() {
   try {
     let photo = '';
-    if (cover_photo.files[0]) {
-      photo = await uploadPhoto(cover_photo.files[0], 'device-photos');
+    const photoInput = document.getElementById('cover_photo');
+    if (photoInput?.files?.[0]) {
+      photo = await uploadPhoto(photoInput.files[0], 'device-photos');
     }
     await callRestApi('/admin/devices', {
       method: 'POST',
       admin: true,
       body: {
-        device_code: device_code.value.trim(),
-        name: device_name.value.trim(),
-        category: category.value.trim(),
-        location: location.value.trim(),
-        manager: manager.value.trim(),
-        status: status.value,
-        description: description.value.trim(),
-        usage_notice: usage_notice.value.trim(),
+        device_code: fieldValue('device_code'),
+        name: fieldValue('device_name'),
+        category: fieldValue('category'),
+        location: fieldValue('location'),
+        manager: fieldValue('manager'),
+        status: fieldValue('status') || 'available',
+        description: fieldValue('description'),
+        usage_notice: fieldValue('usage_notice'),
+        reservation_slot_keys: getDeviceSlotKeys(),
         cover_photo: photo
       }
     });
@@ -213,11 +259,12 @@ async function createDevice() {
     ['device_code', 'device_name', 'category', 'location', 'manager', 'description', 'usage_notice'].forEach((id) => {
       document.getElementById(id).value = '';
     });
-    cover_photo.value = '';
+    if (photoInput) photoInput.value = '';
+    renderDeviceSlotOptions();
     refreshAdminSummary().catch(() => {});
     loadDevices();
   } catch (error) {
-    showToast('danger', error.message);
+    handleAdminError(error);
   }
 }
 
@@ -230,13 +277,14 @@ async function loadDevices() {
     container.innerHTML = devices.length ? `
       <div class="table-wrap">
         <table>
-          <tr><th>编号</th><th>名称</th><th>位置</th><th>状态</th><th>当前使用</th><th>下个预约</th><th>操作</th></tr>
+          <tr><th>编号</th><th>名称</th><th>位置</th><th>状态</th><th>预约时段</th><th>当前使用</th><th>下个预约</th><th>操作</th></tr>
           ${devices.map((device) => `
             <tr>
               <td class="mono">${escapeHtml(device.device_code)}</td>
               <td>${escapeHtml(device.name)}</td>
               <td>${escapeHtml(device.location || '-')}</td>
               <td>${statusBadge(device.status)}</td>
+              <td>${escapeHtml(slotLabels(device.reservation_slot_options))}</td>
               <td>${device.current_borrow ? `${escapeHtml(device.current_borrow.user_name || '-')}<br>${escapeHtml(device.current_borrow.user_phone || '-')}` : '<span class="muted">无</span>'}</td>
               <td>${device.next_reservation ? `${escapeHtml(device.next_reservation.user_name || '-')}<br>${escapeHtml(device.next_reservation.user_phone || '-')}<br>${escapeHtml(fmtTime(device.next_reservation.start_time))}` : '<span class="muted">无</span>'}</td>
               <td>${device.status === 'abnormal_pending' ? `<button onclick="setAvailable('${device.id}')">恢复可预约</button>` : '<span class="muted">-</span>'}</td>
@@ -245,7 +293,7 @@ async function loadDevices() {
         </table>
       </div>` : '<div class="empty-state">暂无设备。</div>';
   } catch (error) {
-    showPageMessage(container, 'danger', error.message);
+    handleAdminError(error, container);
   }
 }
 
@@ -687,6 +735,13 @@ document.getElementById('select-all-users-btn').addEventListener('click', () => 
   const selectAll = document.getElementById('user-select-all');
   if (selectAll) selectAll.click();
 });
+document.getElementById('select-device-slots-btn').addEventListener('click', () => {
+  renderDeviceSlotOptions(ReservationSlots.baseKeys(reservationSlotPresets));
+});
+document.getElementById('clear-device-slots-btn').addEventListener('click', () => {
+  renderDeviceSlotOptions([]);
+});
 setupAdminTabs();
+loadReservationSlotPresets();
 
 bootAdminPage();

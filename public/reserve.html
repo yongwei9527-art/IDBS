@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>发起预约</title>
-  <link rel="stylesheet" href="css/style.css?v=20260629a">
+  <link rel="stylesheet" href="css/style.css?v=20260629c">
 </head>
 <body>
 <main>
@@ -15,14 +15,31 @@
 
   <section class="card">
     <div id="message"></div>
-    <label for="device_codes">设备编号（支持多个，逗号分隔）</label>
-    <input id="device_codes" class="mono" placeholder="例如：EQ-001, EQ-002">
+    <label for="device_search">搜索并选择设备（支持多个）</label>
+    <div class="combo-box">
+      <input id="device_search" class="mono" autocomplete="off" placeholder="输入设备编号、名称或位置">
+      <div id="device_suggestions" class="suggestion-list hidden"></div>
+    </div>
+    <input id="device_codes" type="hidden">
+    <div id="selected_devices" class="chip-list"></div>
     <div class="form-grid">
       <div>
-        <label for="time_slots">时间段（支持多个，按行填写）</label>
-        <textarea id="time_slots" rows="5" placeholder="2026-06-26 08:00 - 10:00\n2026-06-26 14:00 - 16:00"></textarea>
+        <label for="reservation_date">预约日期</label>
+        <input id="reservation_date" type="date">
       </div>
     </div>
+    <div class="section-head">
+      <div>
+        <h3>选择预约时间段</h3>
+        <p class="muted">可选择一个或多个互不重叠的时间段；“选择全天四段”会选择上午、下午、傍晚和夜间。</p>
+      </div>
+      <div class="actions">
+        <button id="select-all-slots-btn" class="secondary">选择全天四段</button>
+        <button id="clear-slots-btn" class="secondary">清空时间段</button>
+      </div>
+    </div>
+    <div id="slot_options" class="slot-grid"></div>
+    <div id="slot_preview"></div>
     <label for="purpose">使用目的</label>
     <textarea id="purpose" rows="4" placeholder="请说明用途，方便管理员审核"></textarea>
     <div class="actions">
@@ -35,24 +52,158 @@
 <script src="js/config.js"></script>
 <script src="js/api.js?v=20260629b"></script>
 <script src="js/ui.js"></script>
-<script src="js/common-header.js?v=20260629a"></script>
+<script src="js/reservation-slots.js?v=20260629c"></script>
+<script src="js/common-header.js?v=20260629c"></script>
 <script>
 if (!requireLogin()) throw new Error('User login required');
 
-device_codes.value = qs('device_code') || qs('device_codes') || '';
+const deviceSearchInput = document.getElementById('device_search');
+const deviceSuggestionsEl = document.getElementById('device_suggestions');
+const selectedDevicesEl = document.getElementById('selected_devices');
+const deviceCodesInput = document.getElementById('device_codes');
+const reservationDateInput = document.getElementById('reservation_date');
+const slotOptionsEl = document.getElementById('slot_options');
+const slotPreviewEl = document.getElementById('slot_preview');
+
+let allDevices = [];
+let selectedDeviceCodes = new Set();
+let slotPresets = ReservationSlots.fallbackPresets;
+
+function dateText(date) {
+  const copy = new Date(date);
+  copy.setMinutes(copy.getMinutes() - copy.getTimezoneOffset());
+  return copy.toISOString().slice(0, 10);
+}
+
+function setupDefaultDate() {
+  const today = new Date();
+  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  reservationDateInput.min = dateText(today);
+  reservationDateInput.value = dateText(tomorrow);
+}
+
+function isReservableDevice(device) {
+  return device.allow_reservation !== false && !['maintenance', 'disabled', 'abnormal_pending'].includes(device.status);
+}
+
+function deviceLabel(device) {
+  return `${device.device_code} · ${device.name || '-'} · ${device.location || '未填写位置'}`;
+}
+
+function findDevice(code) {
+  return allDevices.find((device) => device.device_code === code);
+}
+
+function renderSelectedDevices() {
+  const codes = [...selectedDeviceCodes];
+  deviceCodesInput.value = codes.join(',');
+  selectedDevicesEl.innerHTML = codes.length ? codes.map((code) => {
+    const device = findDevice(code);
+    return `
+      <span class="chip">
+        ${escapeHtml(device ? deviceLabel(device) : code)}
+        <button class="chip-remove" data-code="${escapeHtml(code)}" aria-label="移除设备">×</button>
+      </span>
+    `;
+  }).join('') : '<p class="muted">尚未选择设备。</p>';
+
+  selectedDevicesEl.querySelectorAll('.chip-remove').forEach((button) => {
+    button.addEventListener('click', () => {
+      selectedDeviceCodes.delete(button.dataset.code);
+      renderSelectedDevices();
+      refreshSlotOptions();
+    });
+  });
+}
+
+function renderDeviceSuggestions() {
+  const keyword = deviceSearchInput.value.trim().toLowerCase();
+  const candidates = allDevices
+    .filter(isReservableDevice)
+    .filter((device) => !selectedDeviceCodes.has(device.device_code))
+    .filter((device) => !keyword || [device.device_code, device.name, device.location, device.category].some((value) => String(value || '').toLowerCase().includes(keyword)))
+    .slice(0, 8);
+
+  if (!candidates.length) {
+    deviceSuggestionsEl.innerHTML = '<div class="suggestion-empty">没有匹配的可预约设备</div>';
+    deviceSuggestionsEl.classList.remove('hidden');
+    return;
+  }
+
+  deviceSuggestionsEl.innerHTML = candidates.map((device) => `
+    <button class="suggestion-item" data-code="${escapeHtml(device.device_code)}">
+      <strong>${escapeHtml(device.device_code)}</strong>
+      <span>${escapeHtml(device.name || '-')} · ${escapeHtml(device.location || '未填写位置')}</span>
+    </button>
+  `).join('');
+  deviceSuggestionsEl.classList.remove('hidden');
+  deviceSuggestionsEl.querySelectorAll('.suggestion-item').forEach((button) => {
+    button.addEventListener('click', () => {
+      selectedDeviceCodes.add(button.dataset.code);
+      deviceSearchInput.value = '';
+      deviceSuggestionsEl.classList.add('hidden');
+      renderSelectedDevices();
+      refreshSlotOptions();
+    });
+  });
+}
+
+function selectedSlotKeys() {
+  return ReservationSlots.selectedKeys(slotOptionsEl);
+}
+
+function bindSlotEvents() {
+  slotOptionsEl.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+    input.addEventListener('change', updateSlotPreview);
+  });
+}
+
+function updateSlotPreview() {
+  return ReservationSlots.renderPreview(slotPreviewEl, reservationDateInput.value, selectedSlotKeys(), slotPresets);
+}
+
+async function refreshSlotOptions() {
+  if (!selectedDeviceCodes.size) {
+    slotOptionsEl.innerHTML = '<div class="empty-state">请先选择设备，再选择预约时间段。</div>';
+    slotPreviewEl.innerHTML = '';
+    return;
+  }
+
+  const previousKeys = selectedSlotKeys();
+  const result = await callRestApi(`/reservation-slots?device_codes=${encodeURIComponent([...selectedDeviceCodes].join(','))}`);
+  slotPresets = result.presets || ReservationSlots.fallbackPresets;
+  const allowedKeys = slotPresets.map((slot) => slot.key);
+  ReservationSlots.renderCheckboxes(slotOptionsEl, slotPresets, previousKeys.filter((key) => allowedKeys.includes(key)), { name: 'reserve_slot_keys' });
+  bindSlotEvents();
+  updateSlotPreview();
+}
+
+async function loadDeviceOptions() {
+  const result = await callRestApi('/devices');
+  allDevices = result.list || result.devices || [];
+  const initialCodes = (qs('device_codes') || qs('device_code') || '').split(',').map((item) => item.trim()).filter(Boolean);
+  initialCodes.forEach((code) => selectedDeviceCodes.add(code));
+  renderSelectedDevices();
+  await refreshSlotOptions();
+}
 
 async function submitReserve() {
   if (!requireLogin()) return;
   const messageEl = document.getElementById('message');
   messageEl.innerHTML = '';
 
-  const deviceCodes = device_codes.value.split(',').map((item) => item.trim()).filter(Boolean);
-  const timeSlots = time_slots.value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+  const deviceCodes = [...selectedDeviceCodes];
+  const slotKeys = selectedSlotKeys();
+  const preview = updateSlotPreview();
+  if (!deviceCodes.length) return showPageMessage(messageEl, 'warn', '请先选择至少一台设备。');
+  if (!slotKeys.length) return showPageMessage(messageEl, 'warn', '请至少选择一个预约时间段。');
+  if (!preview.valid) return showPageMessage(messageEl, 'warn', '请选择互不重叠的预约时间段。');
 
   try {
     const result = await callApi('createReservation', {
       device_codes: deviceCodes,
-      time_slots: timeSlots,
+      reservation_date: reservationDateInput.value,
+      slot_keys: slotKeys,
       purpose: purpose.value.trim()
     });
     showPageMessage(messageEl, 'success', result.message || '预约已提交。');
@@ -62,7 +213,25 @@ async function submitReserve() {
   }
 }
 
+setupDefaultDate();
+deviceSearchInput.addEventListener('input', renderDeviceSuggestions);
+deviceSearchInput.addEventListener('focus', renderDeviceSuggestions);
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('.combo-box')) deviceSuggestionsEl.classList.add('hidden');
+});
+reservationDateInput.addEventListener('change', updateSlotPreview);
+document.getElementById('select-all-slots-btn').addEventListener('click', () => {
+  ReservationSlots.renderCheckboxes(slotOptionsEl, slotPresets, ReservationSlots.baseKeys(slotPresets), { name: 'reserve_slot_keys' });
+  bindSlotEvents();
+  updateSlotPreview();
+});
+document.getElementById('clear-slots-btn').addEventListener('click', () => {
+  ReservationSlots.renderCheckboxes(slotOptionsEl, slotPresets, [], { name: 'reserve_slot_keys' });
+  bindSlotEvents();
+  updateSlotPreview();
+});
 document.getElementById('submit-btn').addEventListener('click', submitReserve);
+loadDeviceOptions().catch((error) => showPageMessage('message', 'danger', error.message));
 </script>
 </body>
 </html>

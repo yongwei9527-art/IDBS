@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>管理后台</title>
-  <link rel="stylesheet" href="css/style.css?v=20260629b">
+  <link rel="stylesheet" href="css/style.css?v=20260629c">
 </head>
 <body>
 <main>
@@ -72,6 +72,19 @@
           <textarea id="usage_notice"></textarea>
           <label for="require_return_photo">结束使用是否必须上传图片</label>
           <select id="require_return_photo"><option value="1">必须上传</option><option value="0">不强制</option></select>
+          <div class="soft-panel settings-group">
+            <div class="section-head">
+              <div>
+                <h3>允许预约时间段</h3>
+                <p class="muted">用户预约该设备时，只能选择这里勾选的时间段。全选默认选择互不重叠的四个标准分段。</p>
+              </div>
+              <div class="actions">
+                <button id="select-device-slots-btn" class="secondary">选择全天四段</button>
+                <button id="clear-device-slots-btn" class="secondary">清空</button>
+              </div>
+            </div>
+            <div id="device-slot-options" class="slot-grid"></div>
+          </div>
           <label for="cover_photo">设备照片</label>
           <input id="cover_photo" type="file" accept="image/*">
           <div class="actions"><button id="create-device-btn">添加设备</button></div>
@@ -329,6 +342,7 @@
 <script src="js/config.js?v=20260625b"></script>
 <script src="js/api.js?v=20260629b"></script>
 <script src="js/ui.js?v=20260625b"></script>
-<script src="js/admin.js?v=20260629b"></script>
+<script src="js/reservation-slots.js?v=20260629c"></script>
+<script src="js/admin.js?v=20260629c"></script>
 </body>
 </html>

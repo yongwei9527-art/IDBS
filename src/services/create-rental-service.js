@@ -25,6 +25,7 @@ function createRentalService(options) {
     'usage_notice',
     'cover_photo',
     'instruction_photos',
+    'reservation_slot_keys',
     'last_return_photo',
     'last_return_user',
     'last_return_time',
@@ -68,6 +69,14 @@ function createRentalService(options) {
     ops: ['device.manage', 'reservation.approve', 'stats.view'],
     auditor: ['stats.view', 'reservation.view']
   };
+  const RESERVATION_SLOT_PRESETS = [
+    { key: 'morning', label: '上午 8:00-12:00', start: '08:00', end: '12:00', type: 'base' },
+    { key: 'afternoon', label: '下午 12:00-17:00', start: '12:00', end: '17:00', type: 'base' },
+    { key: 'evening', label: '傍晚 17:00-22:00', start: '17:00', end: '22:00', type: 'base' },
+    { key: 'night', label: '夜间 22:00-次日 8:00', start: '22:00', end: '08:00', crosses_midnight: true, type: 'base' },
+    { key: 'daytime', label: '白天 8:00-22:00（14小时）', start: '08:00', end: '22:00', type: 'shortcut' }
+  ];
+  const DEFAULT_RESERVATION_SLOT_KEYS = RESERVATION_SLOT_PRESETS.map((item) => item.key);
   const MAX_REPORT_PUSH_ROWS = 25;
   const MAX_WECHAT_TEXT_LENGTH = 1800;
 
@@ -161,6 +170,83 @@ function createRentalService(options) {
     return { start, end };
   }
 
+  function getReservationSlotPreset(key) {
+    return RESERVATION_SLOT_PRESETS.find((item) => item.key === key) || null;
+  }
+
+  function normalizeReservationSlotKeys(value, fallback = DEFAULT_RESERVATION_SLOT_KEYS) {
+    let raw = value;
+    if (typeof value === 'string') {
+      try {
+        raw = JSON.parse(value);
+      } catch (_) {
+        raw = value.split(',');
+      }
+    }
+    const keys = Array.isArray(raw)
+      ? raw.map((item) => String(item || '').trim()).filter(Boolean)
+      : [];
+    const valid = keys.filter((key, index, list) => getReservationSlotPreset(key) && list.indexOf(key) === index);
+    return valid.length ? valid : [...fallback];
+  }
+
+  function withReservationSlotOptions(device = {}) {
+    const reservationSlotKeys = normalizeReservationSlotKeys(device.reservation_slot_keys);
+    return {
+      ...device,
+      reservation_slot_keys: reservationSlotKeys,
+      reservation_slot_options: RESERVATION_SLOT_PRESETS.filter((slot) => reservationSlotKeys.includes(slot.key))
+    };
+  }
+
+  function addDaysToDateText(dateText, days) {
+    const [year, month, day] = dateText.split('-').map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day + days));
+    return date.toISOString().slice(0, 10);
+  }
+
+  function slotToDateRange(dateText, slot) {
+    const endDate = slot.crosses_midnight ? addDaysToDateText(dateText, 1) : dateText;
+    return {
+      key: slot.key,
+      label: slot.label,
+      ...parseDates(`${dateText}T${slot.start}:00+08:00`, `${endDate}T${slot.end}:00+08:00`)
+    };
+  }
+
+  function assertNoOverlappingSlots(slots) {
+    const sorted = [...slots].sort((a, b) => a.start - b.start);
+    for (let index = 1; index < sorted.length; index += 1) {
+      if (sorted[index].start < sorted[index - 1].end) {
+        throw new AppError('Selected time slots overlap. Please choose non-overlapping slots.', { status: 400, code: 2001 });
+      }
+    }
+  }
+
+  function buildReservationSlotsFromKeys(payload, devices = []) {
+    const dateText = String(payload.reservation_date || payload.reservationDate || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) {
+      throw new AppError('reservation_date is required', { status: 400, code: 2001 });
+    }
+
+    const slotKeys = normalizeReservationSlotKeys(payload.slot_keys || payload.slotKeys, []);
+    if (!slotKeys.length) {
+      throw new AppError('slot_keys is required', { status: 400, code: 2001 });
+    }
+
+    for (const device of devices || []) {
+      const allowedKeys = normalizeReservationSlotKeys(device.reservation_slot_keys);
+      const blockedKey = slotKeys.find((key) => !allowedKeys.includes(key));
+      if (blockedKey) {
+        throw new AppError(`Device ${device.device_code} does not allow slot ${blockedKey}`, { status: 409, code: 3001 });
+      }
+    }
+
+    const slots = slotKeys.map((key) => slotToDateRange(dateText, getReservationSlotPreset(key)));
+    assertNoOverlappingSlots(slots);
+    return slots;
+  }
+
   function parseReservationTimeSlot(value) {
     const text = String(value || '').trim();
     if (!text) {
@@ -191,7 +277,10 @@ function createRentalService(options) {
     return [...new Set(list)];
   }
 
-  function parseReservationSlots(payload) {
+  function parseReservationSlots(payload, devices = []) {
+    if (payload.reservation_date || payload.reservationDate || payload.slot_keys || payload.slotKeys) {
+      return buildReservationSlotsFromKeys(payload, devices);
+    }
     const rawSlots = Array.isArray(payload.time_slots)
       ? payload.time_slots
       : Array.isArray(payload.timeSlots)
@@ -203,6 +292,7 @@ function createRentalService(options) {
     if (!slots.length) {
       throw new AppError('time_slots is required', { status: 400, code: 2001 });
     }
+    assertNoOverlappingSlots(slots);
     return slots;
   }
 
@@ -568,7 +658,7 @@ function createRentalService(options) {
       const namedReservations = await addNamesToReservations(reservationRows || []);
       const namedLast = await addNamesToBorrowRows(lastRows || []);
       rows.push({
-        ...device,
+        ...withReservationSlotOptions(device),
         current_borrow: applyReservationVisibility(namedCurrent[0], visibility, options.fullAccess),
         next_reservation: applyReservationVisibility(namedReservations[0], visibility, options.fullAccess),
         last_record: applyReservationVisibility(namedLast[0], visibility, options.fullAccess)
@@ -602,9 +692,9 @@ function createRentalService(options) {
     }).format(date).replace(/\//g, '-');
   }
 
-  async function appendUsageLog(action, record, user, device, extra = {}) {
+  async function appendUsageLog(action, record, user, device, extra = {}, runQuery = query) {
     try {
-      await query('insert into usage_log (id, record_id, reservation_id, device_id, user_id, action, device_code, device_name, user_name, user_phone, user_student_no, borrow_time, expected_return_time, return_time, duration_minutes, record_status, return_condition, return_note, operator_name, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)', [
+      await runQuery('insert into usage_log (id, record_id, reservation_id, device_id, user_id, action, device_code, device_name, user_name, user_phone, user_student_no, borrow_time, expected_return_time, return_time, duration_minutes, record_status, return_condition, return_note, operator_name, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)', [
         uuid(), record.id, record.reservation_id || null, device?.id || record.device_id || null, user?.id || record.user_id || null, String(action || '').slice(0, 20), String(device?.device_code || '').slice(0, 80), String(device?.name || '').slice(0, 120), String(user?.name || '').slice(0, 80), String(user?.phone || '').slice(0, 30), String(user?.student_no || '').slice(0, 50), record.borrow_time || null, record.expected_return_time || null, record.return_time || null, Number(record.duration_minutes) || null, String(record.status || '').slice(0, 40), String(record.return_condition || '').slice(0, 50), String(record.return_note || '').slice(0, 500), String(extra.operator_name || user?.name || '').slice(0, 80), nowIso()
       ]);
     } catch (error) {
@@ -873,6 +963,37 @@ function createRentalService(options) {
     return ok({ list, total: total ?? list.length, page, page_size: pageSize || list.length });
   }
 
+  async function getReservationSlotOptions(params = {}) {
+    const rawCodes = Array.isArray(params.device_codes)
+      ? params.device_codes
+      : Array.isArray(params.deviceCodes)
+        ? params.deviceCodes
+        : String(params.device_codes || params.deviceCodes || params.device_code || params.deviceCode || '')
+          .split(',');
+    const deviceCodes = rawCodes.map((item) => String(item || '').trim()).filter(Boolean);
+    let allowedKeys = [...DEFAULT_RESERVATION_SLOT_KEYS];
+
+    if (deviceCodes.length) {
+      const devices = [];
+      for (const deviceCode of [...new Set(deviceCodes)]) {
+        const device = await getDeviceByCode(deviceCode);
+        if (!device) return fail(`Device not found: ${deviceCode}`, 404, 3004);
+        devices.push(device);
+      }
+      allowedKeys = devices
+        .map((device) => normalizeReservationSlotKeys(device.reservation_slot_keys))
+        .reduce((shared, keys) => shared.filter((key) => keys.includes(key)), [...DEFAULT_RESERVATION_SLOT_KEYS]);
+    }
+
+    const presets = RESERVATION_SLOT_PRESETS.filter((slot) => allowedKeys.includes(slot.key));
+    return ok({
+      presets,
+      all_presets: RESERVATION_SLOT_PRESETS,
+      selected_device_codes: deviceCodes,
+      select_all_keys: presets.filter((slot) => slot.type === 'base').map((slot) => slot.key)
+    });
+  }
+
   async function adminListDevices(filters = {}, token) {
     await requireAdminRole(token, ['super_admin', 'admin', 'ops'], ['device.manage', 'device.view']);
     const result = await listDevices(filters);
@@ -900,7 +1021,6 @@ function createRentalService(options) {
   async function createReservation(payload, token) {
     const user = await requireUser(token);
     const deviceCodes = parseReservationDevices(payload);
-    const slots = parseReservationSlots(payload);
     const purpose = String(payload.purpose || '').trim().slice(0, 200);
     const batchId = uuid();
     const unfinishedRecord = await queryOne('select id from borrow_records where user_id = $1 and status = any($2) limit 1', [user.id, ['in_use', 'abnormal_pending', 'overdue']]);
@@ -916,6 +1036,7 @@ function createRentalService(options) {
       }
       devices.push(device);
     }
+    const slots = parseReservationSlots(payload, devices);
     const created = [];
     for (const device of devices) {
       for (const { start, end } of slots) {
@@ -990,11 +1111,14 @@ function createRentalService(options) {
       return fail('Device is not available now', 409, 3001);
     }
     const record = { id: uuid(), reservation_id: reservation.id, device_id: reservation.device_id, user_id: user.id, borrow_time: nowIso(), expected_return_time: reservation.end_time, status: 'in_use', created_at: nowIso(), updated_at: nowIso() };
-    await query('insert into borrow_records (id, reservation_id, device_id, user_id, borrow_time, expected_return_time, status, created_at, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)', Object.values(record));
-    await query('update reservations set status = $1, updated_at = $2 where id = $3', ['in_use', nowIso(), reservation.id]);
-    await query('update devices set status = $1, updated_at = $2 where id = $3', ['in_use', nowIso(), reservation.device_id]);
-    await appendUsageLog('BORROW', record, user, device, { operator_name: user.name });
-    await log('start_use', 'Started device usage', user, reservation.device_id, record.id);
+    await withTransaction(async (client) => {
+      const txQuery = (sql, params = []) => client.query(sql, params);
+      await client.query('insert into borrow_records (id, reservation_id, device_id, user_id, borrow_time, expected_return_time, status, created_at, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)', Object.values(record));
+      await client.query('update reservations set status = $1, updated_at = $2 where id = $3', ['in_use', nowIso(), reservation.id]);
+      await client.query('update devices set status = $1, updated_at = $2 where id = $3', ['in_use', nowIso(), reservation.device_id]);
+      await appendUsageLog('BORROW', record, user, device, { operator_name: user.name }, txQuery);
+      await log('start_use', 'Started device usage', user, reservation.device_id, record.id, txQuery);
+    });
     return ok({ message: 'Usage started', record });
   }
 
@@ -1018,13 +1142,17 @@ function createRentalService(options) {
     const abnormal = returnCondition && returnCondition !== 'normal';
     const nextDeviceStatus = abnormal ? 'abnormal_pending' : 'available';
     const nextRecordStatus = abnormal ? 'abnormal_pending' : 'returned';
-    await query('update borrow_records set return_time = $1, duration_minutes = $2, return_condition = $3, return_note = $4, return_photos = $5, status = $6, is_overdue = $7, updated_at = $8 where id = $9', [returnTime, duration, returnCondition, returnNote, JSON.stringify(returnPhotos), nextRecordStatus, isOverdue, nowIso(), record.id]);
-    await query('update devices set status = $1, last_return_photo = $2, last_return_user = $3, last_return_time = $4, last_condition = $5, updated_at = $6 where id = $7', [nextDeviceStatus, returnPhotos[0] || null, user.name, returnTime, returnCondition, nowIso(), record.device_id]);
-    if (record.reservation_id) {
-      await query('update reservations set status = $1, updated_at = $2 where id = $3', ['completed', nowIso(), record.reservation_id]);
-    }
-    await appendUsageLog('RETURN', { ...record, return_time: returnTime, duration_minutes: duration, return_condition: returnCondition, return_note: returnNote, status: nextRecordStatus }, user, await getById('devices', record.device_id), { operator_name: user.name });
-    await log('submit_return', `Submitted return: ${returnCondition || 'normal'}`, user, record.device_id, record.id);
+    const device = await getById('devices', record.device_id);
+    await withTransaction(async (client) => {
+      const txQuery = (sql, params = []) => client.query(sql, params);
+      await client.query('update borrow_records set return_time = $1, duration_minutes = $2, return_condition = $3, return_note = $4, return_photos = $5, status = $6, is_overdue = $7, updated_at = $8 where id = $9', [returnTime, duration, returnCondition, returnNote, JSON.stringify(returnPhotos), nextRecordStatus, isOverdue, nowIso(), record.id]);
+      await client.query('update devices set status = $1, last_return_photo = $2, last_return_user = $3, last_return_time = $4, last_condition = $5, updated_at = $6 where id = $7', [nextDeviceStatus, returnPhotos[0] || null, user.name, returnTime, returnCondition, nowIso(), record.device_id]);
+      if (record.reservation_id) {
+        await client.query('update reservations set status = $1, updated_at = $2 where id = $3', ['completed', nowIso(), record.reservation_id]);
+      }
+      await appendUsageLog('RETURN', { ...record, return_time: returnTime, duration_minutes: duration, return_condition: returnCondition, return_note: returnNote, status: nextRecordStatus }, user, device, { operator_name: user.name }, txQuery);
+      await log('submit_return', `Submitted return: ${returnCondition || 'normal'}`, user, record.device_id, record.id, txQuery);
+    });
     return ok({ message: abnormal ? 'Abnormal return submitted' : 'Returned successfully' });
   }
 
@@ -1312,12 +1440,13 @@ function createRentalService(options) {
       usage_notice: String(payload.usage_notice || '').trim().slice(0, 1000),
       cover_photo: isSafeUrl(payload.cover_photo) ? String(payload.cover_photo).trim().slice(0, 500) : '',
       instruction_photos: Array.isArray(payload.instruction_photos) ? payload.instruction_photos.slice(0, 10).map((value) => (isSafeUrl(value) ? String(value).slice(0, 500) : '')).filter(Boolean) : [],
+      reservation_slot_keys: normalizeReservationSlotKeys(payload.reservation_slot_keys || payload.reservationSlotKeys),
       created_at: nowIso(),
       updated_at: nowIso()
     };
-    await query('insert into devices (id, device_code, name, category, location, manager, status, allow_reservation, description, usage_notice, cover_photo, instruction_photos, created_at, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)', [row.id, row.device_code, row.name, row.category, row.location, row.manager, row.status, row.allow_reservation, row.description, row.usage_notice, row.cover_photo, JSON.stringify(row.instruction_photos), row.created_at, row.updated_at]);
+    await query('insert into devices (id, device_code, name, category, location, manager, status, allow_reservation, description, usage_notice, cover_photo, instruction_photos, reservation_slot_keys, created_at, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)', [row.id, row.device_code, row.name, row.category, row.location, row.manager, row.status, row.allow_reservation, row.description, row.usage_notice, row.cover_photo, JSON.stringify(row.instruction_photos), JSON.stringify(row.reservation_slot_keys), row.created_at, row.updated_at]);
     await log('create_device', `Created device ${deviceCode} ${name}`, admin, row.id);
-    return ok({ message: 'Device created', device: row });
+    return ok({ message: 'Device created', device: withReservationSlotOptions(row) });
   }
 
   async function adminUpdateDevice(payload, token) {
@@ -1330,6 +1459,7 @@ function createRentalService(options) {
     if (typeof values.instruction_photos === 'string') values.instruction_photos = [];
     if ('cover_photo' in values && !isSafeUrl(values.cover_photo)) values.cover_photo = '';
     if (Array.isArray(values.instruction_photos)) values.instruction_photos = values.instruction_photos.filter(isSafeUrl).slice(0, 10);
+    if ('reservation_slot_keys' in values) values.reservation_slot_keys = normalizeReservationSlotKeys(values.reservation_slot_keys);
     if ('device_code' in values) values.device_code = assertText(values.device_code, 'device_code', 50);
     if ('name' in values) values.name = assertText(values.name, 'name', 100);
     if ('category' in values) values.category = String(values.category || '').trim().slice(0, 50);
@@ -1342,7 +1472,7 @@ function createRentalService(options) {
     }
     const keys = Object.keys(values);
     const sets = keys.map((key, index) => `${key} = $${index + 1}`);
-    await query(`update devices set ${sets.join(', ')} where id = $${keys.length + 1}`, [...keys.map((key) => key === 'instruction_photos' ? JSON.stringify(values[key]) : values[key]), id]);
+    await query(`update devices set ${sets.join(', ')} where id = $${keys.length + 1}`, [...keys.map((key) => ['instruction_photos', 'reservation_slot_keys'].includes(key) ? JSON.stringify(values[key]) : values[key]), id]);
     await log('update_device', `Updated device ${id}`, admin, id);
     return ok({ message: 'Device updated' });
   }
@@ -1363,13 +1493,19 @@ function createRentalService(options) {
     if (approve) {
       const conflicts = await checkConflict(reservation.device_id, reservation.start_time, reservation.end_time, reservation.id);
       if (conflicts.length) return fail('Time slot has been occupied', 409, 3001);
-      await query('update reservations set status = $1, admin_note = $2, approved_at = $3, updated_at = $4 where id = $5', ['approved', adminNote, nowIso(), nowIso(), reservation.id]);
-      await query('update devices set updated_at = $1 where id = $2', [nowIso(), reservation.device_id]);
-      await log('approve_reservation', 'Approved reservation', admin, reservation.device_id, reservation.id);
+      await withTransaction(async (client) => {
+        const txQuery = (sql, params = []) => client.query(sql, params);
+        await client.query('update reservations set status = $1, admin_note = $2, approved_at = $3, updated_at = $4 where id = $5', ['approved', adminNote, nowIso(), nowIso(), reservation.id]);
+        await client.query('update devices set updated_at = $1 where id = $2', [nowIso(), reservation.device_id]);
+        await log('approve_reservation', 'Approved reservation', admin, reservation.device_id, reservation.id, txQuery);
+      });
       return ok({ message: 'Reservation approved' });
     }
-    await query('update reservations set status = $1, admin_note = $2, updated_at = $3 where id = $4', ['rejected', adminNote, nowIso(), reservation.id]);
-    await log('reject_reservation', 'Rejected reservation', admin, reservation.device_id, reservation.id);
+    await withTransaction(async (client) => {
+      const txQuery = (sql, params = []) => client.query(sql, params);
+      await client.query('update reservations set status = $1, admin_note = $2, updated_at = $3 where id = $4', ['rejected', adminNote, nowIso(), reservation.id]);
+      await log('reject_reservation', 'Rejected reservation', admin, reservation.device_id, reservation.id, txQuery);
+    });
     return ok({ message: 'Reservation rejected' });
   }
 
@@ -1439,9 +1575,9 @@ function createRentalService(options) {
     return `<xml>\n<ToUserName><![CDATA[${escapeXml(toUser)}]]></ToUserName>\n<FromUserName><![CDATA[${escapeXml(fromUser)}]]></FromUserName>\n<CreateTime>${timestamp}</CreateTime>\n<MsgType><![CDATA[text]]></MsgType>\n<Content><![CDATA[${escapeXml(content)}]]></Content>\n</xml>`;
   }
 
-  const legacyRoutes = { adminLogin, registerUser, loginUser, listDevices, getDeviceDetail, createReservation, cancelReservation, myRecords, startUse, submitReturn, adminListUsers, adminSetUserStatus, adminSetUserBan, adminUnbindWechat, adminCreateDevice, adminListDevices, adminUpdateDevice, adminListReservations, adminApproveReservation, adminSetDeviceAvailable, adminGetSecurityConfig, adminUpdateSecurityConfig, adminGetActivitySummary, adminListRoles, adminUpsertRole, adminRevokeRole, usageStats, adminOptions, adminPreviewDailyUsageReport, adminSendDailyUsageReport, createLoginChallenge, getLoginChallengeStatus, bindWechatAccount, getSystemNotice };
+  const legacyRoutes = { adminLogin, registerUser, loginUser, listDevices, getReservationSlotOptions, getDeviceDetail, createReservation, cancelReservation, myRecords, startUse, submitReturn, adminListUsers, adminSetUserStatus, adminSetUserBan, adminUnbindWechat, adminCreateDevice, adminListDevices, adminUpdateDevice, adminListReservations, adminApproveReservation, adminSetDeviceAvailable, adminGetSecurityConfig, adminUpdateSecurityConfig, adminGetActivitySummary, adminListRoles, adminUpsertRole, adminRevokeRole, usageStats, adminOptions, adminPreviewDailyUsageReport, adminSendDailyUsageReport, createLoginChallenge, getLoginChallengeStatus, bindWechatAccount, getSystemNotice };
 
-  return { adminApproveReservation, adminCreateDevice, adminDeleteUser, adminGetActivitySummary, adminGetSecurityConfig, adminListDevices, adminListReservations, adminListRoles, adminListUsers, adminLogin, adminOptions, adminPreviewDailyUsageReport, adminSendDailyUsageReport, adminRevokeRole, adminSetDeviceAvailable, adminSetUserBan, adminSetUserStatus, adminUnbindWechat, adminUpdateDevice, adminUpdateSecurityConfig, adminUpsertRole, authTokenFromReq, bindWechatAccount, buildWechatReply, cancelReservation, createLoginChallenge, createReservation, getReportConfig, getDeviceDetail, getLoginChallengeStatus, getProfile, getSystemNotice, handleWechatMessage, legacyRoutes, listDevices, loginUser, myRecords, registerUser, safeFilename, sendWechatCustomMessage, startUse, submitReturn, pushDailyUsageReport, usageStats, verifyWechatHandshake };
+  return { adminApproveReservation, adminCreateDevice, adminDeleteUser, adminGetActivitySummary, adminGetSecurityConfig, adminListDevices, adminListReservations, adminListRoles, adminListUsers, adminLogin, adminOptions, adminPreviewDailyUsageReport, adminSendDailyUsageReport, adminRevokeRole, adminSetDeviceAvailable, adminSetUserBan, adminSetUserStatus, adminUnbindWechat, adminUpdateDevice, adminUpdateSecurityConfig, adminUpsertRole, authTokenFromReq, bindWechatAccount, buildWechatReply, cancelReservation, createLoginChallenge, createReservation, getReportConfig, getDeviceDetail, getLoginChallengeStatus, getProfile, getReservationSlotOptions, getSystemNotice, handleWechatMessage, legacyRoutes, listDevices, loginUser, myRecords, registerUser, safeFilename, sendWechatCustomMessage, startUse, submitReturn, pushDailyUsageReport, usageStats, verifyWechatHandshake };
 }
 
 module.exports = { createRentalService };
