@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>设备详情</title>
-  <link rel="stylesheet" href="css/style.css?v=20260629c">
+  <link rel="stylesheet" href="css/style.css?v=20260702a">
+  <link rel="stylesheet" href="css/formal.css?v=20260702b">
 </head>
 <body>
 <main>
@@ -12,9 +13,10 @@
 </main>
 
 <script src="js/config.js"></script>
-<script src="js/api.js?v=20260629b"></script>
-<script src="js/ui.js"></script>
-<script src="js/common-header.js?v=20260629a"></script>
+<script src="js/api.js?v=20260702a"></script>
+<script src="js/ui.js?v=20260701e"></script>
+<script src="js/common-header.js?v=20260703b"></script>
+<script src="js/page-shortcuts.js?v=20260701e"></script>
 <script>
 if (!requireLogin()) throw new Error('User login required');
 
@@ -30,13 +32,20 @@ async function load() {
   setLoading(container, '正在加载设备详情...');
 
   try {
-    const result = await callApi('getDeviceDetail', { device_code: code });
+    const result = await callRestApi(`/devices/${encodeURIComponent(code)}`);
     const device = result.device;
     const reservations = result.reservations || [];
+    const occupancy = result.occupancy_14_days || [];
+    const faults = result.recent_fault_reports || [];
     const currentBorrow = result.current_borrow || device.current_borrow;
     const lastRecord = result.last_record;
     const photos = [];
+    const gallery = [];
 
+    if (device.cover_photo) gallery.push(await renderImg(device.cover_photo, 'device-photo'));
+    for (const photo of Array.isArray(device.instruction_photos) ? device.instruction_photos : []) {
+      gallery.push(await renderImg(photo, 'device-photo'));
+    }
     if (lastRecord && Array.isArray(lastRecord.return_photos)) {
       for (const item of lastRecord.return_photos) {
         photos.push(await renderImg(item));
@@ -46,14 +55,20 @@ async function load() {
     }
 
     container.innerHTML = `
-      <section class="hero">
-        <h2>${escapeHtml(device.name)}</h2>
-        <p class="muted">编号：<span class="mono">${escapeHtml(device.device_code)}</span> | 位置：${escapeHtml(device.location || '未填写')}</p>
+      <section class="hero device-detail-hero">
+        <div>
+          <h2>${escapeHtml(device.name)}</h2>
+          <p class="muted">编号：<span class="mono">${escapeHtml(device.device_code)}</span> | 位置：${escapeHtml(device.location || '未填写')} | 分类：${escapeHtml(device.category || '未分类')}</p>
+        </div>
         <div class="hero-actions">
           ${statusBadge(device.status)}
           <a class="badge success" href="reserve.html?device_code=${encodeURIComponent(device.device_code)}">预约这台设备</a>
+          <a class="badge info" href="chat.html?contact_admin=1&device_code=${encodeURIComponent(device.device_code)}">咨询管理员</a>
+          <a class="badge warn" href="my.html?fault_device=${encodeURIComponent(device.device_code)}#reports">故障 / 需求上报</a>
         </div>
       </section>
+
+      ${gallery.length ? `<section class="card device-gallery">${gallery.join('')}</section>` : ''}
 
       <section class="grid">
         <article class="card stack">
@@ -61,6 +76,14 @@ async function load() {
           <p>负责人：${escapeHtml(device.manager || '未填写')}</p>
           <p>设备说明：${escapeHtml(device.description || '暂无说明')}</p>
           <p>使用提示：${escapeHtml(device.usage_notice || '暂无提示')}</p>
+        </article>
+        <article class="card stack">
+          <h3>近 14 天占用</h3>
+          ${renderOccupancySummary(occupancy)}
+        </article>
+        <article class="card stack">
+          <h3>近期故障摘要</h3>
+          ${renderFaultSummary(faults)}
         </article>
         <article class="card stack">
           <h3>当前使用情况</h3>
@@ -102,6 +125,38 @@ async function load() {
   } catch (error) {
     showPageMessage(container, 'danger', error.message);
   }
+}
+
+function renderOccupancySummary(rows = []) {
+  if (!rows.length) return '<div class="empty-state">未来 14 天暂无占用记录。</div>';
+  return `
+    <div class="device-timeline">
+      ${rows.slice(0, 8).map((row) => `
+        <div class="device-timeline-item">
+          <span>${statusBadge(row.status)}</span>
+          <strong>${escapeHtml(fmtTime(row.start_time))}</strong>
+          <small>${escapeHtml(fmtTime(row.end_time))}</small>
+        </div>
+      `).join('')}
+    </div>
+    ${rows.length > 8 ? `<p class="muted">还有 ${rows.length - 8} 条占用记录，可在使用日历查看。</p>` : ''}
+  `;
+}
+
+function renderFaultSummary(rows = []) {
+  if (!rows.length) return '<div class="empty-state">近期暂无故障上报。</div>';
+  return `
+    <div class="fault-summary-list">
+      ${rows.map((row) => `
+        <article class="fault-summary-item">
+          <div>${statusBadge(row.status)} <span class="badge ${row.severity === 'critical' ? 'danger' : row.severity === 'high' ? 'warn' : 'info'}">${escapeHtml(row.severity || 'normal')}</span></div>
+          <strong>${escapeHtml(row.issue_type || 'fault')} · ${escapeHtml(fmtTime(row.created_at))}</strong>
+          <p>${escapeHtml(row.description || '-')}</p>
+          ${row.admin_note ? `<small>${escapeHtml(row.admin_note)}</small>` : ''}
+        </article>
+      `).join('')}
+    </div>
+  `;
 }
 
 load();

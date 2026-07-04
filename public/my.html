@@ -4,26 +4,372 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>我的记录</title>
-  <link rel="stylesheet" href="css/style.css?v=20260629c">
+  <link rel="stylesheet" href="css/style.css?v=20260702a">
+  <link rel="stylesheet" href="css/formal.css?v=20260702b">
 </head>
 <body>
 <main>
   <section class="hero">
     <h2>我的预约与借还记录</h2>
-    <p class="muted">这里是联调最关键的用户闭环页面，可以完整覆盖预约、开始使用、归还和异常处理。</p>
   </section>
-  <div class="actions"><button id="refresh-btn">刷新数据</button></div>
+  <div class="actions page-actions">
+    <button id="refresh-btn">刷新数据</button>
+  </div>
   <section id="box"></section>
 </main>
 
 <script src="js/config.js"></script>
-<script src="js/api.js?v=20260629b"></script>
-<script src="js/ui.js"></script>
-<script src="js/common-header.js?v=20260629a"></script>
+<script src="js/api.js?v=20260702a"></script>
+<script src="js/ui.js?v=20260701e"></script>
+<script src="js/common-header.js?v=20260703b"></script>
+<script src="js/page-shortcuts.js?v=20260701e"></script>
 <script>
 if (!requireLogin()) throw new Error('User login required');
 
 let requireReturnPhoto = true;
+let deviceOptions = [];
+
+function notify(type, message) {
+  if (typeof showToast === 'function') showToast(type, message);
+  else alert(message);
+}
+
+const RECORD_TABS = [
+  { key: 'notifications', label: '信息提示' },
+  { key: 'pending', label: '待审核' },
+  { key: 'approved', label: '已通过' },
+  { key: 'in_use', label: '使用中' },
+  { key: 'completed', label: '已完成' },
+  { key: 'rejected', label: '已拒绝' },
+  { key: 'cancelled', label: '已取消' },
+  { key: 'reports', label: '上报记录' }
+];
+
+function groupRecords(reservations = [], borrows = [], requests = [], notifications = []) {
+  return {
+    notifications,
+    pending: reservations.filter((row) => row.status === 'pending'),
+    approved: reservations.filter((row) => row.status === 'approved'),
+    in_use: [
+      ...reservations.filter((row) => row.status === 'in_use'),
+      ...borrows.filter((row) => row.status === 'in_use').map((row) => ({ ...row, record_type: 'borrow' }))
+    ],
+    completed: [
+      ...reservations.filter((row) => ['completed', 'returned'].includes(row.status)),
+      ...borrows.filter((row) => ['returned', 'completed'].includes(row.status)).map((row) => ({ ...row, record_type: 'borrow' }))
+    ],
+    rejected: reservations.filter((row) => row.status === 'rejected'),
+    cancelled: reservations.filter((row) => row.status === 'cancelled'),
+    reports: [
+      ...borrows.filter((row) => ['abnormal_pending', 'overdue'].includes(row.status)).map((row) => ({ ...row, record_type: 'borrow', report_kind: 'fault' })),
+      ...requests.map((row) => ({ ...row, report_kind: 'request' }))
+    ]
+  };
+}
+
+function recordTime(row) {
+  if (row.record_type === 'borrow') return `${fmtTime(row.borrow_time)}<br><span class="muted">预计：${escapeHtml(fmtTime(row.expected_return_time))}</span>`;
+  return `${fmtTime(row.start_time)}<br><span class="muted">结束：${escapeHtml(fmtTime(row.end_time))}</span>`;
+}
+
+function deviceAvailabilityNote(row) {
+  if (!row || row.record_type === 'borrow') return '';
+  if (row.device_unavailable) {
+    return '<br><span class="badge warn">设备暂时不可用，预约未取消</span>';
+  }
+  if (['pending', 'approved', 'in_use'].includes(row.status) && row.device_status === 'available') {
+    return '<br><span class="badge success">设备可用</span>';
+  }
+  return '';
+}
+
+function compactParam(value, max = 160) {
+  return String(value ?? '').trim().slice(0, max);
+}
+
+function chatContextFromRecord(row = {}, kind = '') {
+  const deviceCode = compactParam(row.device_code);
+  const base = {
+    contact_admin: '1',
+    device_code: deviceCode,
+    device_name: compactParam(row.device_name),
+    status: compactParam(row.status || row.reservation_status)
+  };
+  const type = kind || row.record_type || row.related_type || row.type || '';
+  if (['user_request', 'request'].includes(type) || row.request_id || row.title) {
+    return {
+      ...base,
+      context_type: 'user_request',
+      request_id: compactParam(row.request_id || row.related_id || row.id),
+      context_title: compactParam(row.title || '需求沟通'),
+      description: compactParam(row.description || row.content, 260)
+    };
+  }
+  if (['device_fault', 'fault_report', 'fault'].includes(type)) {
+    return {
+      ...base,
+      context_type: 'fault_report',
+      fault_id: compactParam(row.fault_id || row.related_id || row.id),
+      issue_type: compactParam(row.issue_type || row.title || '设备故障'),
+      description: compactParam(row.description || row.content || row.return_note, 260)
+    };
+  }
+  if (['reservation_review', 'reservation', 'reservation_item', 'reservation_batch'].includes(type) || row.reservation_id || row.start_time || row.reservation_start_time) {
+    return {
+      ...base,
+      context_type: 'reservation',
+      reservation_id: compactParam(row.reservation_id || row.related_id || row.id),
+      start_time: compactParam(row.start_time || row.reservation_start_time),
+      end_time: compactParam(row.end_time || row.reservation_end_time)
+    };
+  }
+  return {
+    ...base,
+    context_type: deviceCode ? 'device' : '',
+    context_title: deviceCode ? `设备 ${deviceCode}` : ''
+  };
+}
+
+function contactAdminLink(label = '联系管理员', row = {}, kind = '') {
+  const params = new URLSearchParams();
+  Object.entries(chatContextFromRecord(row || {}, kind)).forEach(([key, value]) => {
+    const text = compactParam(value);
+    if (text) params.set(key, text);
+  });
+  return `<a class="secondary" href="chat.html?${params.toString()}">${escapeHtml(label)}</a>`;
+}
+
+function recordActions(row) {
+  if (row.record_type === 'borrow') {
+    if (row.status === 'in_use') return `${returnForm(row.id)}<div class="actions record-actions">${contactAdminLink('联系管理员', row, 'borrow')}</div>`;
+    return `<span class="muted">${escapeHtml(row.return_note || '已结束')}</span>${contactAdminLink('联系管理员', row, 'borrow')}`;
+  }
+  const actions = [];
+  if (row.can_cancel) actions.push(`<button class="secondary" data-my-action="cancel-reservation" data-id="${escapeHtml(row.id)}">取消预约</button>`);
+  if (row.status === 'approved') actions.push(`<button data-my-action="start-use" data-id="${escapeHtml(row.id)}">开始使用</button>`);
+  if (['rejected', 'cancelled', 'completed'].includes(row.status)) actions.push(`<span class="muted">${escapeHtml(row.admin_note || '无操作')}</span>`);
+  actions.push(contactAdminLink('联系管理员', row, 'reservation'));
+  return actions.join('') || '<span class="muted">无</span>';
+}
+
+function recordsTable(rows, emptyText) {
+  if (!rows.length) return `<div class="empty-state">${escapeHtml(emptyText)}</div>`;
+  return `
+    <div class="table-wrap">
+      <table>
+        <tr><th>设备</th><th>时间</th><th>状态</th><th>备注</th><th>操作</th></tr>
+        ${rows.map((row) => `
+          <tr>
+            <td>${escapeHtml(row.device_name || '-')}<br><span class="muted mono">${escapeHtml(row.device_code || '-')}</span></td>
+            <td>${recordTime(row)}</td>
+            <td>${statusBadge(row.status)}${deviceAvailabilityNote(row)}</td>
+            <td>${escapeHtml(row.admin_note || row.return_note || row.purpose || '-')}${row.device_unavailable ? '<br><span class="muted">设备异常期间预约保留，等待管理员维修恢复。</span>' : ''}</td>
+            <td class="actions record-actions">${recordActions(row)}</td>
+          </tr>
+        `).join('')}
+      </table>
+    </div>
+  `;
+}
+
+function notificationTable(rows) {
+  if (!rows.length) return '<div class="empty-state">暂无信息提示。</div>';
+  return `
+    <div class="section-head compact-head">
+      <div><h3>信息提示</h3></div>
+      <div class="actions"><button id="mark-notifications-read-btn" class="secondary">全部标记已读</button></div>
+    </div>
+    <div class="notification-list">
+      ${rows.map((row) => `
+        <article class="soft-panel notification-item ${row.is_read ? '' : 'notification-unread'}">
+          <div class="section-head compact-head">
+            <div>
+              <h3>${escapeHtml(row.title || '系统提醒')} ${row.is_read ? '' : '<span class="badge warn">未读</span>'}</h3>
+              <p class="muted">${escapeHtml(fmtTime(row.created_at))}${row.device_code ? ` · ${escapeHtml(row.device_code)} ${escapeHtml(row.device_name || '')}` : ''}</p>
+            </div>
+            <span>${notificationBadge(row)}</span>
+          </div>
+          <p>${escapeHtml(row.content || '-')}</p>
+          ${row.reservation_start_time ? `<p class="muted">关联预约：${escapeHtml(fmtTime(row.reservation_start_time))} - ${escapeHtml(fmtTime(row.reservation_end_time))} · ${escapeHtml(statusText(row.reservation_status))}</p>` : ''}
+          <div class="actions">
+            ${contactAdminLink('沟通此事', row, row.related_type || row.type)}
+            ${row.is_read ? '' : `<button class="secondary" data-my-action="mark-notification-read" data-id="${escapeHtml(row.id)}">标记已读</button>`}
+          </div>
+        </article>
+      `).join('')}
+    </div>
+  `;
+}
+
+function notificationBadge(row = {}) {
+  if (row.type === 'device_fault') return statusBadge('abnormal_pending');
+  if (row.type === 'device_recovered') return statusBadge('available');
+  if (row.type === 'reservation_review') return statusBadge(row.reservation_status || 'approved');
+  if (row.type === 'user_request') return '<span class="badge info">需求反馈</span>';
+  return '<span class="badge info">提醒</span>';
+}
+
+function renderNotificationSummary(notifications = [], unreadCount = 0) {
+  const latest = notifications[0];
+  return `
+    <section class="card notification-summary">
+      <div class="section-head">
+        <div>
+          <h3>信息提示 ${unreadCount ? `<span class="badge warn">${unreadCount} 未读</span>` : '<span class="badge success">无未读</span>'}</h3>
+          ${latest ? `<p class="muted">最新：${escapeHtml(latest.title || '-')} · ${escapeHtml(fmtTime(latest.created_at))}</p>` : ''}
+        </div>
+        <div class="actions"><button id="open-notifications-btn">查看信息提示</button></div>
+      </div>
+    </section>
+  `;
+}
+
+function reportTable(rows) {
+  if (!rows.length) return '<div class="empty-state">暂无故障或需求上报记录。</div>';
+  return `
+    <div class="table-wrap">
+      <table>
+        <tr><th>类型 / 内容</th><th>关联设备</th><th>状态</th><th>管理员备注</th><th>操作</th></tr>
+        ${rows.map((row) => `
+          <tr>
+            <td><span class="badge ${row.report_kind === 'fault' ? 'warn' : 'info'}">${row.report_kind === 'fault' ? '故障' : '需求'}</span><br><strong>${escapeHtml(row.title || row.issue_type || row.device_name || '-')}</strong><br><span class="muted">${escapeHtml(row.description || row.return_note || '-')}</span></td>
+            <td>${escapeHtml(row.device_code || '-')}<br><span class="muted">${escapeHtml(row.device_name || '')}</span></td>
+            <td>${statusBadge(row.status)}</td>
+            <td>${escapeHtml(row.admin_note || row.change_request_note || '-')}</td>
+            <td class="actions record-actions">
+              ${row.report_kind === 'request' && row.can_edit ? `<button onclick="editUserRequest('${row.id}')">修改</button>` : ''}
+              ${row.can_cancel ? `<button class="secondary" onclick="cancelUserRequest('${row.id}')">撤回</button>` : ''}
+              ${row.can_request_change ? `<button class="warning" onclick="requestUserRequestChange('${row.id}')">申请修改</button>` : ''}
+              ${contactAdminLink('联系管理员', row, row.report_kind === 'fault' ? 'fault_report' : 'user_request')}
+              ${!row.can_edit && !row.can_cancel && !row.can_request_change ? '<span class="muted">已锁定</span>' : ''}
+            </td>
+          </tr>
+        `).join('')}
+      </table>
+    </div>
+  `;
+}
+
+function renderRecordTabs(groups) {
+  return `
+    <div class="tabs record-tabs">
+      ${RECORD_TABS.map((tab, index) => `<button data-record-tab="${tab.key}" class="${index === 0 ? 'active' : ''}">${tab.label}<span class="tab-count">${groups[tab.key].length}</span></button>`).join('')}
+    </div>
+    ${RECORD_TABS.map((tab, index) => `
+      <section id="record_panel_${tab.key}" class="record-panel ${index === 0 ? '' : 'hidden'}">
+        ${tab.key === 'reports' ? reportTable(groups.reports) : tab.key === 'notifications' ? notificationTable(groups.notifications) : recordsTable(groups[tab.key], `${tab.label}暂无记录。`)}
+      </section>
+    `).join('')}
+  `;
+}
+
+function deviceSelectOptions() {
+  return '<option value="">请选择设备</option>' + deviceOptions.map((device) => `<option value="${escapeHtml(device.device_code)}">${escapeHtml(device.device_code)} ${escapeHtml(device.name || '')}</option>`).join('');
+}
+
+function renderUserActionPanel(requestError = '') {
+  return `
+    <section class="card user-action-panel">
+      <div class="section-head">
+        <div>
+          <h3>故障 / 需求上报</h3>
+        </div>
+        <div class="actions"><button id="toggle-report-form-btn" class="warning">我要上报</button></div>
+      </div>
+      <div id="unified-report-form" class="soft-panel unified-report-form hidden">
+        <div class="report-type-switch">
+          <label><input type="radio" name="report_type" value="fault" checked> 故障报备</label>
+          <label><input type="radio" name="report_type" value="request"> 需求上报</label>
+        </div>
+        <div id="standalone-fault-form">
+        <div class="form-grid">
+          <div><label for="fault_device_code">故障设备</label><select id="fault_device_code">${deviceSelectOptions()}</select></div>
+          <div>
+            <label for="fault_type_public">故障类型</label>
+            <select id="fault_type_public">
+              <option value="fault">设备故障</option>
+              <option value="damaged">设备损坏</option>
+              <option value="accessory_missing">配件缺失</option>
+              <option value="safety">安全隐患</option>
+              <option value="other">其他问题</option>
+            </select>
+          </div>
+          <div>
+            <label for="fault_severity_public">严重程度</label>
+            <select id="fault_severity_public">
+              <option value="normal">普通</option>
+              <option value="high">严重</option>
+              <option value="critical">紧急</option>
+            </select>
+          </div>
+        </div>
+        <label for="fault_description_public">故障描述</label>
+        <textarea id="fault_description_public" rows="3" placeholder="请描述现象、发生时间和是否影响继续使用"></textarea>
+        <input id="fault_photo_public" type="file" accept="image/*" multiple>
+        <div class="actions"><button id="submit-fault-report-btn" class="warning">提交故障上报</button></div>
+      </div>
+        </div>
+      <div id="user-request-form" class="hidden">
+        ${requestError ? `<div class="alert warn">${escapeHtml(requestError)}</div>` : ''}
+        <div class="form-grid">
+          <div>
+            <label for="request_category">需求类型</label>
+            <select id="request_category">
+              <option value="feature">功能建议</option>
+              <option value="device">器材需求</option>
+              <option value="template">设备模板/字段</option>
+              <option value="process">流程优化</option>
+              <option value="other">其他</option>
+            </select>
+          </div>
+          <div><label for="request_device_code">关联设备（可选）</label><select id="request_device_code"><option value="">不关联设备</option>${deviceOptions.map((device) => `<option value="${escapeHtml(device.device_code)}">${escapeHtml(device.device_code)} ${escapeHtml(device.name || '')}</option>`).join('')}</select></div>
+          <div><label for="request_title">标题</label><input id="request_title" maxlength="120" placeholder="一句话说明需求"></div>
+        </div>
+        <label for="request_description">需求说明</label>
+        <textarea id="request_description" rows="4" placeholder="请说明需求背景、希望达到的效果或需要管理员确认的内容"></textarea>
+        <div class="actions"><button id="submit-user-request-btn">提交需求</button></div>
+      </div>
+      </div>
+    </section>
+  `;
+}
+
+function bindUserActionPanel() {
+  document.getElementById('toggle-report-form-btn')?.addEventListener('click', () => document.getElementById('unified-report-form').classList.toggle('hidden'));
+  document.querySelectorAll('input[name="report_type"]').forEach((input) => input.addEventListener('change', () => {
+    const type = document.querySelector('input[name="report_type"]:checked')?.value || 'fault';
+    document.getElementById('standalone-fault-form').classList.toggle('hidden', type !== 'fault');
+    document.getElementById('user-request-form').classList.toggle('hidden', type !== 'request');
+  }));
+  document.getElementById('submit-fault-report-btn')?.addEventListener('click', submitStandaloneFaultReport);
+  document.getElementById('submit-user-request-btn')?.addEventListener('click', submitUserRequest);
+}
+
+function applyInitialFaultContext() {
+  const faultDevice = qs('fault_device');
+  if (!faultDevice) return;
+  document.getElementById('unified-report-form')?.classList.remove('hidden');
+  document.getElementById('standalone-fault-form')?.classList.remove('hidden');
+  const select = document.getElementById('fault_device_code');
+  if (select) select.value = faultDevice;
+  selectRecordTab('reports');
+}
+
+async function loadDeviceOptions() {
+  if (deviceOptions.length) return;
+  const result = await callRestApi('/devices');
+  deviceOptions = result.list || result.devices || [];
+}
+
+function bindRecordTabs() {
+  document.querySelectorAll('[data-record-tab]').forEach((button) => {
+    button.addEventListener('click', () => {
+      document.querySelectorAll('[data-record-tab]').forEach((item) => item.classList.toggle('active', item === button));
+      document.querySelectorAll('.record-panel').forEach((panel) => panel.classList.add('hidden'));
+      document.getElementById(`record_panel_${button.dataset.recordTab}`)?.classList.remove('hidden');
+    });
+  });
+}
 
 function reservationTable(rows) {
   if (!rows.length) return '<div class="empty-state">暂无预约记录。</div>';
@@ -36,9 +382,10 @@ function reservationTable(rows) {
             <td>${escapeHtml(row.device_name || '-')}<br><span class="muted mono">${escapeHtml(row.device_code || '-')}</span></td>
             <td>${escapeHtml(fmtTime(row.start_time))}<br>${escapeHtml(fmtTime(row.end_time))}</td>
             <td>${statusBadge(row.status)}</td>
-            <td>
-              ${row.can_cancel ? `<button onclick="cancelReservation('${row.id}')">取消预约</button>` : ''}
-              ${row.status === 'approved' ? `<button onclick="startUse('${row.id}')">开始使用</button>` : '<span class="muted">无</span>'}
+            <td class="actions record-actions">
+              ${row.can_cancel ? `<button class="secondary" data-my-action="cancel-reservation" data-id="${escapeHtml(row.id)}">取消预约</button>` : ''}
+              ${row.status === 'approved' ? `<button data-my-action="start-use" data-id="${escapeHtml(row.id)}">开始使用</button>` : '<span class="muted">无</span>'}
+              ${contactAdminLink('联系管理员', row, 'reservation')}
             </td>
           </tr>
         `).join('')}
@@ -49,29 +396,74 @@ function reservationTable(rows) {
 
 function returnForm(id) {
   return `
-    <select id="cond_${id}">
-      <option value="normal">正常</option>
-      <option value="minor_issue">轻微异常</option>
-      <option value="damaged">设备损坏</option>
-      <option value="repair_needed">需要维修</option>
-    </select>
-    <textarea id="note_${id}" rows="2" placeholder="补充说明"></textarea>
-    <div class="field-help">${requireReturnPhoto ? '归还前必须上传设备状态图片。' : '管理员当前未强制要求上传图片，可按需上传。'}</div>
-    <input id="photo_${id}" type="file" accept="image/*" multiple>
-    <button onclick="submitReturn('${id}')">提交归还</button>
-    <button class="warning" onclick="toggleFaultForm('${id}')">报备故障</button>
-    <div id="fault_${id}" class="soft-panel hidden">
-      <label for="fault_type_${id}">故障类型</label>
-      <select id="fault_type_${id}">
-        <option value="fault">设备故障</option>
-        <option value="damaged">设备损坏</option>
-        <option value="safety">安全隐患</option>
-        <option value="other">其他问题</option>
-      </select>
+    <div class="return-panel">
+      <div class="return-form-grid">
+        <div>
+          <label for="cond_${id}">归还状态</label>
+          <select id="cond_${id}">
+            <option value="normal">正常</option>
+            <option value="minor_issue">轻微异常</option>
+            <option value="damaged">设备损坏</option>
+            <option value="repair_needed">需要维修</option>
+          </select>
+        </div>
+        <div>
+          <label for="photo_${id}">归还照片</label>
+          <input id="photo_${id}" type="file" accept="image/*" multiple>
+          <div class="field-help">${requireReturnPhoto ? '归还前必须上传设备状态图片。' : '管理员当前未强制要求上传图片，可按需上传。'}</div>
+        </div>
+      </div>
+      <label for="note_${id}">归还说明</label>
+      <textarea id="note_${id}" rows="2" placeholder="补充说明，例如设备状态、配件是否齐全"></textarea>
+      <div class="actions record-actions">
+        <button data-my-action="submit-return" data-id="${escapeHtml(id)}">提交归还</button>
+        <button class="warning" data-my-action="toggle-fault-form" data-id="${escapeHtml(id)}">报备故障</button>
+      </div>
+    </div>
+    <div id="fault_${id}" class="soft-panel fault-panel hidden">
+      <div class="section-head compact-head">
+        <div>
+          <h3>故障报备</h3>
+        </div>
+      </div>
+      <div class="return-form-grid">
+        <div>
+          <label for="fault_type_${id}">故障类型</label>
+          <select id="fault_type_${id}">
+            <option value="fault">设备故障</option>
+            <option value="damaged">设备损坏</option>
+            <option value="temperature_unstable">温度异常</option>
+            <option value="accessory_missing">配件缺失</option>
+            <option value="safety">安全隐患</option>
+            <option value="other">其他问题</option>
+          </select>
+        </div>
+        <div>
+          <label for="fault_severity_${id}">故障等级</label>
+          <select id="fault_severity_${id}">
+            <option value="normal">普通：不影响安全，需管理员确认</option>
+            <option value="high">严重：影响继续使用或可能损坏样品</option>
+            <option value="critical">紧急：存在安全风险，请立即停用</option>
+          </select>
+        </div>
+        <div>
+          <label for="fault_affect_${id}">是否影响继续使用</label>
+          <select id="fault_affect_${id}">
+            <option value="yes">影响，建议立即停止预约</option>
+            <option value="no">暂不影响，但需要管理员检查</option>
+            <option value="unknown">不确定，请管理员判断</option>
+          </select>
+        </div>
+        <div>
+          <label for="fault_photo_${id}">故障照片</label>
+          <input id="fault_photo_${id}" type="file" accept="image/*" multiple>
+        </div>
+      </div>
       <label for="fault_note_${id}">故障描述</label>
-      <textarea id="fault_note_${id}" rows="2" placeholder="请描述故障现象、发生时间和当前设备状态"></textarea>
-      <input id="fault_photo_${id}" type="file" accept="image/*" multiple>
-      <button class="warning" onclick="submitFaultReport('${id}')">提交故障报备</button>
+      <textarea id="fault_note_${id}" rows="3" placeholder="请描述故障现象、发生时间和当前设备状态"></textarea>
+      <div class="actions record-actions">
+        <button class="warning" data-my-action="submit-fault-report" data-id="${escapeHtml(id)}">提交故障报备</button>
+      </div>
     </div>
   `;
 }
@@ -87,7 +479,7 @@ function borrowTable(rows) {
             <td>${escapeHtml(row.device_name || '-')}<br><span class="muted mono">${escapeHtml(row.device_code || '-')}</span></td>
             <td>${escapeHtml(fmtTime(row.borrow_time))}<br>${escapeHtml(fmtTime(row.expected_return_time))}</td>
             <td>${statusBadge(row.status)}</td>
-            <td>${row.status === 'in_use' ? returnForm(row.id) : '<span class="muted">已结束</span>'}</td>
+            <td>${row.status === 'in_use' ? returnForm(row.id) : '<span class="muted">已结束</span>'}${contactAdminLink('联系管理员', row, 'borrow')}</td>
           </tr>
         `).join('')}
       </table>
@@ -100,29 +492,189 @@ async function load() {
   const box = document.getElementById('box');
   setLoading(box, '正在加载个人记录...');
   try {
-    const result = await callApi('myRecords');
+    await loadDeviceOptions();
+    const result = await callRestApi('/bookings/me');
+    let notifications = [];
+    let unreadCount = 0;
+    try {
+      const notificationResult = await callRestApi('/notifications');
+      notifications = notificationResult.notifications || [];
+      unreadCount = Number(notificationResult.unread_count || 0);
+    } catch (_) {}
+    let requestRows = [];
+    let requestError = '';
+    try {
+      const requestResult = await callRestApi('/user-requests');
+      requestRows = requestResult.requests || [];
+    } catch (error) {
+      requestError = error.payload?.data?.migration_required ? '需求上报模块需要先执行数据库迁移。' : error.message;
+    }
     requireReturnPhoto = result.require_return_photo !== false;
+    const reservations = result.reservations || [];
+    const borrows = result.borrows || [];
+    const groups = groupRecords(reservations, borrows, requestRows, notifications);
     box.innerHTML = `
+      ${renderNotificationSummary(notifications, unreadCount)}
+      ${renderUserActionPanel(requestError)}
       <section class="card">
-        <h3>我的预约</h3>
-        ${reservationTable(result.reservations || [])}
-      </section>
-      <section class="card">
-        <h3>我的借用记录</h3>
-        ${borrowTable(result.borrows || [])}
+        <div class="section-head">
+          <div>
+            <h3>我的记录</h3>
+          </div>
+        </div>
+        <div class="kpi record-summary">
+          <div class="card"><div class="metric-label">待审核</div><div class="value">${groups.pending.length}</div></div>
+          <div class="card"><div class="metric-label">已通过</div><div class="value">${groups.approved.length}</div></div>
+          <div class="card"><div class="metric-label">使用中</div><div class="value">${groups.in_use.length}</div></div>
+          <div class="card"><div class="metric-label">上报记录</div><div class="value">${groups.reports.length}</div></div>
+        </div>
+        ${renderRecordTabs(groups)}
       </section>
     `;
+    bindUserActionPanel();
+    bindRecordTabs();
+    if (location.hash === '#notifications') selectRecordTab('notifications');
+    if (location.hash === '#faults' || location.hash === '#requests' || location.hash === '#reports') selectRecordTab('reports');
+    applyInitialFaultContext();
+    document.getElementById('open-notifications-btn')?.addEventListener('click', openNotificationsTab);
+    document.getElementById('mark-notifications-read-btn')?.addEventListener('click', markNotificationsRead);
   } catch (error) {
     showPageMessage(box, 'danger', error.message);
   }
 }
 
-async function startUse(id) {
+function openNotificationsTab() {
+  location.hash = 'notifications';
+  selectRecordTab('notifications');
+}
+
+function selectRecordTab(key) {
+  const button = document.querySelector(`[data-record-tab="${key}"]`);
+  if (!button) return;
+  document.querySelectorAll('[data-record-tab]').forEach((item) => item.classList.toggle('active', item === button));
+  document.querySelectorAll('.record-panel').forEach((panel) => panel.classList.add('hidden'));
+  document.getElementById(`record_panel_${key}`)?.classList.remove('hidden');
+}
+
+async function markNotificationsRead() {
   try {
-    await callApi('startUse', { reservation_id: id });
+    await callRestApi('/notifications/read', { method: 'PATCH', body: {} });
+    notify('success', '信息提示已标记为已读。');
+    load();
+  } catch (error) {
+    notify('danger', error.message);
+  }
+}
+
+async function markNotificationRead(id) {
+  try {
+    await callRestApi('/notifications/read', { method: 'PATCH', body: { ids: [id] } });
+    notify('success', '已标记为已读。');
+    load();
+  } catch (error) {
+    notify('danger', error.message);
+  }
+}
+
+async function submitStandaloneFaultReport() {
+  try {
+    const deviceCode = document.getElementById('fault_device_code').value;
+    const description = document.getElementById('fault_description_public').value.trim();
+    if (!deviceCode) throw new Error('请选择故障设备。');
+    if (!description) throw new Error('请填写故障描述。');
+    const photos = [];
+    for (const file of [...(document.getElementById('fault_photo_public').files || [])].slice(0, 5)) {
+      photos.push(await uploadPhoto(file, 'fault-photos'));
+    }
+    await callRestApi('/fault-reports', {
+      method: 'POST',
+      body: {
+        device_code: deviceCode,
+        issue_type: document.getElementById('fault_type_public').value,
+        severity: document.getElementById('fault_severity_public').value,
+        description,
+        photos
+      }
+    });
+    notify('success', '故障已提交，管理员会在管理端处理。');
+    load();
+  } catch (error) {
+    notify('danger', error.message);
+  }
+}
+
+async function submitUserRequest() {
+  try {
+    const title = document.getElementById('request_title').value.trim();
+    const description = document.getElementById('request_description').value.trim();
+    if (!title) throw new Error('请填写需求标题。');
+    if (!description) throw new Error('请填写需求说明。');
+    await callRestApi('/user-requests', {
+      method: 'POST',
+      body: {
+        category: document.getElementById('request_category').value,
+        device_code: document.getElementById('request_device_code').value,
+        title,
+        description
+      }
+    });
+    notify('success', '需求已提交，管理员确认前你可以修改或撤回。');
+    load();
+  } catch (error) {
+    notify('danger', error.message);
+  }
+}
+
+async function editUserRequest(id) {
+  const title = prompt('修改需求标题');
+  if (title === null) return;
+  const description = prompt('修改需求说明');
+  if (description === null) return;
+  try {
+    await callRestApi(`/user-requests/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: { title, description }
+    });
     load();
   } catch (error) {
     alert(error.message);
+  }
+}
+
+async function cancelUserRequest(id) {
+  if (!confirm('确认撤回这条需求吗？管理员确认后将无法撤回。')) return;
+  try {
+    await callRestApi(`/user-requests/${encodeURIComponent(id)}/cancel`, { method: 'PATCH' });
+    load();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function requestUserRequestChange(id) {
+  const reason = prompt('请输入申请修改的原因');
+  if (!reason) return;
+  try {
+    await callRestApi(`/user-requests/${encodeURIComponent(id)}/change-request`, {
+      method: 'POST',
+      body: { reason }
+    });
+    load();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function startUse(id) {
+  try {
+    await callRestApi('/borrow-records', {
+      method: 'POST',
+      body: { reservation_id: id }
+    });
+    notify('success', '已开始使用，请按时归还设备。');
+    load();
+  } catch (error) {
+    notify('danger', error.message);
   }
 }
 
@@ -132,9 +684,10 @@ async function cancelReservation(id) {
     await callRestApi(`/bookings/${encodeURIComponent(id)}/cancel`, {
       method: 'PATCH'
     });
+    notify('success', '预约已取消。');
     load();
   } catch (error) {
-    alert(error.message);
+    notify('danger', error.message);
   }
 }
 
@@ -149,15 +702,18 @@ async function submitReturn(id) {
       photos.push(await uploadPhoto(file, 'return-photos'));
     }
 
-    await callApi('submitReturn', {
-      record_id: id,
-      return_condition: document.getElementById(`cond_${id}`).value,
-      return_note: document.getElementById(`note_${id}`).value.trim(),
-      return_photos: photos
+    await callRestApi(`/borrow-records/${encodeURIComponent(id)}/return`, {
+      method: 'PUT',
+      body: {
+        return_condition: document.getElementById(`cond_${id}`).value,
+        return_note: document.getElementById(`note_${id}`).value.trim(),
+        return_photos: photos
+      }
     });
+    notify('success', '归还已提交。');
     load();
   } catch (error) {
-    alert(error.message);
+    notify('danger', error.message);
   }
 }
 
@@ -179,18 +735,70 @@ async function submitFaultReport(id) {
       body: {
         record_id: id,
         issue_type: document.getElementById(`fault_type_${id}`).value,
-        description: note,
+        severity: document.getElementById(`fault_severity_${id}`).value,
+        affect_continue: document.getElementById(`fault_affect_${id}`).value,
+        description: `${note}\n是否影响继续使用：${document.getElementById(`fault_affect_${id}`).selectedOptions[0].textContent}`,
         photos
       }
     });
-    alert('故障已报备，设备已进入异常待处理状态。');
+    notify('success', '故障已报备，设备已进入异常待处理状态。');
     load();
   } catch (error) {
-    alert(error.message);
+    notify('danger', error.message);
+  }
+}
+
+async function handleMyAction(event) {
+  const button = event.target.closest('[data-my-action]');
+  if (!button) return;
+  event.preventDefault();
+  const action = button.dataset.myAction;
+  const id = button.dataset.id;
+  if (!action || !id) return;
+  const previousDisabled = button.disabled;
+  const loadingTextMap = {
+    'start-use': '开始中...',
+    'cancel-reservation': '取消中...',
+    'submit-return': '归还中...',
+    'submit-fault-report': '提交中...',
+    'mark-notification-read': '处理中...'
+  };
+  if (typeof setButtonBusy === 'function') setButtonBusy(button, true, loadingTextMap[action] || '处理中...');
+  else button.disabled = true;
+  try {
+    if (action === 'start-use') {
+      await startUse(id);
+      return;
+    }
+    if (action === 'cancel-reservation') {
+      await cancelReservation(id);
+      return;
+    }
+    if (action === 'submit-return') {
+      await submitReturn(id);
+      return;
+    }
+    if (action === 'toggle-fault-form') {
+      toggleFaultForm(id);
+      return;
+    }
+    if (action === 'submit-fault-report') {
+      await submitFaultReport(id);
+      return;
+    }
+    if (action === 'mark-notification-read') {
+      await markNotificationRead(id);
+    }
+  } finally {
+    if (button.isConnected) {
+      if (typeof setButtonBusy === 'function') setButtonBusy(button, false);
+      button.disabled = previousDisabled;
+    }
   }
 }
 
 document.getElementById('refresh-btn').addEventListener('click', load);
+document.addEventListener('click', handleMyAction);
 load();
 </script>
 </body>

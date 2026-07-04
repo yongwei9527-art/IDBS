@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>用户登录</title>
-  <link rel="stylesheet" href="css/style.css?v=20260629c">
+  <link rel="stylesheet" href="css/style.css?v=20260702a">
+  <link rel="stylesheet" href="css/formal.css?v=20260702b">
 </head>
 <body>
 <main>
   <section class="hero">
     <h2>欢迎回来</h2>
-    <p class="muted">已有账号可继续使用账号密码登录；新用户必须通过公众号验证码完成首次注册/绑定，系统会自动读取微信 OpenID。</p>
     <div class="hero-meta">
       <span class="badge info">自动识别管理员/用户</span>
       <span class="badge warn">支持微信绑定与安全风控</span>
@@ -25,7 +25,6 @@
       <input id="phone" inputmode="tel" placeholder="请输入手机号">
       <label for="password">密码</label>
       <input id="password" type="password" placeholder="请输入密码">
-      <p class="field-help">管理员账号登录后会自动显示后台入口与管理面板。</p>
       <div class="actions">
         <button id="login-btn">登录</button>
         <a href="register.html">新用户？查看微信注册/绑定流程</a>
@@ -78,10 +77,15 @@
 </main>
 
 <script src="js/config.js"></script>
-<script src="js/api.js?v=20260629b"></script>
-<script src="js/ui.js"></script>
-<script src="js/common-header.js?v=20260629a"></script>
+<script src="js/api.js?v=20260702a"></script>
+<script src="js/ui.js?v=20260701e"></script>
+<script src="js/common-header.js?v=20260703b"></script>
+<script src="js/page-shortcuts.js?v=20260701e"></script>
 <script>
+if (isLoggedIn()) {
+  location.replace('index.html');
+}
+
 let activeChallengeCode = '';
 let activePollTimer = null;
 
@@ -98,18 +102,15 @@ function updateWechatStatus(type, text) {
   status.textContent = text;
 }
 
-function handleLoginResult(result) {
+async function handleLoginResult(result) {
   setUserToken(result.token);
   setUserInfo(result.user);
-  if (result.role === 'admin' || result.role === 'super_admin') {
-    setAdminToken(result.token);
-  } else {
-    clearAdminToken();
-  }
+  clearAdminToken();
   showToast('success', '登录成功');
-  setTimeout(() => {
-    location.href = (result.role === 'admin' || result.role === 'super_admin') ? 'admin.html' : 'index.html';
-  }, 500);
+  if (typeof showSystemNoticeIfNeeded === 'function') {
+    await showSystemNoticeIfNeeded({ force: true, autoCloseSeconds: 10 });
+  }
+  location.replace('index.html');
 }
 
 async function login() {

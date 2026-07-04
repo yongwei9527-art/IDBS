@@ -7,7 +7,8 @@ param(
   [string]$Database = "idbs",
   [string]$AppUser = "idbs_user",
   [string]$AppPassword = "generated-by-installer",
-  [string]$SchemaPath = ".\sql\schema.sql"
+  [string]$SchemaPath = ".\sql\schema.sql",
+  [string]$MigrationsDir = ".\sql\migrations"
 )
 
 $ErrorActionPreference = "Stop"
@@ -56,6 +57,20 @@ try {
 
   Write-Host "Importing schema from $SchemaPath..."
   & $psql -h $HostName -p $Port -U $AdminUser -d $Database -v ON_ERROR_STOP=1 -f $SchemaPath
+
+  if (Test-Path $MigrationsDir) {
+    Write-Host "Applying migrations from $MigrationsDir..."
+    & $psql -h $HostName -p $Port -U $AdminUser -d $Database -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now());"
+    Get-ChildItem $MigrationsDir -Filter *.sql | Sort-Object Name | ForEach-Object {
+      $version = $_.BaseName
+      $applied = (& $psql -h $HostName -p $Port -U $AdminUser -d $Database -tAc "SELECT 1 FROM schema_migrations WHERE version = '$version'").Trim()
+      if ($applied -ne "1") {
+        Write-Host "Applying migration $($_.Name)"
+        & $psql -h $HostName -p $Port -U $AdminUser -d $Database -v ON_ERROR_STOP=1 -f $_.FullName
+        & $psql -h $HostName -p $Port -U $AdminUser -d $Database -v ON_ERROR_STOP=1 -c "INSERT INTO schema_migrations (version) VALUES ('$version') ON CONFLICT DO NOTHING;"
+      }
+    }
+  }
 
   Write-Host "Granting schema privileges..."
   & $psql -h $HostName -p $Port -U $AdminUser -d $Database -v ON_ERROR_STOP=1 -c "GRANT ALL ON SCHEMA public TO $AppUser; GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO $AppUser; GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO $AppUser; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO $AppUser; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO $AppUser;"

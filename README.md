@@ -122,7 +122,6 @@ systemctl list-timers | grep idbs
 - `src/app/create-app.js`：Express 应用组装。
 - `src/config/env.js`：环境变量读取与校验。
 - `src/routes/rest-api.js`：标准 REST API。
-- `src/routes/legacy-api.js`：兼容旧版 `POST /api/:action`。
 - `src/routes/wechat.js`：微信公众号回调。
 - `src/routes/upload.js`：图片上传。
 - `src/routes/health.js`：健康检查。
@@ -131,10 +130,50 @@ systemctl list-timers | grep idbs
 - `public/js/admin.js`：后台页面逻辑。
 - `public/js/common-header.js`：公共导航与登录提醒弹窗。
 - `sql/schema.sql`：PostgreSQL 表结构和默认配置。
+- `sql/migrations/`：增量数据库迁移。生产库执行涉及 `ALTER TABLE` 的迁移时，请使用表 owner 或 PostgreSQL 超级用户；普通运行账号可能没有修改既有表结构的权限。
 - `scripts/install-vps.sh`：VPS 一键安装入口。
 - `scripts/deploy-ubuntu.sh`：部署、服务、Nginx、备份定时器配置。
 
-更多维护说明见 [模块维护说明](./docs/module-map.md)。
+## 升级数据库
+
+升级代码后，如新增了 `sql/migrations/*.sql`，请先备份数据库，再以表 owner/超级用户执行迁移。例如：
+
+```bash
+sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 -f sql/migrations/2026-06-30_long_term_upgrade_foundation.sql
+```
+
+执行后可检查关键升级对象：
+
+```bash
+sudo -u postgres psql -d idbs -c "select to_regclass('public.device_time_slots'), to_regclass('public.reservation_items'), to_regclass('public.permissions'), to_regclass('public.calendar_events_view');"
+```
+
+## 测试阶段生成演示数据
+
+如果当前数据库没有业务数据，可以在本地测试库执行：
+
+```bash
+npm run db:seed-demo
+```
+
+该命令会生成一批可重复覆盖的演示数据，包括用户、设备、待审核预约、已通过预约、使用中记录、已完成归还、故障报备、后台操作日志和统计分析数据。默认只允许写入 `localhost/127.0.0.1` 数据库；如果确认要在非本地测试库执行，需要显式设置 `ALLOW_NON_LOCAL_SEED=1`。
+
+演示账号：
+
+```text
+普通用户：13800000001 / 123456
+普通用户：13800000002 / 123456
+待审核用户：13800000003 / 123456
+超级管理员用户：13900000000 / 123456
+```
+
+生成后可打开后台查看：后台总览、数据分析、预约审核、故障报备、使用日历、统计导出和操作日志。
+
+更多使用与维护说明：
+
+- [前端使用说明](./docs/frontend-usage.md)
+- [后端使用说明](./docs/backend-usage.md)
+- [模块维护说明](./docs/module-map.md)
 
 ## 重要说明
 

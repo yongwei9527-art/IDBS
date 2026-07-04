@@ -15,7 +15,7 @@ if (-not (Get-Command psql -ErrorAction SilentlyContinue)) {
 }
 
 Write-Host "Initializing PostgreSQL schema from $SchemaPath"
-psql $DatabaseUrl -f $SchemaPath
+psql $DatabaseUrl -v ON_ERROR_STOP=1 -f $SchemaPath
 
 if (Test-Path $MigrationsDir) {
   $markerQuery = @"
@@ -24,14 +24,14 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 "@
-  psql $DatabaseUrl -c $markerQuery | Out-Null
+  psql $DatabaseUrl -v ON_ERROR_STOP=1 -c $markerQuery | Out-Null
   Get-ChildItem $MigrationsDir -Filter *.sql | Sort-Object Name | ForEach-Object {
     $version = $_.BaseName
     $check = psql $DatabaseUrl -tAc "SELECT 1 FROM schema_migrations WHERE version = '$version'"
     if ($check -ne '1') {
       Write-Host "Applying migration $($_.Name)"
-      psql $DatabaseUrl -f $_.FullName
-      psql $DatabaseUrl -c "INSERT INTO schema_migrations (version) VALUES ('$version')"
+      psql $DatabaseUrl -v ON_ERROR_STOP=1 -f $_.FullName
+      psql $DatabaseUrl -v ON_ERROR_STOP=1 -c "INSERT INTO schema_migrations (version) VALUES ('$version')"
     }
   }
 }

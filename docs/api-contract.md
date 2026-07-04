@@ -1,8 +1,8 @@
 # API Contract
 
-This document defines the new REST-style API contract for the rental system.
-The legacy `POST /api/:action` entry is still available for compatibility, but
-new clients should only integrate against the routes below.
+This document defines the REST-style API contract for the rental system.
+The legacy `POST /api/:action` entry has been removed. Clients must integrate
+against the routes below.
 
 ## Base Rules
 
@@ -20,7 +20,9 @@ Successful response:
   "ok": true,
   "code": 0,
   "message": "success",
-  "data": {}
+  "data": {},
+  "request_id": "lx1v9s-abc123",
+  "server_time": "2026-07-02T02:30:00.000Z"
 }
 ```
 
@@ -31,7 +33,9 @@ Failed response:
   "ok": false,
   "code": 2001,
   "message": "request failed",
-  "data": null
+  "data": null,
+  "request_id": "lx1v9s-abc123",
+  "server_time": "2026-07-02T02:30:00.000Z"
 }
 ```
 
@@ -188,12 +192,30 @@ If no existing user matches the name and student number, the server creates a pe
 ### `GET /api/devices/:deviceCode`
 
 - Auth: none
+- Returns:
+
+```json
+{
+  "device": {},
+  "reservations": [],
+  "occupancy_14_days": [],
+  "recent_fault_reports": [],
+  "current_borrow": null,
+  "next_reservation": null,
+  "last_record": null
+}
+```
+
+- `occupancy_14_days` is a compact upcoming occupancy list for the device detail page.
+- `recent_fault_reports` is the latest device fault summary when the fault-report migration exists.
 
 ### `POST /api/upload`
 
 - Auth: none
 - Content type: `multipart/form-data`
 - Form field: `file`
+- Accepted content types: JPEG, PNG, WebP and GIF
+- The server verifies the file signature and stores the image with a random filename.
 
 ## Booking And Borrowing
 
@@ -214,6 +236,29 @@ If no existing user matches the name and student number, the server creates a pe
 ```
 
 - Response includes `batch_id` plus the created reservation rows. Legacy `device_code` with `start_time`/`end_time` is still accepted and normalized by the API.
+
+### `POST /api/bookings/precheck`
+
+- Auth: user
+- Same payload as `POST /api/bookings`
+- Checks account state, device availability, duplicated selections and active reservation conflicts without creating records.
+- Returns:
+
+```json
+{
+  "available": false,
+  "total": 2,
+  "conflicts": [
+    {
+      "type": "occupied",
+      "device_code": "EQ-001",
+      "start_time": "2026-07-03T00:00:00.000Z",
+      "end_time": "2026-07-03T04:00:00.000Z",
+      "reason": "EQ-001 在该时段已有预约或使用记录。"
+    }
+  ]
+}
+```
 
 ### `POST /api/borrow-records`
 
@@ -239,11 +284,207 @@ If no existing user matches the name and student number, the server creates a pe
 }
 ```
 
+## Notifications
+
+### `GET /api/notifications`
+
+- Auth: user
+- Query:
+  - `limit`, default `50`, max `100`
+- Returns:
+
+```json
+{
+  "notifications": [],
+  "unread_count": 0,
+  "migration_required": false
+}
+```
+
+### `PATCH /api/notifications/read`
+
+- Auth: user
+- Body:
+
+```json
+{
+  "ids": ["notification-uuid"]
+}
+```
+
+- If `ids` is omitted, all current user's unread notifications are marked read.
+
+## Chat
+
+### `GET /api/chat/users`
+
+- Auth: user or admin
+- Query:
+  - `keyword`
+- Returns active contacts plus `current_user`.
+
+### `GET /api/chat/conversations`
+
+- Auth: user or admin
+- Query:
+  - `limit`, default `50`, max `100`
+- Returns conversations, participants, latest message and `unread_count`.
+
+### `POST /api/chat/conversations`
+
+- Auth: user or admin
+- Body for direct chat:
+
+```json
+{
+  "type": "direct",
+  "user_id": "target-user-uuid"
+}
+```
+
+- Body for group chat:
+
+```json
+{
+  "type": "group",
+  "title": "预约沟通",
+  "user_ids": ["user-a", "user-b"]
+}
+```
+
+### `GET /api/chat/conversations/:conversationId/messages`
+
+- Auth: conversation participant
+- Query:
+  - `limit`, default `80`, max `200`
+  - `before`, optional ISO time for older-page pagination
+- Returns:
+
+```json
+{
+  "conversation": {},
+  "messages": [],
+  "current_user": {},
+  "page": {
+    "limit": 80,
+    "has_more": false,
+    "next_before": "2026-07-02T10:00:00.000Z"
+  }
+}
+```
+
+### `POST /api/chat/conversations/:conversationId/messages`
+
+- Auth: conversation participant
+- Body:
+
+```json
+{
+  "content": "请确认设备状态",
+  "message_type": "text",
+  "attachments": [],
+  "metadata": {},
+  "related_type": "",
+  "related_id": "",
+  "client_message_id": "web-unique-id",
+  "mention_user_ids": ["user-uuid"],
+  "mention_all": false
+}
+```
+
+- `message_type` supports `text`, `image`, `file`, `system`, `device_card`, `reservation_card`, `fault_card`, and `user_request_card`.
+- Image messages should upload with `POST /api/upload` first, then send `attachments: [{ "type": "image", "url": "/uploads/...", "name": "photo.jpg" }]`.
+- Card messages use `metadata` to carry lightweight context such as `device_code`, `reservation_id`, `batch_id`, `fault_id`, `request_id`, `title`, and `status`.
+- `related_type`/`related_id` are optional query keys for later filtering and audit linkage.
+
+### `POST /api/chat/conversations/:conversationId/participants`
+
+- Auth: group owner, participant admin, or system admin
+- Body:
+
+```json
+{
+  "user_ids": ["user-uuid"]
+}
+```
+
+### `DELETE /api/chat/conversations/:conversationId/participants/:userId`
+
+- Auth: group owner, participant admin, or system admin
+- Removes one member. The management group cannot be used to remove a super admin.
+
+### `POST /api/chat/conversations/:conversationId/leave`
+
+- Auth: group participant
+- Lets a participant leave a normal group they are in.
+- The lab management group cannot be left manually.
+- A group creator should dissolve the group instead of leaving it.
+
+### `DELETE /api/chat/conversations/:conversationId`
+
+- Auth: group creator
+- Dissolves a normal group created by the current user/admin.
+- The system management group cannot be dissolved.
+
+### `GET /api/chat/events`
+
+- Auth: user or admin
+- Transport: Server-Sent Events
+- Browser `EventSource` clients pass `token` as a query parameter because custom headers are not supported:
+
+```text
+/api/chat/events?token=<token>
+```
+
+- Events:
+  - `ready`
+  - `heartbeat`
+  - `message`
+  - `conversation_changed`
+  - `conversation_deleted`
+- If SSE is unavailable, clients should fall back to polling `GET /api/chat/conversations` and the active messages endpoint.
+
+## Reservation Batches And Items
+
+`reservation_batches` is the submission-level record and `reservation_items` is the item-level source for reservation creation, approval, calendar, borrow/return and fault workflows. `/bookings` paths are REST aliases for existing clients; new code should use `/reservation-batches` and `/reservation-items`. The old `reservations` table is legacy shadow data only and must not be treated as the business source of truth.
+
+### `POST /api/reservation-batches`
+
+- Auth: user
+- Same payload as `POST /api/bookings`
+- Creates one batch plus one or more reservation items. Compatibility `reservations` rows are not required for new submissions.
+
+### `POST /api/reservation-batches/precheck`
+
+- Auth: user
+- Same payload as `POST /api/reservation-batches`
+- Same response shape as `POST /api/bookings/precheck`
+
+### `GET /api/reservation-batches/me`
+
+- Auth: user
+- Returns the current user's batches and item counts.
+
+### `GET /api/reservation-batches/:id`
+
+- Auth: user
+- Returns one batch and its items.
+
+### `PATCH /api/reservation-items/:id/cancel`
+
+- Auth: user
+- Cancels one item when business rules allow it.
+
 ## Admin Endpoints
 
 ### `GET /api/admin/users`
 
 - Auth: admin
+
+### `GET /api/admin/users/:userId/detail`
+
+- Auth: admin, ops or auditor with user/reservation/statistics permission
+- Returns user profile plus recent reservations, borrow records, fault reports, user requests and activity logs.
 
 ### `PUT /api/admin/users/:userId/status`
 
@@ -280,6 +521,11 @@ If no existing user matches the name and student number, the server creates a pe
 
 - Auth: admin
 
+### `GET /api/admin/devices/:deviceId/detail`
+
+- Auth: admin, ops or auditor with device/reservation/statistics permission
+- Returns device profile plus reservation, borrow and fault-report history.
+
 ### `PUT /api/admin/devices/:deviceId/availability`
 
 - Auth: admin
@@ -287,6 +533,33 @@ If no existing user matches the name and student number, the server creates a pe
 ### `GET /api/admin/bookings`
 
 - Auth: admin
+
+### `GET /api/admin/reservation-batches`
+
+- Auth: admin
+- Returns reservation batches for approval workbench views.
+
+### `GET /api/admin/reservation-batches/:id`
+
+- Auth: admin
+- Returns one batch, its user/device context and item rows.
+
+### `PATCH /api/admin/reservation-batches/:id/approval`
+
+- Auth: admin with reservation approval permission
+- Body:
+
+```json
+{
+  "approve": true,
+  "admin_note": "approved"
+}
+```
+
+### `PATCH /api/admin/reservation-items/:id/approval`
+
+- Auth: admin with reservation approval permission
+- Approves or rejects one reservation item.
 
 ### `PATCH /api/admin/bookings/:reservationId/approval`
 
@@ -309,9 +582,51 @@ If no existing user matches the name and student number, the server creates a pe
   - `start_date`
   - `end_date`
 
+### `GET /api/admin/exports/:type`
+
+- Auth: admin with `stats.view` and `stats.export`
+- `type`: `usage`, `reservations`, `faults`, `user_activity`, or `device_summary`
+- Query: same filters as statistics where applicable: `user_id`, `device_id`, `start_date`, `end_date`
+- Returns normalized rows for CSV or Excel-style export.
+
 ### `GET /api/admin/options`
 
 - Auth: admin
+
+### `GET /api/admin/fault-reports`
+
+- Auth: admin with fault management permission
+
+### `PATCH /api/admin/fault-reports/:reportId`
+
+- Auth: admin with fault management permission
+- Body includes `status`, `admin_note`, and optional device availability action.
+- `status`: `pending`, `processing`, `resolved`, or `closed`
+- `set_available: true` resolves and restores the device to available.
+- `keep_maintenance: true` resolves or closes the report while keeping the device in maintenance.
+
+### `GET /api/admin/permissions`
+
+- Auth: admin
+- Returns role and permission metadata.
+
+### `GET /api/admin/analytics/overview`
+
+- Auth: admin with statistics permission
+- Query: `range`, `start_date`, `end_date`
+
+### `GET /api/admin/analytics/device-usage`
+
+- Auth: admin with statistics permission
+- Query: `metric`
+
+### `GET /api/admin/analytics/time-heatmap`
+
+- Auth: admin with statistics permission
+
+### `GET /api/admin/analytics/faults`
+
+- Auth: admin with statistics permission
 
 ### `GET /api/admin/security-config`
 
@@ -385,15 +700,17 @@ If no existing user matches the name and student number, the server creates a pe
 | `adminLogin` | `POST /api/admin/auth/login` |
 | `listDevices` | `GET /api/devices` |
 | `getDeviceDetail` | `GET /api/devices/:deviceCode` |
-| `createReservation` | `POST /api/bookings` |
+| `createReservation` | `POST /api/reservation-batches` (`POST /api/bookings` remains an alias) |
 | `myRecords` | `GET /api/bookings/me` |
 | `startUse` | `POST /api/borrow-records` |
 | `submitReturn` | `PUT /api/borrow-records/:recordId/return` |
 | `adminListUsers` | `GET /api/admin/users` |
+| `adminGetUserDetail` | `GET /api/admin/users/:userId/detail` |
 | `adminSetUserStatus` | `PUT /api/admin/users/:userId/status` |
 | `adminSetUserBan` | `PUT /api/admin/users/:userId/ban` |
 | `adminUnbindWechat` | `DELETE /api/admin/users/:userId/wechat-binding` |
 | `adminCreateDevice` | `POST /api/admin/devices` |
+| `adminGetDeviceDetail` | `GET /api/admin/devices/:deviceId/detail` |
 | `adminUpdateDevice` | `PUT /api/admin/devices/:deviceId` |
 | `adminListReservations` | `GET /api/admin/bookings` |
 | `adminApproveReservation` | `PATCH /api/admin/bookings/:reservationId/approval` |
@@ -405,4 +722,5 @@ If no existing user matches the name and student number, the server creates a pe
 | `adminUpdateSecurityConfig` | `PUT /api/admin/security-config` |
 | `adminGetActivitySummary` | `GET /api/admin/activity-summary` |
 | `usageStats` | `GET /api/admin/statistics/usage` |
+| `adminExportData` | `GET /api/admin/exports/:type` |
 | `adminOptions` | `GET /api/admin/options` |

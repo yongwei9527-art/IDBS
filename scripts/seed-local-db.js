@@ -260,6 +260,40 @@ async function main() {
     `, ['44444444-4444-4444-8444-444444444444', approvedBatchId, deviceIds['LAB-OSC-001'], userId, approvedStart.toISOString(), addHours(approvedStart, 2).toISOString(), '本地演示：电路调试预约', 'approved', '本地演示数据已通过', new Date().toISOString()]);
 
     await client.query(`
+      insert into reservation_items (id, batch_id, device_id, user_id, reservation_date, slot_key, start_time, end_time, status, reservation_id, created_at, updated_at, approved_at)
+      values ($1,$2,$3,$4,($5::timestamptz at time zone 'Asia/Shanghai')::date,$6,$5,$7,$8,$9,now(),now(),$10)
+      on conflict (id) do update set
+        batch_id = excluded.batch_id,
+        device_id = excluded.device_id,
+        user_id = excluded.user_id,
+        reservation_date = excluded.reservation_date,
+        slot_key = excluded.slot_key,
+        start_time = excluded.start_time,
+        end_time = excluded.end_time,
+        status = excluded.status,
+        reservation_id = excluded.reservation_id,
+        updated_at = now(),
+        approved_at = excluded.approved_at
+    `, ['33333333-3333-4333-8333-333333333334', pendingBatchId, deviceIds['LAB-MIC-001'], userId, pendingStart.toISOString(), 'custom', addHours(pendingStart, 2).toISOString(), 'pending', '33333333-3333-4333-8333-333333333333', null]);
+
+    await client.query(`
+      insert into reservation_items (id, batch_id, device_id, user_id, reservation_date, slot_key, start_time, end_time, status, reservation_id, created_at, updated_at, approved_at)
+      values ($1,$2,$3,$4,($5::timestamptz at time zone 'Asia/Shanghai')::date,$6,$5,$7,$8,$9,now(),now(),$10)
+      on conflict (id) do update set
+        batch_id = excluded.batch_id,
+        device_id = excluded.device_id,
+        user_id = excluded.user_id,
+        reservation_date = excluded.reservation_date,
+        slot_key = excluded.slot_key,
+        start_time = excluded.start_time,
+        end_time = excluded.end_time,
+        status = excluded.status,
+        reservation_id = excluded.reservation_id,
+        updated_at = now(),
+        approved_at = excluded.approved_at
+    `, ['44444444-4444-4444-8444-444444444445', approvedBatchId, deviceIds['LAB-OSC-001'], userId, approvedStart.toISOString(), 'custom', addHours(approvedStart, 2).toISOString(), 'approved', '44444444-4444-4444-8444-444444444444', new Date().toISOString()]);
+
+    await client.query(`
       insert into borrow_records (id, reservation_id, device_id, user_id, borrow_time, expected_return_time, return_time, duration_minutes, return_condition, return_note, return_photos, status, is_overdue, created_at, updated_at)
       values ($1,null,$2,$3,$4,$5,null,null,null,null,'[]'::jsonb,'in_use',false,now(),now())
       on conflict (id) do update set

@@ -4,30 +4,49 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>日历详情</title>
-  <link rel="stylesheet" href="css/style.css?v=20260629d">
+  <link rel="stylesheet" href="css/style.css?v=20260702a">
+  <link rel="stylesheet" href="css/formal.css?v=20260702b">
 </head>
 <body>
 <main>
   <section class="hero">
     <h2 id="title">使用详情</h2>
-    <p class="muted">查看当天具体谁在使用、使用什么设备以及对应时间段。</p>
   </section>
   <section class="card" id="detail-box"></section>
 </main>
 
 <script src="js/config.js"></script>
-<script src="js/api.js?v=20260629b"></script>
-<script src="js/ui.js"></script>
-<script src="js/common-header.js?v=20260629c"></script>
+<script src="js/api.js?v=20260702a"></script>
+<script src="js/ui.js?v=20260701e"></script>
+<script src="js/common-header.js?v=20260703b"></script>
+<script src="js/page-shortcuts.js?v=20260701e"></script>
 <script>
-if (!isLoggedIn() && !isAdminLoggedIn()) {
-  location.href = 'login.html';
+const date = qs('date') || new Date().toISOString().slice(0, 10);
+const month = qs('month') || date.slice(0, 7);
+const adminView = qs('admin') === '1';
+const calendarBackHref = qs('back') || (adminView ? 'admin.html#overview' : '');
+
+if (adminView) {
+  if (!isAdminLoggedIn()) {
+    location.replace('admin.html');
+    throw new Error('Admin login required');
+  }
+} else if (!isLoggedIn()) {
+  location.replace('login.html');
   throw new Error('Login required');
 }
 
-const date = qs('date') || new Date().toISOString().slice(0, 10);
-const adminView = qs('admin') === '1';
+const calendarBackUrl = `calendar.html?month=${encodeURIComponent(month)}${adminView ? '&admin=1' : ''}${calendarBackHref ? `&back=${encodeURIComponent(calendarBackHref)}` : ''}`;
+const chatBackQuery = adminView ? `&admin=1${calendarBackHref ? `&back=${encodeURIComponent(calendarBackHref)}` : ''}` : '';
 document.getElementById('title').textContent = `${date} 使用详情`;
+
+function userChatCell(event) {
+  const userName = event.user_name || '-';
+  const chatLink = event.user_id
+    ? `<a class="calendar-chat-link" href="chat.html?user_id=${encodeURIComponent(event.user_id)}${chatBackQuery}">${escapeHtml(userName)}</a>`
+    : escapeHtml(userName);
+  return `${chatLink}<br><span class="muted">${escapeHtml(event.user_phone || '-')}</span>`;
+}
 
 async function loadDetail() {
   const box = document.getElementById('detail-box');
@@ -42,7 +61,7 @@ async function loadDetail() {
           ${events.map((event) => `
             <tr>
               <td><span class="calendar-dot" style="background:${escapeHtml(event.color)}"></span> ${escapeHtml(event.device_code)}<br><span class="muted">${escapeHtml(event.device_name || '-')}</span></td>
-              <td>${escapeHtml(event.user_name || '-')}<br><span class="muted">${escapeHtml(event.user_phone || '-')}</span></td>
+              <td>${userChatCell(event)}</td>
               <td>${escapeHtml(fmtTime(event.start_time))}<br>${escapeHtml(fmtTime(event.end_time))}</td>
               <td>${statusBadge(event.status)}</td>
               <td>${escapeHtml(event.purpose || '-')}</td>
@@ -50,8 +69,8 @@ async function loadDetail() {
           `).join('')}
         </table>
       </div>
-      <div class="actions"><a href="calendar.html${adminView ? '?admin=1' : ''}">返回日历</a></div>
-    ` : '<div class="empty-state">当天没有预约或使用记录。</div><div class="actions"><a href="calendar.html">返回日历</a></div>';
+      <div class="actions"><a href="${calendarBackUrl}">返回日历</a></div>
+    ` : `<div class="empty-state">当天没有预约或使用记录。</div><div class="actions"><a href="${calendarBackUrl}">返回日历</a></div>`;
   } catch (error) {
     showPageMessage(box, 'danger', error.message);
   }

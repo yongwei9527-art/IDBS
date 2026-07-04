@@ -30,9 +30,23 @@ function setLoading(target, message = '加载中...') {
   element.innerHTML = `<div class="card card-center"><p class="muted">${escapeHtml(message)}</p></div>`;
 }
 
+function setButtonBusy(button, busy = true, text = '处理中...') {
+  if (!button) return;
+  if (busy) {
+    button.dataset.originalText = button.dataset.originalText || button.textContent;
+    button.textContent = text;
+    button.disabled = true;
+    button.classList.add('is-loading');
+    return;
+  }
+  if (button.dataset.originalText) button.textContent = button.dataset.originalText;
+  button.disabled = false;
+  button.classList.remove('is-loading');
+}
+
 function requireLogin(redirect = 'login.html') {
   if (!isLoggedIn()) {
-    location.href = redirect;
+    location.replace(redirect);
     return false;
   }
   return true;

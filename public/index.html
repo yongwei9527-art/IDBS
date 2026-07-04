@@ -3,24 +3,26 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="实验室设备预约系统，支持设备查询、预约、借还和后台管理">
-  <title>设备列表</title>
-  <link rel="stylesheet" href="css/style.css?v=20260629c">
+  <meta name="description" content="实验室设备预约系统，支持设备查询、预约、借还和管理端协同">
+  <title>设备总览</title>
+  <link rel="stylesheet" href="css/style.css?v=20260702a">
+  <link rel="stylesheet" href="css/formal.css?v=20260702b">
 </head>
 <body>
-<main>
-  <section class="hero">
-    <h2>设备总览</h2>
-    <p class="muted">统一查看设备状态、当前位置和可预约情况，让用户操作和管理员联调都更顺手。</p>
-    <div class="hero-meta" id="hero-meta"></div>
-    <div class="hero-actions" id="hero-actions"></div>
+<main class="dashboard-page equipment-dashboard">
+  <section class="page-heading">
+    <div>
+      <p class="eyebrow">实验室设备预约管理平台</p>
+      <h2>设备总览</h2>
+      <div class="hero-meta" id="hero-meta"></div>
+    </div>
+    <div class="page-actions" id="hero-actions"></div>
   </section>
 
-  <section class="card">
+  <section class="section-card filter-card">
     <div class="section-head">
       <div>
-        <h3>筛选设备</h3>
-        <p class="muted">部署模式：<span id="deploy-mode">-</span></p>
+        <h3>快速筛选</h3>
       </div>
     </div>
     <div class="toolbar">
@@ -39,6 +41,22 @@
           <option value="abnormal_pending">异常待处理</option>
         </select>
       </div>
+      <div>
+        <label for="category">分类</label>
+        <select id="category">
+          <option value="">全部分类</option>
+        </select>
+      </div>
+      <div>
+        <label for="availability">可用性</label>
+        <select id="availability">
+          <option value="">全部设备</option>
+          <option value="reservable">当前可预约</option>
+          <option value="today_free">今日无占用</option>
+          <option value="week_free">本周有空档</option>
+          <option value="fault">故障/维护</option>
+        </select>
+      </div>
       <div class="actions">
         <button id="search-btn">查询</button>
         <button id="reset-btn" class="secondary">重置</button>
@@ -46,58 +64,54 @@
     </div>
   </section>
 
-  <section id="summary" class="kpi"></section>
-
-  <section class="panel-grid">
-    <article class="card soft-panel">
-      <div class="section-head">
-        <div>
-          <h3>推荐操作顺序</h3>
-          <p class="muted">适合作为前后端联调的页面流转路径。</p>
-        </div>
+  <section>
+    <div class="section-title-row">
+      <div>
+        <h3>设备运行概况</h3>
       </div>
-      <ol class="list-plain">
-        <li>确认当前角色识别是否正确</li>
-        <li>浏览设备详情与状态标签</li>
-        <li>提交预约并完成审核</li>
-        <li>开始使用、上传归还照片并查看统计</li>
-      </ol>
-    </article>
-    <article class="card soft-panel">
-      <div class="section-head">
-        <div>
-          <h3>当前身份</h3>
-          <p class="muted" id="role-copy">未登录时仅展示公共设备信息。</p>
-        </div>
-      </div>
-      <div class="actions" id="role-actions"></div>
-    </article>
+    </div>
+    <div id="summary" class="kpi summary-grid"></div>
   </section>
 
-  <section id="devices" class="grid"></section>
+  <section class="section-card equipment-list-section">
+    <div class="section-head">
+      <div>
+        <h3>设备列表</h3>
+      </div>
+      <div class="view-toggle" role="group" aria-label="切换设备视图">
+        <button id="card-view-btn" class="active" type="button">卡片视图</button>
+        <button id="table-view-btn" type="button">表格视图</button>
+      </div>
+    </div>
+    <div id="devices" class="equipment-grid"></div>
+  </section>
 </main>
 
 <script src="js/config.js"></script>
-<script src="js/api.js?v=20260629b"></script>
-<script src="js/ui.js"></script>
-<script src="js/common-header.js?v=20260629a"></script>
+<script src="js/api.js?v=20260702a"></script>
+<script src="js/ui.js?v=20260701e"></script>
+<script src="js/common-header.js?v=20260703b"></script>
+<script src="js/page-shortcuts.js?v=20260701e"></script>
 <script>
-const deployMode = document.getElementById('deploy-mode');
 const keywordInput = document.getElementById('keyword');
 const statusInput = document.getElementById('status');
+const categoryInput = document.getElementById('category');
+const availabilityInput = document.getElementById('availability');
 const devicesEl = document.getElementById('devices');
 const summaryEl = document.getElementById('summary');
 const heroMetaEl = document.getElementById('hero-meta');
 const heroActionsEl = document.getElementById('hero-actions');
-const roleCopyEl = document.getElementById('role-copy');
-const roleActionsEl = document.getElementById('role-actions');
+let currentDevices = [];
+let allLoadedDevices = [];
+let currentView = localStorage.getItem('IDBS_DEVICE_VIEW') || 'card';
+let deviceSearchTimer = null;
 
 function showUserLoginOnly() {
   [
-    document.querySelector('.hero-actions'),
-    document.querySelector('main > section.card'),
+    document.querySelector('.page-actions'),
+    document.querySelector('.filter-card'),
+    document.querySelector('.equipment-list-section'),
     summaryEl,
-    document.querySelector('.panel-grid'),
     devicesEl
   ].forEach((element) => {
     if (element) element.classList.add('hidden');
@@ -107,7 +121,6 @@ function showUserLoginOnly() {
       <div class="section-head">
         <div>
           <h3>请先登录</h3>
-          <p class="muted">登录后才能查看设备列表、发起预约和查看个人记录。</p>
         </div>
       </div>
       <div class="actions">
@@ -123,87 +136,218 @@ if (!isLoggedIn()) {
   throw new Error('User login required');
 }
 
-deployMode.textContent = 'VPS / HTTP API';
-heroMetaEl.innerHTML = `
-  <span class="badge info">${isLoggedIn() ? '已登录' : '访客模式'}</span>
-  <span class="badge ${isCurrentUserAdmin() ? 'warn' : 'success'}">${isCurrentUserAdmin() ? '管理员视角' : '用户视角'}</span>
-`;
-heroActionsEl.innerHTML = isCurrentUserAdmin()
-  ? '<a class="badge info" href="reserve.html">快速预约</a><a class="badge success" href="my.html">查看我的记录</a><a class="badge" href="admin.html">进入管理后台</a>'
-  : '<a class="badge info" href="reserve.html">快速预约</a><a class="badge success" href="my.html">查看我的记录</a>';
-roleCopyEl.textContent = isCurrentUserAdmin()
-  ? '你当前是管理员身份，可以直接进入后台处理设备、审核和统计。'
-  : (isLoggedIn() ? '你当前是普通用户身份，可以直接预约、查看记录和提交归还。' : '你当前未登录，可先浏览设备，再决定是否登录。');
-roleActionsEl.innerHTML = isCurrentUserAdmin()
-  ? '<a href="admin.html">进入管理后台</a><a href="my.html">查看用户闭环</a>'
-  : (isLoggedIn() ? '<a href="reserve.html">去预约设备</a><a href="my.html">查看我的记录</a>' : '<a href="login.html">前往登录</a><a href="register.html">微信注册/绑定</a>');
+heroMetaEl.innerHTML = '';
+heroActionsEl.innerHTML = '<a class="button-link primary" href="reserve.html">+ 发起预约</a><a class="button-link" href="my.html">我的预约</a><a class="button-link" href="calendar.html">使用日历</a>';
 
 function renderSummary(devices) {
   const counts = {
     total: devices.length,
     available: devices.filter((item) => item.status === 'available').length,
     inUse: devices.filter((item) => item.status === 'in_use').length,
-    abnormal: devices.filter((item) => item.status === 'abnormal_pending').length
+    maintenance: devices.filter((item) => item.status === 'maintenance').length
   };
 
   summaryEl.innerHTML = `
-    <div class="card"><div class="metric-label">设备总数</div><div class="value">${counts.total}</div></div>
-    <div class="card"><div class="metric-label">可预约</div><div class="value">${counts.available}</div></div>
-    <div class="card"><div class="metric-label">使用中</div><div class="value">${counts.inUse}</div></div>
-    <div class="card"><div class="metric-label">异常待处理</div><div class="value">${counts.abnormal}</div></div>
+    <div class="stat-card"><span>设备总数</span><strong>${counts.total}</strong><small>全部实验室设备</small></div>
+    <div class="stat-card success"><span>可预约设备</span><strong>${counts.available}</strong><small>可立即提交预约</small></div>
+    <div class="stat-card info"><span>使用中设备</span><strong>${counts.inUse}</strong><small>正在使用或借用</small></div>
+    <div class="stat-card warn"><span>维修中设备</span><strong>${counts.maintenance}</strong><small>维护期间不可预约</small></div>
   `;
 }
 
-function renderDevices(devices) {
-  if (!devices.length) {
-    devicesEl.innerHTML = '<div class="card empty-state">当前没有匹配的设备记录。</div>';
-    return;
-  }
+function isSameLocalDate(value, date = new Date()) {
+  if (!value) return false;
+  const target = new Date(value);
+  return target.toLocaleDateString('zh-CN') === date.toLocaleDateString('zh-CN');
+}
 
-  devicesEl.innerHTML = devices.map((device) => `
-    <article class="card stack">
-      <div class="section-head">
+function isWithinDays(value, days) {
+  if (!value) return false;
+  const target = new Date(value).getTime();
+  const start = Date.now();
+  const end = start + days * 24 * 60 * 60 * 1000;
+  return target >= start && target <= end;
+}
+
+function deviceMatchesAvailability(device) {
+  const mode = availabilityInput.value;
+  if (!mode) return true;
+  if (mode === 'reservable') return device.allow_reservation !== false && device.status === 'available';
+  if (mode === 'today_free') return device.status === 'available' && !isSameLocalDate(device.next_reservation?.start_time);
+  if (mode === 'week_free') return device.status === 'available' && !isWithinDays(device.next_reservation?.start_time, 7);
+  if (mode === 'fault') return ['maintenance', 'abnormal_pending', 'disabled'].includes(device.status);
+  return true;
+}
+
+function updateCategoryOptions(devices) {
+  const categories = [...new Set(devices.map((device) => String(device.category || '').trim()).filter(Boolean))].sort();
+  const current = categoryInput.value || categoryInput.dataset.pendingValue || '';
+  categoryInput.innerHTML = '<option value="">全部分类</option>' + categories.map((category) => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`).join('');
+  if (categories.includes(current)) categoryInput.value = current;
+  categoryInput.dataset.pendingValue = '';
+}
+
+function filteredDevices() {
+  const keyword = keywordInput.value.trim().toLowerCase();
+  const status = statusInput.value;
+  const category = categoryInput.value;
+  return allLoadedDevices.filter((device) => {
+    const text = [device.device_code, device.name, device.location, device.manager, device.category].map((value) => String(value || '').toLowerCase()).join(' ');
+    if (keyword && !text.includes(keyword)) return false;
+    if (status && device.status !== status) return false;
+    if (category && device.category !== category) return false;
+    return deviceMatchesAvailability(device);
+  });
+}
+
+function applyDeviceFilters({ replaceUrl = true } = {}) {
+  const devices = filteredDevices();
+  renderSummary(devices);
+  renderDevices(devices);
+  if (!replaceUrl) return;
+  const params = new URLSearchParams();
+  if (keywordInput.value.trim()) params.set('keyword', keywordInput.value.trim());
+  if (statusInput.value) params.set('status', statusInput.value);
+  if (categoryInput.value) params.set('category', categoryInput.value);
+  if (availabilityInput.value) params.set('availability', availabilityInput.value);
+  const url = params.toString() ? `index.html?${params.toString()}` : 'index.html';
+  window.history.replaceState(null, '', url);
+}
+
+function hydrateFiltersFromUrl() {
+  keywordInput.value = qs('keyword') || '';
+  statusInput.value = qs('status') || '';
+  categoryInput.dataset.pendingValue = qs('category') || '';
+  availabilityInput.value = qs('availability') || '';
+}
+
+function nextUseText(device) {
+  if (device.next_reservation) return fmtTime(device.next_reservation.start_time);
+  if (device.status === 'available') return '当前可预约';
+  if (device.status === 'maintenance') return '维护完成后开放';
+  if (device.status === 'disabled') return '已停用';
+  return '暂无排期';
+}
+
+function renderDeviceCards(devices) {
+  return devices.map((device) => `
+    <article class="equipment-card">
+      <div class="equipment-card-head">
         <div>
           <h3>${escapeHtml(device.name)}</h3>
-          <p class="muted mono">${escapeHtml(device.device_code)}</p>
+          <p class="mono">${escapeHtml(device.device_code)}</p>
         </div>
         ${statusBadge(device.status)}
       </div>
-      <p class="muted">位置：${escapeHtml(device.location || '未填写')}</p>
-      <p class="muted">负责人：${escapeHtml(device.manager || '未填写')}</p>
-      ${device.current_borrow ? `<p class="muted">当前使用：${escapeHtml(device.current_borrow.user_name || '-')} ${escapeHtml(device.current_borrow.user_phone || '-')}</p>` : ''}
-      ${device.next_reservation ? `<p class="muted">下个预约：${escapeHtml(device.next_reservation.user_name || '-')} ${escapeHtml(device.next_reservation.user_phone || '-')}，${escapeHtml(fmtTime(device.next_reservation.start_time))}</p>` : '<p class="muted">下个预约：暂无</p>'}
-      <p>${escapeHtml(device.description || '暂无设备说明')}</p>
-      <div class="actions">
+      <dl class="equipment-meta">
+        <div><dt>位置</dt><dd>${escapeHtml(device.location || '未填写')}</dd></div>
+        <div><dt>负责人</dt><dd>${escapeHtml(device.manager || '未填写')}</dd></div>
+        <div><dt>当前使用</dt><dd>${device.current_borrow ? `${escapeHtml(device.current_borrow.user_name || '-')} ${escapeHtml(device.current_borrow.user_phone || '')}` : '暂无'}</dd></div>
+        <div><dt>下一可约时间</dt><dd>${escapeHtml(nextUseText(device))}</dd></div>
+      </dl>
+      <p class="equipment-desc">${escapeHtml(device.description || '暂无设备说明')}</p>
+      <div class="equipment-badges">
+        ${device.category ? `<span class="badge info">${escapeHtml(device.category)}</span>` : ''}
+        ${device.allow_reservation === false ? '<span class="badge warn">暂停预约</span>' : ''}
+        ${device.next_reservation ? `<span class="badge info">下次占用 ${escapeHtml(fmtTime(device.next_reservation.start_time))}</span>` : '<span class="badge success">近期空闲</span>'}
+      </div>
+      <div class="equipment-actions">
         <a href="device.html?device_code=${encodeURIComponent(device.device_code)}">查看详情</a>
-        <a href="reserve.html?device_code=${encodeURIComponent(device.device_code)}">发起预约</a>
+        <a class="primary" href="reserve.html?device_code=${encodeURIComponent(device.device_code)}">立即预约</a>
+        <a class="secondary" href="chat.html?contact_admin=1&device_code=${encodeURIComponent(device.device_code)}">咨询</a>
       </div>
     </article>
   `).join('');
 }
 
+function renderDeviceTable(devices) {
+  return `
+    <div class="table-wrap equipment-table-wrap">
+      <table class="equipment-table">
+        <tr><th>设备名称</th><th>编号</th><th>位置</th><th>状态</th><th>负责人</th><th>下一可约时间</th><th>操作</th></tr>
+        ${devices.map((device) => `
+          <tr>
+            <td><strong>${escapeHtml(device.name || '-')}</strong></td>
+            <td class="mono">${escapeHtml(device.device_code || '-')}</td>
+            <td>${escapeHtml(device.location || '未填写')}</td>
+            <td>${statusBadge(device.status)}</td>
+            <td>${escapeHtml(device.manager || '未填写')}</td>
+            <td>${escapeHtml(nextUseText(device))}</td>
+            <td class="table-actions"><a href="device.html?device_code=${encodeURIComponent(device.device_code)}">详情</a><a href="reserve.html?device_code=${encodeURIComponent(device.device_code)}">预约</a></td>
+          </tr>
+        `).join('')}
+      </table>
+    </div>
+  `;
+}
+
+function renderDevices(devices) {
+  currentDevices = devices;
+  if (!devices.length) {
+    devicesEl.className = 'equipment-grid';
+    devicesEl.innerHTML = '<div class="empty-state formal-empty">暂无符合条件的设备，请调整筛选条件后重试。</div>';
+    return;
+  }
+  devicesEl.className = currentView === 'table' ? 'equipment-table-host' : 'equipment-grid';
+  devicesEl.innerHTML = currentView === 'table' ? renderDeviceTable(devices) : renderDeviceCards(devices);
+  document.getElementById('card-view-btn').classList.toggle('active', currentView === 'card');
+  document.getElementById('table-view-btn').classList.toggle('active', currentView === 'table');
+}
+
 async function loadDevices() {
-  setLoading(devicesEl, '正在加载设备...');
+  devicesEl.className = 'equipment-grid';
+  devicesEl.innerHTML = renderDeviceSkeletons();
   try {
-    const response = await callApi('listDevices', {
-      keyword: keywordInput.value.trim(),
-      status: statusInput.value
-    });
+    const response = await callRestApi('/devices');
     const devices = response.devices || response.list || [];
-    renderSummary(devices);
-    renderDevices(devices);
+    allLoadedDevices = devices;
+    updateCategoryOptions(devices);
+    applyDeviceFilters({ replaceUrl: false });
   } catch (error) {
     showPageMessage(devicesEl, 'danger', error.message);
   }
 }
 
-document.getElementById('search-btn').addEventListener('click', loadDevices);
+function renderDeviceSkeletons() {
+  return Array.from({ length: 6 }).map(() => `
+    <article class="equipment-card skeleton-card">
+      <div class="skeleton-line wide"></div>
+      <div class="skeleton-line"></div>
+      <div class="skeleton-block"></div>
+      <div class="skeleton-line short"></div>
+    </article>
+  `).join('');
+}
+
+function debounceApplyFilters() {
+  clearTimeout(deviceSearchTimer);
+  deviceSearchTimer = setTimeout(() => applyDeviceFilters(), 250);
+}
+
+document.getElementById('search-btn').addEventListener('click', () => applyDeviceFilters());
+keywordInput.addEventListener('input', debounceApplyFilters);
+statusInput.addEventListener('change', () => applyDeviceFilters());
+categoryInput.addEventListener('change', () => applyDeviceFilters());
+availabilityInput.addEventListener('change', () => applyDeviceFilters());
 document.getElementById('reset-btn').addEventListener('click', () => {
   keywordInput.value = '';
   statusInput.value = '';
-  loadDevices();
+  categoryInput.value = '';
+  availabilityInput.value = '';
+  applyDeviceFilters();
+});
+document.getElementById('card-view-btn').addEventListener('click', () => {
+  currentView = 'card';
+  localStorage.setItem('IDBS_DEVICE_VIEW', currentView);
+  renderDevices(currentDevices);
+});
+document.getElementById('table-view-btn').addEventListener('click', () => {
+  currentView = 'table';
+  localStorage.setItem('IDBS_DEVICE_VIEW', currentView);
+  renderDevices(currentDevices);
 });
 
+hydrateFiltersFromUrl();
 loadDevices();
 </script>
 </body>

@@ -1,12 +1,47 @@
 let lastRows = [];
 let selectedUserIds = new Set();
 let reservationSlotPresets = window.ReservationSlots ? ReservationSlots.fallbackPresets : [];
-let permissionOptions = [];
-let roleDefaultPermissions = {};
+const adminTabCache = new Map();
+const ADMIN_TAB_CACHE_MS = 30_000;
+const DEFAULT_PERMISSION_OPTIONS = [
+  { key: 'user.approve', label: '同意用户注册', group: '审批' },
+  { key: 'reservation.approve', label: '同意用户预约', group: '审批' },
+  { key: 'reservation.view', label: '查看预约记录', group: '预约' },
+  { key: 'stats.export', label: '导出指定时间段统计', group: '统计' },
+  { key: 'stats.view', label: '查看统计数据', group: '统计' },
+  { key: 'device.manage', label: '管理设备', group: '设备' },
+  { key: 'device.view', label: '查看设备', group: '设备' },
+  { key: 'fault.manage', label: '处理故障报备', group: '设备' },
+  { key: 'user.manage', label: '管理用户资料', group: '用户' },
+  { key: 'chat.announce', label: '聊天公告 / @全体成员', group: '聊天' },
+  { key: 'chat.kick', label: '踢出群成员 / 暂停预约资格', group: '聊天' }
+];
+const DEFAULT_ROLE_PERMISSIONS = {
+  admin: ['device.manage', 'device.view', 'reservation.approve', 'reservation.view', 'user.manage', 'stats.view', 'chat.announce', 'chat.kick'],
+  ops: ['device.manage', 'device.view', 'reservation.approve', 'reservation.view', 'fault.manage'],
+  auditor: ['device.view', 'reservation.view', 'stats.view', 'stats.export'],
+  super_admin: ['*']
+};
+const ROLE_TEMPLATE_META = {
+  admin: { label: '管理员', detail: '设备、预约、用户、统计', key: 'admin' },
+  ops: { label: '运营维护', detail: '设备、预约、故障处理', key: 'ops' },
+  auditor: { label: '审计查看', detail: '查看预约、设备和导出统计', key: 'auditor' },
+  super_admin: { label: '超级管理员', detail: '全部权限', key: 'super_admin' }
+};
+let permissionOptions = [...DEFAULT_PERMISSION_OPTIONS];
+let roleDefaultPermissions = { ...DEFAULT_ROLE_PERMISSIONS };
 
 function fieldValue(id) {
   const element = document.getElementById(id);
   return element && typeof element.value === 'string' ? element.value.trim() : '';
+}
+
+function debounce(fn, wait = 300) {
+  let timer = null;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), wait);
+  };
 }
 
 function handleAdminError(error, target = null) {
@@ -20,17 +55,26 @@ function handleAdminError(error, target = null) {
   else showToast('danger', error.message);
 }
 
-function renderDeviceSlotOptions(selectedKeys = reservationSlotPresets.map((slot) => slot.key)) {
+function mergeReservationSlotPresets(overrides = []) {
+  const overrideMap = new Map((overrides || []).map((slot) => [slot.key, slot]));
+  return reservationSlotPresets.map((preset) => ({ ...preset, ...(overrideMap.get(preset.key) || {}), key: preset.key }));
+}
+
+function renderDeviceSlotOptions(selectedKeys, presets = reservationSlotPresets) {
   const container = document.getElementById('device-slot-options');
   if (!container || !window.ReservationSlots) return;
-  ReservationSlots.renderCheckboxes(container, reservationSlotPresets, selectedKeys, { name: 'device_reservation_slot_keys' });
+  const sourcePresets = Array.isArray(presets) && presets.length ? presets : reservationSlotPresets;
+  const checkedKeys = Array.isArray(selectedKeys) ? selectedKeys : sourcePresets.map((slot) => slot.key);
+  ReservationSlots.renderEditableCheckboxes(container, sourcePresets, checkedKeys, { name: 'device_reservation_slot_keys' });
 }
 
 function getDeviceSlotKeys() {
   const container = document.getElementById('device-slot-options');
-  const keys = container && window.ReservationSlots ? ReservationSlots.selectedKeys(container) : [];
-  if (!keys.length) throw new Error('请至少选择一个允许预约时间段');
-  return keys;
+  if (!container || !window.ReservationSlots) return [];
+  const selected = new Set(ReservationSlots.selectedKeys(container));
+  const editablePresets = ReservationSlots.editablePresetsFrom(container, reservationSlotPresets).filter((slot) => selected.has(slot.key));
+  if (!editablePresets.length) throw new Error('请至少选择一个允许预约时间段');
+  return editablePresets;
 }
 
 async function loadReservationSlotPresets() {
@@ -44,33 +88,104 @@ async function loadReservationSlotPresets() {
 }
 
 function slotLabels(options = []) {
-  return (options || []).map((slot) => slot.label || slot.key).filter(Boolean).join('、') || '-';
+  return (options || []).map((slot) => {
+    const label = slot.label || slot.key;
+    const start = String(slot.start || slot.start_time || '').slice(0, 5);
+    const end = String(slot.end || slot.end_time || '').slice(0, 5);
+    if (!label) return '';
+    if (!start || !end) return label;
+    return `${label} ${start}-${slot.crosses_midnight || slot.crosses_day ? '次日 ' : ''}${end}`;
+  }).filter(Boolean).join('、') || '-';
+}
+
+function mergePermissionOptions(options = []) {
+  const merged = new Map(DEFAULT_PERMISSION_OPTIONS.map((item) => [item.key, item]));
+  (options || []).forEach((item) => {
+    const key = item && (item.key || item.permission_key);
+    if (!key) return;
+    merged.set(key, {
+      ...merged.get(key),
+      ...item,
+      key,
+      label: item.label || item.name || item.description || key,
+      group: item.group || item.group_name || '权限'
+    });
+  });
+  return [...merged.values()];
+}
+
+function permissionLabel(key) {
+  if (key === '*') return '全部权限';
+  const option = permissionOptions.find((item) => item.key === key) || DEFAULT_PERMISSION_OPTIONS.find((item) => item.key === key);
+  return option ? `${option.label}（${key}）` : key;
+}
+
+function roleTemplateLabel(key) {
+  const meta = ROLE_TEMPLATE_META[key];
+  return meta ? `${meta.label}（${meta.key}）` : (key || '-');
+}
+
+function updateRoleTemplateUi(roleKey) {
+  const input = document.getElementById('role_key');
+  if (input) input.value = roleKey;
+  document.querySelectorAll('.role-template-button').forEach((button) => {
+    button.classList.toggle('active', button.dataset.roleKey === roleKey);
+  });
+  const help = document.getElementById('role_template_help');
+  const meta = ROLE_TEMPLATE_META[roleKey];
+  if (help && meta) {
+    help.textContent = `当前模板：${meta.label}（${meta.key}）。${meta.detail}。模板只用于快速勾选权限，最终授权以下方勾选项为准。`;
+  }
+}
+
+function selectRoleTemplate(roleKey, applyDefaults = true) {
+  updateRoleTemplateUi(roleKey);
+  if (applyDefaults) applyRoleDefaults();
+}
+
+function parseRolePermissions(value) {
+  if (Array.isArray(value)) return value;
+  if (!value) return [];
+  if (typeof value !== 'string') return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) return parsed;
+  } catch (_) {
+    // Fall back to comma-separated legacy values.
+  }
+  return value.split(',').map((item) => item.trim()).filter(Boolean);
 }
 
 function renderPermissionPicker(selected = []) {
   const box = document.getElementById('role_permissions_picker');
   if (!box) return;
-  const options = permissionOptions.length ? permissionOptions : [
-    { key: 'user.approve', label: '同意用户注册' },
-    { key: 'reservation.approve', label: '同意用户预约' },
-    { key: 'stats.export', label: '导出统计' },
-    { key: 'device.manage', label: '管理设备' }
-  ];
+  const options = permissionOptions.length ? permissionOptions : DEFAULT_PERMISSION_OPTIONS;
+  const selectedSet = new Set(selected.includes('*') ? permissionOptions.map((item) => item.key) : selected);
   box.innerHTML = options.map((item) => `
-    <label class="permission-card">
-      <input type="checkbox" value="${escapeHtml(item.key)}" ${selected.includes(item.key) ? 'checked' : ''}>
-      <span>${escapeHtml(item.label)}<small>${escapeHtml(item.key)}</small></span>
+    <label class="permission-card ${selectedSet.has(item.key) ? 'selected' : ''}">
+      <input type="checkbox" value="${escapeHtml(item.key)}" ${selectedSet.has(item.key) ? 'checked' : ''}>
+      <span>${escapeHtml(item.label)}<small>${escapeHtml(item.group || '权限')} · ${escapeHtml(item.key)}</small></span>
     </label>
   `).join('');
+  box.querySelectorAll('input').forEach((input) => {
+    input.addEventListener('change', () => {
+      input.closest('.permission-card').classList.toggle('selected', input.checked);
+    });
+  });
 }
 
 function selectedPermissions() {
   return [...document.querySelectorAll('#role_permissions_picker input:checked')].map((input) => input.value);
 }
 
+function setPermissionSelection(keys = []) {
+  renderPermissionPicker(keys);
+}
+
 function applyRoleDefaults() {
   const roleKey = document.getElementById('role_key').value;
-  renderPermissionPicker(roleDefaultPermissions[roleKey] || []);
+  updateRoleTemplateUi(roleKey);
+  setPermissionSelection(roleDefaultPermissions[roleKey] || []);
 }
 
 function showLoginOnly() {
@@ -78,7 +193,7 @@ function showLoginOnly() {
   if (accessDeniedBox) accessDeniedBox.classList.add('hidden');
   document.getElementById('login-box').classList.remove('hidden');
   document.getElementById('admin-box').classList.add('hidden');
-  ['devices', 'users', 'reservations', 'security', 'stats', 'roles', 'faults', 'user-info', 'notice'].forEach((tab) => {
+  ['overview', 'analytics', 'devices', 'users', 'reservations', 'security', 'stats', 'roles', 'faults', 'requests', 'user-info', 'contacts', 'logs'].forEach((tab) => {
     const panel = document.getElementById(`tab_${tab}`);
     if (panel) panel.classList.add('hidden');
   });
@@ -116,14 +231,14 @@ function showAccessDenied() {
       event.preventDefault();
       logoutUser();
       logoutAdmin();
-      location.href = 'login.html';
+      location.replace('login.html');
     }, { once: true });
   }
 }
 
 function bootAdminPage() {
-  if (isLoggedIn() && !isCurrentUserAdmin()) {
-    showAccessDenied();
+  if (isAdminLoggedIn()) {
+    enterAdminConsole();
     return;
   }
   showLoginOnly();
@@ -133,120 +248,93 @@ function switchTab(name) {
   document.querySelectorAll('.tabs button').forEach((button) => {
     button.classList.toggle('active', button.dataset.tab === name);
   });
-  ['devices', 'users', 'reservations', 'security', 'stats', 'roles', 'faults', 'user-info', 'notice'].forEach((tab) => {
+  ['overview', 'analytics', 'devices', 'users', 'reservations', 'security', 'stats', 'roles', 'faults', 'requests', 'user-info', 'contacts', 'logs'].forEach((tab) => {
     const panel = document.getElementById(`tab_${tab}`);
     if (panel) panel.classList.toggle('hidden', tab !== name);
   });
 
-  if (name === 'devices') loadDevices();
-  if (name === 'users') loadUsers();
-  if (name === 'reservations') loadReservations();
-  if (['security', 'user-info', 'notice'].includes(name)) loadSecurity();
-  if (name === 'stats') loadOptions();
+  if (name === 'overview') loadAdminTabOnce(name, loadOverview);
+  if (name === 'analytics') loadAdminTabOnce(name, loadAnalytics);
+  if (name === 'devices') loadAdminTabOnce(name, loadDevices);
+  if (name === 'users') loadAdminTabOnce(name, loadUsers);
+  if (name === 'reservations') loadAdminTabOnce(name, loadReservations);
+  if (['security', 'user-info', 'contacts', 'stats'].includes(name)) loadAdminTabOnce('security', loadSecurity);
+  if (name === 'stats') loadAdminTabOnce(name, async () => {
+    await loadOptions();
+    await loadExportJobs();
+  });
   if (name === 'roles') {
-    loadRoleUserOptions();
-    loadRoles();
+    loadAdminTabOnce(name, async () => {
+      await loadRoleUserOptions();
+      await loadRoles();
+    });
   }
-  if (name === 'faults') loadFaultReports();
+  if (name === 'faults') loadAdminTabOnce(name, loadFaultReports);
+  if (name === 'requests') loadAdminTabOnce(name, loadUserRequests);
+  if (name === 'logs') loadAdminTabOnce(name, loadOperationLogs);
+  updateAdminShellActive(name);
+}
+
+function loadAdminTabOnce(name, loader) {
+  const cachedAt = adminTabCache.get(name) || 0;
+  if (Date.now() - cachedAt < ADMIN_TAB_CACHE_MS) return;
+  adminTabCache.set(name, Date.now());
+  Promise.resolve(loader()).catch((error) => {
+    adminTabCache.delete(name);
+    handleAdminError(error);
+  });
+}
+
+function invalidateAdminTab(name) {
+  if (name) adminTabCache.delete(name);
+}
+
+function adminTabFromHash() {
+  const name = (window.location.hash || '#overview').replace(/^#/, '');
+  if (name === 'notice') return 'stats';
+  const allowed = ['overview', 'analytics', 'devices', 'users', 'reservations', 'security', 'stats', 'roles', 'faults', 'requests', 'user-info', 'contacts', 'logs'];
+  return allowed.includes(name) ? name : 'overview';
+}
+
+function updateAdminShellActive(name) {
+  document.querySelectorAll('.main-nav a[href^="admin.html#"], .sidebar-nav a[href^="admin.html#"]').forEach((link) => {
+    link.classList.toggle('active', link.getAttribute('href') === `admin.html#${name}`);
+  });
 }
 
 function setupAdminTabs() {
   document.querySelectorAll('.tabs button').forEach((button) => {
-    button.addEventListener('click', () => switchTab(button.dataset.tab));
-  });
-}
-
-function renderAdminSummary(meta = {}) {
-  document.getElementById('admin-summary').innerHTML = `
-    <div class="card"><div class="metric-label">设备总览</div><div class="value">${meta.deviceCount ?? '-'}</div></div>
-    <div class="card"><div class="metric-label">待审用户</div><div class="value">${meta.pendingUsers ?? '-'}</div></div>
-    <div class="card"><div class="metric-label">待审预约</div><div class="value">${meta.pendingReservations ?? '-'}</div></div>
-    <button class="card summary-action" data-summary-tab="faults"><div class="metric-label">异常设备</div><div class="value">${meta.abnormalDevices ?? '-'}</div><span class="muted">点击查看故障报备</span></button>
-  `;
-  document.querySelectorAll('[data-summary-tab]').forEach((item) => {
-    item.addEventListener('click', () => switchTab(item.dataset.summaryTab));
-  });
-}
-
-function renderUserList(users = []) {
-  const container = document.getElementById('userList');
-  const allSelected = users.length > 0 && users.every((user) => selectedUserIds.has(user.id));
-  container.innerHTML = users.length ? `
-    <div class="table-wrap">
-      <table>
-        <tr>
-          <th><input type="checkbox" id="user-select-all" ${allSelected ? 'checked' : ''}></th>
-          <th>姓名</th><th>手机号</th><th>学号/工号</th><th>状态</th><th>微信绑定</th><th>封禁</th><th>操作</th>
-        </tr>
-        ${users.map((user) => `
-          <tr>
-            <td><input type="checkbox" class="user-select-box" data-user-id="${escapeHtml(user.id)}" ${selectedUserIds.has(user.id) ? 'checked' : ''}></td>
-            <td>${escapeHtml(user.name || '-')}</td>
-            <td>${escapeHtml(user.phone || '-')}</td>
-            <td>${escapeHtml(user.student_no || '-')}</td>
-            <td>${statusBadge(user.status)}</td>
-            <td>${user.wechat_bound ? `<span class="badge info">${escapeHtml(user.wechat_openid_masked || '已绑定')}</span>` : '<span class="muted">未绑定</span>'}</td>
-            <td>${user.is_banned ? '<span class="badge danger">已封禁</span>' : '<span class="badge success">正常</span>'}</td>
-            <td class="actions">
-              <button onclick="setUserStatus('${user.id}','active')">通过</button>
-              <button class="secondary" onclick="toggleBan('${user.id}', ${user.is_banned ? 'false' : 'true'})">${user.is_banned ? '解除封禁' : '封禁'}</button>
-              <button class="danger" onclick="deleteUser('${user.id}')">删除</button>
-              ${user.wechat_bound ? `<button class="warning" onclick="unbindWechat('${user.id}')">解绑微信</button>` : ''}
-            </td>
-          </tr>
-        `).join('')}
-      </table>
-    </div>` : '<div class="empty-state">暂无用户。</div>';
-
-  const selectAll = document.getElementById('user-select-all');
-  if (selectAll) {
-    selectAll.addEventListener('change', (event) => {
-      const checked = event.target.checked;
-      users.forEach((user) => {
-        if (checked) selectedUserIds.add(user.id);
-        else selectedUserIds.delete(user.id);
-      });
-      renderUserList(users);
-    });
-  }
-
-  container.querySelectorAll('.user-select-box').forEach((box) => {
-    box.addEventListener('change', (event) => {
-      const userId = event.target.dataset.userId;
-      if (event.target.checked) selectedUserIds.add(userId);
-      else selectedUserIds.delete(userId);
-      renderUserList(users);
+    button.addEventListener('click', () => {
+      const tab = button.dataset.tab;
+      switchTab(tab);
+      if (window.IdbsNavigation && typeof window.IdbsNavigation.replaceCurrentUrl === 'function') {
+        window.IdbsNavigation.replaceCurrentUrl(`admin.html#${tab}`);
+      } else {
+        window.history.replaceState(null, '', `admin.html#${tab}`);
+      }
     });
   });
-}
-
-function syncUserSelectionButtons() {
-  const deleteButton = document.getElementById('delete-selected-users-btn');
-  if (deleteButton) deleteButton.disabled = selectedUserIds.size === 0;
-}
-
-async function refreshAdminSummary() {
-  const [deviceResult, userResult, reservationResult] = await Promise.all([
-    callRestApi('/admin/devices', { admin: true }),
-    callRestApi('/admin/users', { admin: true }),
-    callRestApi('/admin/bookings', { admin: true })
-  ]);
-  const devices = deviceResult.devices || deviceResult.list || [];
-  const users = userResult.users || [];
-  const reservations = reservationResult.reservations || [];
-  renderAdminSummary({
-    deviceCount: devices.length,
-    pendingUsers: users.filter((item) => item.status === 'pending').length,
-    pendingReservations: reservations.filter((item) => item.status === 'pending').length,
-    abnormalDevices: devices.filter((item) => item.status === 'abnormal_pending').length
+  window.addEventListener('hashchange', () => {
+    if (isAdminLoggedIn()) switchTab(adminTabFromHash());
   });
+}
+
+function refreshAdminSummary() {
+  invalidateAdminTab('overview');
+  if (adminTabFromHash() === 'overview') loadAdminTabOnce('overview', loadOverview);
+  return Promise.resolve();
 }
 
 function enterAdminConsole() {
   document.getElementById('login-box').classList.add('hidden');
   document.getElementById('admin-box').classList.remove('hidden');
-  refreshAdminSummary().catch(() => {});
-  switchTab('devices');
+  const initialTab = adminTabFromHash();
+  switchTab(initialTab);
+  if (window.IdbsNavigation && typeof window.IdbsNavigation.replaceCurrentUrl === 'function') {
+    window.IdbsNavigation.replaceCurrentUrl(`admin.html#${initialTab}`);
+  } else if (window.location.hash !== `#${initialTab}`) {
+    window.history.replaceState(null, '', `admin.html#${initialTab}`);
+  }
 }
 
 async function adminLogin() {
@@ -258,541 +346,9 @@ async function adminLogin() {
     });
     setAdminToken(result.token || '');
     showToast('success', '管理员登录成功');
-    enterAdminConsole();
+    location.replace('admin.html#overview');
   } catch (error) {
     showPageMessage('login-message', 'danger', error.message);
-  }
-}
-
-async function createDevice() {
-  try {
-    let photo = '';
-    const photoInput = document.getElementById('cover_photo');
-    if (photoInput?.files?.[0]) {
-      photo = await uploadPhoto(photoInput.files[0], 'device-photos');
-    }
-    await callRestApi('/admin/devices', {
-      method: 'POST',
-      admin: true,
-      body: {
-        device_code: fieldValue('device_code'),
-        name: fieldValue('device_name'),
-        category: fieldValue('category'),
-        location: fieldValue('location'),
-        manager: fieldValue('manager'),
-        status: fieldValue('status') || 'available',
-        description: fieldValue('description'),
-        usage_notice: fieldValue('usage_notice'),
-        reservation_slot_keys: getDeviceSlotKeys(),
-        cover_photo: photo
-      }
-    });
-    showToast('success', '设备已创建');
-    ['device_code', 'device_name', 'category', 'location', 'manager', 'description', 'usage_notice'].forEach((id) => {
-      document.getElementById(id).value = '';
-    });
-    if (photoInput) photoInput.value = '';
-    renderDeviceSlotOptions();
-    refreshAdminSummary().catch(() => {});
-    loadDevices();
-  } catch (error) {
-    handleAdminError(error);
-  }
-}
-
-async function loadDevices() {
-  const container = document.getElementById('deviceList');
-  setLoading(container, '正在加载设备...');
-  try {
-    const result = await callRestApi('/admin/devices', { admin: true });
-    const devices = result.devices || result.list || [];
-    container.innerHTML = devices.length ? `
-      <div class="table-wrap">
-        <table>
-          <tr><th>编号</th><th>名称</th><th>位置</th><th>状态</th><th>预约时段</th><th>当前使用</th><th>下个预约</th><th>操作</th></tr>
-          ${devices.map((device) => `
-            <tr>
-              <td class="mono">${escapeHtml(device.device_code)}</td>
-              <td>${escapeHtml(device.name)}</td>
-              <td>${escapeHtml(device.location || '-')}</td>
-              <td>${statusBadge(device.status)}</td>
-              <td>${escapeHtml(slotLabels(device.reservation_slot_options))}</td>
-              <td>${device.current_borrow ? `${escapeHtml(device.current_borrow.user_name || '-')}<br>${escapeHtml(device.current_borrow.user_phone || '-')}` : '<span class="muted">无</span>'}</td>
-              <td>${device.next_reservation ? `${escapeHtml(device.next_reservation.user_name || '-')}<br>${escapeHtml(device.next_reservation.user_phone || '-')}<br>${escapeHtml(fmtTime(device.next_reservation.start_time))}` : '<span class="muted">无</span>'}</td>
-              <td>${device.status === 'abnormal_pending' ? `<button onclick="setAvailable('${device.id}')">恢复可预约</button>` : '<span class="muted">-</span>'}</td>
-            </tr>
-          `).join('')}
-        </table>
-      </div>` : '<div class="empty-state">暂无设备。</div>';
-  } catch (error) {
-    handleAdminError(error, container);
-  }
-}
-
-async function setAvailable(id) {
-  try {
-    await callRestApi(`/admin/devices/${encodeURIComponent(id)}/availability`, {
-      method: 'PUT',
-      admin: true
-    });
-    showToast('success', '设备已恢复可预约');
-    refreshAdminSummary().catch(() => {});
-    loadDevices();
-  } catch (error) {
-    showToast('danger', error.message);
-  }
-}
-
-async function loadUsers() {
-  const container = document.getElementById('userList');
-  setLoading(container, '正在加载用户...');
-  try {
-    const result = await callRestApi('/admin/users', { admin: true });
-    const users = result.users || [];
-    renderUserList(users);
-    syncUserSelectionButtons();
-  } catch (error) {
-    showPageMessage(container, 'danger', error.message);
-  }
-}
-
-async function setUserStatus(id, status) {
-  try {
-    await callRestApi(`/admin/users/${encodeURIComponent(id)}/status`, {
-      method: 'PUT',
-      admin: true,
-      body: { status }
-    });
-    showToast('success', status === 'active' ? '用户已通过审核' : '用户状态已更新');
-    refreshAdminSummary().catch(() => {});
-    loadUsers();
-  } catch (error) {
-    showToast('danger', error.message);
-  }
-}
-
-async function toggleBan(id, banned) {
-  try {
-    await callRestApi(`/admin/users/${encodeURIComponent(id)}/ban`, {
-      method: 'PUT',
-      admin: true,
-      body: { is_banned: banned }
-    });
-    showToast('success', banned ? '用户已封禁' : '用户已解除封禁');
-    loadUsers();
-  } catch (error) {
-    showToast('danger', error.message);
-  }
-}
-
-async function unbindWechat(id) {
-  if (!confirm('确认解除该用户的微信绑定吗？')) return;
-  try {
-    await callRestApi(`/admin/users/${encodeURIComponent(id)}/wechat-binding`, {
-      method: 'DELETE',
-      admin: true
-    });
-    showToast('success', '微信绑定已解除');
-    loadUsers();
-  } catch (error) {
-    showToast('danger', error.message);
-  }
-}
-
-async function deleteUser(id) {
-  if (!confirm('确认删除该用户吗？该操作不可恢复。')) return;
-  try {
-    await callRestApi(`/admin/users/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-      admin: true
-    });
-    showToast('success', '用户已删除');
-    selectedUserIds.delete(id);
-    refreshAdminSummary().catch(() => {});
-    loadUsers();
-    syncUserSelectionButtons();
-  } catch (error) {
-    showToast('danger', error.message);
-  }
-}
-
-async function deleteSelectedUsers() {
-  const ids = [...selectedUserIds];
-  if (!ids.length) return showToast('warning', '请先选择要删除的用户');
-  if (!confirm(`确认删除选中的 ${ids.length} 个用户吗？该操作不可恢复。`)) return;
-  try {
-    for (const id of ids) {
-      await callRestApi(`/admin/users/${encodeURIComponent(id)}`, { method: 'DELETE', admin: true });
-    }
-    showToast('success', '选中用户已删除');
-    selectedUserIds.clear();
-    refreshAdminSummary().catch(() => {});
-    loadUsers();
-    syncUserSelectionButtons();
-  } catch (error) {
-    showToast('danger', error.message);
-  }
-}
-
-async function loadReservations() {
-  const container = document.getElementById('reservationList');
-  setLoading(container, '正在加载预约...');
-  try {
-    const result = await callRestApi('/admin/bookings', { admin: true });
-    const reservations = result.reservations || [];
-    container.innerHTML = reservations.length ? `
-      <div class="table-wrap">
-        <table>
-          <tr><th>设备</th><th>预约人</th><th>联系方式</th><th>时段</th><th>状态</th><th>操作</th></tr>
-          ${reservations.map((row) => `
-            <tr>
-              <td>${escapeHtml(row.device_name || '-')}<br><span class="muted mono">${escapeHtml(row.device_code || '-')}</span></td>
-              <td>${escapeHtml(row.user_name || '-')}<br><span class="muted">${escapeHtml(row.user_student_no || '-')}</span></td>
-              <td>${escapeHtml(row.user_phone || '-')}</td>
-              <td>${escapeHtml(fmtTime(row.start_time))}<br>${escapeHtml(fmtTime(row.end_time))}</td>
-              <td>${statusBadge(row.status)}</td>
-              <td class="actions">
-                ${row.status === 'pending' ? `<button onclick="approveReservation('${row.id}', true)">通过</button><button class="danger" onclick="approveReservation('${row.id}', false)">拒绝</button>` : '<span class="muted">-</span>'}
-              </td>
-            </tr>
-          `).join('')}
-        </table>
-      </div>` : '<div class="empty-state">暂无预约。</div>';
-  } catch (error) {
-    showPageMessage(container, 'danger', error.message);
-  }
-}
-
-async function approveReservation(id, approve) {
-  try {
-    await callRestApi(`/admin/bookings/${encodeURIComponent(id)}/approval`, {
-      method: 'PATCH',
-      admin: true,
-      body: { approve }
-    });
-    showToast('success', approve ? '预约已通过' : '预约已拒绝');
-    refreshAdminSummary().catch(() => {});
-    loadReservations();
-  } catch (error) {
-    showToast('danger', error.message);
-  }
-}
-
-async function loadSecurity() {
-  try {
-    const [configResult, activityResult] = await Promise.all([
-      callRestApi('/admin/security-config', { admin: true }),
-      callRestApi('/admin/activity-summary', { admin: true })
-    ]);
-    const config = configResult.config || {};
-    document.getElementById('captcha_expire_minutes').value = config.captcha_expire_minutes ?? 3;
-    document.getElementById('captcha_hourly_limit').value = config.captcha_hourly_limit ?? 3;
-    document.getElementById('openid_daily_register_limit').value = config.openid_daily_register_limit ?? 1;
-    document.getElementById('enable_image_captcha').value = config.enable_image_captcha ? '1' : '0';
-    document.getElementById('admin_report_enabled').value = config.admin_report_enabled ? '1' : '0';
-    document.getElementById('admin_report_hour').value = config.admin_report_hour ?? 9;
-    document.getElementById('admin_report_minute').value = config.admin_report_minute ?? 0;
-    document.getElementById('admin_report_timezone').value = config.admin_report_timezone || 'Asia/Shanghai';
-    document.getElementById('site_domain').value = config.site_domain || '';
-    document.getElementById('new_admin_password').value = '';
-    document.getElementById('confirm_admin_password').value = '';
-    document.getElementById('wechat_token').value = config.wechat_token || '';
-    document.getElementById('wechat_app_id').value = config.wechat_app_id || '';
-    document.getElementById('wechat_app_secret').value = '';
-    document.getElementById('wechat_app_secret').placeholder = config.has_wechat_app_secret ? '已保存，留空则不修改' : '尚未设置，请填写 AppSecret';
-    document.getElementById('wechat_admin_openids').value = config.wechat_admin_openids || '';
-    if (document.getElementById('admin_default_password_seed')) {
-      document.getElementById('admin_default_password_seed').value = config.admin_default_password_seed || 'IDBS123456';
-    }
-    document.getElementById('public_show_reserver_name').value = config.public_show_reserver_name ? '1' : '0';
-    document.getElementById('public_show_reserver_phone').value = config.public_show_reserver_phone ? '1' : '0';
-    document.getElementById('public_show_reserver_student_no').value = config.public_show_reserver_student_no ? '1' : '0';
-    document.getElementById('system_notice_enabled').value = config.system_notice_enabled ? '1' : '0';
-    document.getElementById('system_notice_title').value = config.system_notice_title || '';
-    document.getElementById('system_notice_content').value = config.system_notice_content || '';
-
-    const summary = activityResult.summary || {};
-    document.getElementById('activitySummaryInner').innerHTML = `
-      <div class="card"><div class="metric-label">今日注册</div><div class="value">${summary.registered_today ?? 0}</div></div>
-      <div class="card"><div class="metric-label">今日登录</div><div class="value">${summary.logged_in_today ?? 0}</div></div>
-      <div class="card"><div class="metric-label">今日微信绑定</div><div class="value">${summary.wechat_bind_today ?? 0}</div></div>
-      <div class="card"><div class="metric-label">今日微信验证</div><div class="value">${summary.wechat_scan_today ?? 0}</div></div>
-    `;
-    const activityRows = activityResult.rows || [];
-    document.getElementById('activityList').innerHTML = activityRows.length
-      ? `<div class="table-wrap"><table><tr><th>时间</th><th>事件</th><th>用户</th><th>手机</th><th>微信</th><th>备注</th></tr>${activityRows.map((row) => `<tr><td>${escapeHtml(fmtTime(row.created_at))}</td><td>${escapeHtml(row.event_type || '-')}</td><td>${escapeHtml(row.user_name || '-')}</td><td>${escapeHtml(row.phone || '-')}</td><td>${escapeHtml(row.wechat_openid ? `${row.wechat_openid.slice(0, 4)}...${row.wechat_openid.slice(-4)}` : '-')}</td><td>${escapeHtml(row.remark || '-')}</td></tr>`).join('')}</table></div>`
-      : '<div class="empty-state">今天还没有新的运营记录。</div>';
-  } catch (error) {
-    showPageMessage(document.getElementById('activityList'), 'danger', error.message);
-  }
-}
-
-async function saveSecurityConfig() {
-  try {
-    const newAdminPassword = document.getElementById('new_admin_password').value.trim();
-    const confirmAdminPassword = document.getElementById('confirm_admin_password').value.trim();
-    if (newAdminPassword || confirmAdminPassword) {
-      if (newAdminPassword.length < 8) throw new Error('新管理员密码至少 8 位');
-      if (newAdminPassword !== confirmAdminPassword) throw new Error('两次输入的新管理员密码不一致');
-    }
-
-    const wechatAppSecret = document.getElementById('wechat_app_secret').value.trim();
-    await callRestApi('/admin/security-config', {
-      method: 'PUT',
-      admin: true,
-      body: {
-        captcha_expire_minutes: Number(document.getElementById('captcha_expire_minutes').value || 3),
-        captcha_hourly_limit: Number(document.getElementById('captcha_hourly_limit').value || 3),
-        openid_daily_register_limit: Number(document.getElementById('openid_daily_register_limit').value || 1),
-        enable_image_captcha: document.getElementById('enable_image_captcha').value === '1',
-        admin_report_enabled: document.getElementById('admin_report_enabled').value === '1',
-        admin_report_hour: Number(document.getElementById('admin_report_hour').value || 9),
-        admin_report_minute: Number(document.getElementById('admin_report_minute').value || 0),
-        admin_report_timezone: document.getElementById('admin_report_timezone').value.trim() || 'Asia/Shanghai',
-        site_domain: document.getElementById('site_domain').value.trim(),
-        new_admin_password: newAdminPassword,
-        wechat_token: document.getElementById('wechat_token').value.trim(),
-        wechat_app_id: document.getElementById('wechat_app_id').value.trim(),
-        ...(wechatAppSecret ? { wechat_app_secret: wechatAppSecret } : {}),
-        wechat_admin_openids: document.getElementById('wechat_admin_openids').value.trim(),
-        ...(document.getElementById('admin_default_password_seed') ? { admin_default_password_seed: document.getElementById('admin_default_password_seed').value.trim() } : {}),
-        public_show_reserver_name: document.getElementById('public_show_reserver_name').value === '1',
-        public_show_reserver_phone: document.getElementById('public_show_reserver_phone').value === '1',
-        public_show_reserver_student_no: document.getElementById('public_show_reserver_student_no').value === '1',
-        system_notice_enabled: document.getElementById('system_notice_enabled').value === '1',
-        system_notice_title: document.getElementById('system_notice_title').value.trim(),
-        system_notice_content: document.getElementById('system_notice_content').value.trim()
-      }
-    });
-    showToast('success', '安全设置已保存');
-    loadSecurity();
-  } catch (error) {
-    showToast('danger', error.message);
-  }
-}
-
-async function saveUserInfoConfig() {
-  try {
-    await callRestApi('/admin/security-config', {
-      method: 'PUT',
-      admin: true,
-      body: {
-        public_show_reserver_name: document.getElementById('public_show_reserver_name').value === '1',
-        public_show_reserver_phone: document.getElementById('public_show_reserver_phone').value === '1',
-        public_show_reserver_student_no: document.getElementById('public_show_reserver_student_no').value === '1'
-      }
-    });
-    showToast('success', '用户信息设置已保存');
-    loadSecurity();
-  } catch (error) {
-    showToast('danger', error.message);
-  }
-}
-
-async function saveNoticeConfig() {
-  try {
-    await callRestApi('/admin/security-config', {
-      method: 'PUT',
-      admin: true,
-      body: {
-        system_notice_enabled: document.getElementById('system_notice_enabled').value === '1',
-        system_notice_title: document.getElementById('system_notice_title').value.trim(),
-        system_notice_content: document.getElementById('system_notice_content').value.trim()
-      }
-    });
-    showToast('success', '注意事项已保存');
-    loadSecurity();
-  } catch (error) {
-    showToast('danger', error.message);
-  }
-}
-
-async function previewDailyReport() {
-  try {
-    const result = await callRestApi('/admin/reports/daily-usage', { admin: true });
-    document.getElementById('reportPreview').classList.remove('hidden');
-    document.getElementById('reportPreviewText').textContent = result.message || '暂无内容';
-  } catch (error) {
-    showToast('danger', error.message);
-  }
-}
-
-async function sendDailyReportNow() {
-  try {
-    const result = await callRestApi('/admin/reports/daily-usage/send', {
-      method: 'POST',
-      admin: true,
-      body: { timezone: document.getElementById('admin_report_timezone').value.trim() || 'Asia/Shanghai' }
-    });
-    showToast('success', `日报发送完成，成功 ${result.sent || 0} 条`);
-    document.getElementById('reportPreview').classList.remove('hidden');
-    document.getElementById('reportPreviewText').textContent = result.message || '暂无内容';
-  } catch (error) {
-    showToast('danger', error.message);
-  }
-}
-
-async function loadOptions() {
-  try {
-    const result = await callApi('adminOptions', {}, true);
-    stat_user.innerHTML = '<option value="">全部用户</option>' + (result.users || []).map((user) => `<option value="${user.id}">${escapeHtml(user.name)} ${escapeHtml(user.phone)}</option>`).join('');
-    stat_device.innerHTML = '<option value="">全部设备</option>' + (result.devices || []).map((device) => `<option value="${device.id}">${escapeHtml(device.device_code)} ${escapeHtml(device.name)}</option>`).join('');
-  } catch (error) {
-    showPageMessage(document.getElementById('statsBox'), 'danger', error.message);
-  }
-}
-
-async function loadRoles() {
-  const box = document.getElementById('roleList');
-  setLoading(box, '正在加载管理员角色...');
-  try {
-    const result = await callRestApi('/admin/roles', { admin: true });
-    permissionOptions = result.permissions || permissionOptions;
-    roleDefaultPermissions = result.role_defaults || roleDefaultPermissions;
-    renderPermissionPicker(selectedPermissions().length ? selectedPermissions() : (roleDefaultPermissions[document.getElementById('role_key').value] || []));
-    const roles = result.roles || [];
-    box.innerHTML = roles.length ? `<div class="table-wrap"><table><tr><th>用户</th><th>角色</th><th>权限</th><th>备注</th></tr>${roles.map((row) => `<tr><td>${escapeHtml(row.user_name || row.user_id || '-')}<br><span class="muted">${escapeHtml(row.user_phone || '-')}</span></td><td>${escapeHtml(row.role_key || '-')}</td><td>${escapeHtml(Array.isArray(row.permissions) ? row.permissions.join(', ') : String(row.permissions || '-'))}</td><td>${escapeHtml(row.note || '-')}</td></tr>`).join('')}</table></div>` : '<div class="empty-state">暂无管理员角色。</div>';
-  } catch (error) {
-    showPageMessage(box, 'danger', error.message);
-  }
-}
-
-async function loadRoleUserOptions() {
-  try {
-    const result = await callRestApi('/admin/options', { admin: true });
-    const users = result.users || [];
-    const select = document.getElementById('role_user_id');
-    select.innerHTML = '<option value="">请选择用户</option>' + users.map((user) => `<option value="${user.id}">${escapeHtml(user.name)} ${escapeHtml(user.phone || '')}</option>`).join('');
-  } catch (error) {
-    showToast('danger', error.message);
-  }
-}
-
-async function saveRole() {
-  try {
-    await callRestApi('/admin/roles', {
-      method: 'PUT',
-      admin: true,
-      body: {
-        user_id: document.getElementById('role_user_id').value.trim(),
-        role_key: document.getElementById('role_key').value.trim(),
-        permissions: selectedPermissions(),
-        note: document.getElementById('role_note').value.trim()
-      }
-    });
-    showToast('success', '管理员角色已保存');
-    loadRoles();
-    loadRoleUserOptions();
-  } catch (error) {
-    showToast('danger', error.message);
-  }
-}
-
-async function revokeRole() {
-  try {
-    await callRestApi('/admin/roles', {
-      method: 'DELETE',
-      admin: true,
-      body: { user_id: document.getElementById('role_user_id').value.trim() }
-    });
-    showToast('success', '管理员权限已撤销');
-    loadRoles();
-    loadRoleUserOptions();
-  } catch (error) {
-    showToast('danger', error.message);
-  }
-}
-
-async function loadFaultReports() {
-  const box = document.getElementById('faultReportList');
-  setLoading(box, '正在加载故障报备...');
-  try {
-    const result = await callRestApi('/admin/fault-reports', { admin: true });
-    const reports = result.reports || [];
-    box.innerHTML = reports.length ? `
-      <div class="table-wrap">
-        <table>
-          <tr><th>设备</th><th>上报人</th><th>问题</th><th>状态</th><th>时间</th><th>处理</th></tr>
-          ${reports.map((report) => `
-            <tr>
-              <td>${escapeHtml(report.device_code)}<br><span class="muted">${escapeHtml(report.device_name || '-')} ${escapeHtml(report.device_location || '')}</span></td>
-              <td>${escapeHtml(report.user_name || '-')}<br><span class="muted">${escapeHtml(report.user_phone || '-')}</span></td>
-              <td><strong>${escapeHtml(report.issue_type || 'fault')}</strong><br>${escapeHtml(report.description || '-')}</td>
-              <td>${statusBadge(report.status)}</td>
-              <td>${escapeHtml(fmtTime(report.created_at))}</td>
-              <td class="actions">
-                <button onclick="markFaultReport('${report.id}', 'processing', false)">处理中</button>
-                <button class="success" onclick="markFaultReport('${report.id}', 'resolved', true)">解决并恢复可预约</button>
-              </td>
-            </tr>
-          `).join('')}
-        </table>
-      </div>
-    ` : '<div class="empty-state">暂无故障报备。</div>';
-  } catch (error) {
-    handleAdminError(error, box);
-  }
-}
-
-async function markFaultReport(id, status, setAvailable) {
-  const note = prompt('处理备注（可留空）') || '';
-  try {
-    await callRestApi(`/admin/fault-reports/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      admin: true,
-      body: { status, set_available: setAvailable, admin_note: note }
-    });
-    showToast('success', '故障报备已更新');
-    refreshAdminSummary().catch(() => {});
-    loadFaultReports();
-  } catch (error) {
-    handleAdminError(error);
-  }
-}
-
-async function loadStats() {
-  const box = document.getElementById('statsBox');
-  setLoading(box, '正在统计使用记录...');
-  try {
-    const result = await callApi('usageStats', {
-      user_id: stat_user.value,
-      device_id: stat_device.value,
-      start_date: stat_start.value,
-      end_date: stat_end.value
-    }, true);
-    lastRows = result.rows || [];
-    box.innerHTML = `
-      <div class="kpi">
-        <div class="card"><div class="metric-label">使用次数</div><div class="value">${result.summary.count}</div></div>
-        <div class="card"><div class="metric-label">累计小时</div><div class="value">${result.summary.total_hours}</div></div>
-        <div class="card"><div class="metric-label">异常归还</div><div class="value">${result.summary.abnormal_count}</div></div>
-        <div class="card"><div class="metric-label">逾期次数</div><div class="value">${result.summary.overdue_count}</div></div>
-      </div>
-      ${lastRows.length ? `<div class="table-wrap"><table><tr><th>设备</th><th>用户</th><th>借出时间</th><th>归还时间</th><th>分钟</th><th>状态</th><th>说明</th></tr>${lastRows.map((row) => `<tr><td>${escapeHtml(row.device_name || '-')}</td><td>${escapeHtml(row.user_name || '-')}</td><td>${escapeHtml(fmtTime(row.borrow_time))}</td><td>${escapeHtml(fmtTime(row.return_time))}</td><td>${escapeHtml(row.duration_minutes || 0)}</td><td>${escapeHtml(row.return_condition || '-')}</td><td>${escapeHtml(row.return_note || '-')}</td></tr>`).join('')}</table></div>` : '<div class="empty-state">暂无统计记录。</div>'}
-    `;
-  } catch (error) {
-    showPageMessage(box, 'danger', error.message);
-  }
-}
-
-function exportStats() {
-  try {
-    const rows = lastRows.map((item) => ({
-      设备编号: item.device_code,
-      设备名称: item.device_name,
-      使用人: item.user_name,
-      手机号: item.user_phone,
-      借出时间: fmtTime(item.borrow_time),
-      归还时间: fmtTime(item.return_time),
-      使用分钟: item.duration_minutes || 0,
-      是否逾期: item.is_overdue ? '是' : '否',
-      归还状态: item.return_condition || '',
-      归还说明: item.return_note || ''
-    }));
-    csvDownload(`设备使用记录_${stat_start.value || '开始'}_${stat_end.value || '结束'}.csv`, rows);
-    showToast('success', 'CSV 已开始下载');
-  } catch (error) {
-    showToast('danger', error.message);
   }
 }
 
@@ -801,18 +357,50 @@ document.getElementById('adminPwd').addEventListener('keydown', (event) => {
   if (event.key === 'Enter') adminLogin();
 });
 document.getElementById('create-device-btn').addEventListener('click', createDevice);
+document.getElementById('cancel-device-edit-btn')?.addEventListener('click', resetDeviceForm);
 document.getElementById('save-security-btn').addEventListener('click', saveSecurityConfig);
 document.getElementById('save-user-info-btn').addEventListener('click', saveUserInfoConfig);
+document.getElementById('save-contacts-btn')?.addEventListener('click', saveContactsConfig);
 document.getElementById('save-notice-btn').addEventListener('click', saveNoticeConfig);
 document.getElementById('preview-report-btn').addEventListener('click', previewDailyReport);
 document.getElementById('send-report-btn').addEventListener('click', sendDailyReportNow);
+document.getElementById('reload-overview-btn').addEventListener('click', loadOverview);
+document.getElementById('reload-analytics-btn').addEventListener('click', loadAnalytics);
+document.getElementById('analytics_range').addEventListener('change', loadAnalytics);
+document.getElementById('reload-reservations-btn').addEventListener('click', loadReservations);
 document.getElementById('stats-btn').addEventListener('click', loadStats);
-document.getElementById('export-btn').addEventListener('click', exportStats);
+document.getElementById('export-btn').addEventListener('click', () => exportStats('csv'));
+document.getElementById('export-excel-btn')?.addEventListener('click', () => exportStats('excel'));
+document.getElementById('export-job-btn')?.addEventListener('click', createExportJob);
+document.getElementById('run-export-job-btn')?.addEventListener('click', runNextExportJob);
 document.getElementById('save-role-btn').addEventListener('click', saveRole);
 document.getElementById('revoke-role-btn').addEventListener('click', revokeRole);
 document.getElementById('reload-role-btn').addEventListener('click', loadRoles);
 document.getElementById('role_key').addEventListener('change', applyRoleDefaults);
+document.querySelectorAll('.role-template-button').forEach((button) => {
+  button.addEventListener('click', () => selectRoleTemplate(button.dataset.roleKey));
+});
+document.getElementById('select-role-defaults-btn')?.addEventListener('click', applyRoleDefaults);
+document.getElementById('select-approve-perms-btn')?.addEventListener('click', () => {
+  setPermissionSelection(['user.approve', 'reservation.approve', 'reservation.view']);
+});
+document.getElementById('select-export-perms-btn')?.addEventListener('click', () => {
+  setPermissionSelection(['stats.export', 'stats.view']);
+});
+document.getElementById('select-ops-perms-btn')?.addEventListener('click', () => {
+  setPermissionSelection(['device.manage', 'device.view', 'fault.manage']);
+});
+document.getElementById('clear-role-perms-btn')?.addEventListener('click', () => {
+  setPermissionSelection([]);
+});
 document.getElementById('reload-faults-btn').addEventListener('click', loadFaultReports);
+document.getElementById('reload-requests-btn').addEventListener('click', loadUserRequests);
+document.getElementById('fault_status_filter')?.addEventListener('change', loadFaultReports);
+document.getElementById('request_status_filter')?.addEventListener('change', loadUserRequests);
+document.getElementById('reload-logs-btn').addEventListener('click', loadOperationLogs);
+document.getElementById('log_operator_filter')?.addEventListener('input', debounce(() => loadOperationLogs(), 300));
+document.getElementById('log_start_filter')?.addEventListener('change', loadOperationLogs);
+document.getElementById('log_end_filter')?.addEventListener('change', loadOperationLogs);
 document.getElementById('delete-selected-users-btn').addEventListener('click', deleteSelectedUsers);
 document.getElementById('select-all-users-btn').addEventListener('click', () => {
   const selectAll = document.getElementById('user-select-all');

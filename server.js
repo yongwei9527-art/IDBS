@@ -28,6 +28,7 @@ const service = createRentalService({
   crypto,
   adminPassword: config.adminPassword,
   tokenSecret: config.tokenSecret,
+  uploadDir: config.uploadDir,
   wechatToken: config.wechatToken,
   wechatAppId: config.wechatAppId,
   wechatAppSecret: config.wechatAppSecret,
@@ -36,6 +37,7 @@ const service = createRentalService({
 
 const app = createApp({ config, db, service });
 let reportScheduler = null;
+let systemMaintenanceTimer = null;
 
 const server = app.listen(config.port, () => {
   const runtime = buildRuntimeStatus(config);
@@ -44,12 +46,22 @@ const server = app.listen(config.port, () => {
   if (runtime.warnings.length) {
     console.warn(`Runtime warnings: ${runtime.warnings.join(' | ')}`);
   }
+  service.bootstrapSystem?.().catch((error) => {
+    console.warn('System bootstrap skipped:', error.message || error);
+  });
+  systemMaintenanceTimer = setInterval(() => {
+    service.bootstrapSystem?.().catch((error) => {
+      console.warn('System maintenance skipped:', error.message || error);
+    });
+  }, 60 * 60 * 1000);
+  systemMaintenanceTimer.unref?.();
   reportScheduler = scheduleDailyUsageReport({ service });
 });
 
 async function shutdown(signal) {
   console.log(`${signal} received, shutting down...`);
   if (reportScheduler) reportScheduler.stop();
+  if (systemMaintenanceTimer) clearInterval(systemMaintenanceTimer);
   server.close(async () => {
     try {
       await db.close();

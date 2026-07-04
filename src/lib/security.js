@@ -28,7 +28,9 @@ function createMemoryRateLimiter(options = {}) {
         code,
         message,
         data: null,
-        status: 429
+        status: 429,
+        request_id: req.requestId || '',
+        server_time: new Date().toISOString()
       });
     }
 

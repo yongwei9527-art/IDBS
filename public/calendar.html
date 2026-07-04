@@ -4,28 +4,33 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>使用日历</title>
-  <link rel="stylesheet" href="css/style.css?v=20260629d">
+  <link rel="stylesheet" href="css/style.css?v=20260702a">
+  <link rel="stylesheet" href="css/formal.css?v=20260702b">
+  <script>
+    if (new URLSearchParams(location.search).get('admin') === '1') document.documentElement.classList.add('admin-calendar-view');
+  </script>
+  <style>
+    .admin-calendar-view #calendar-hero { display: none !important; }
+  </style>
 </head>
-<body>
-<main>
-  <section class="hero">
+<body class="calendar-page">
+<main class="calendar-main">
+  <section id="calendar-hero" class="hero">
     <h2>设备使用日历</h2>
-    <p class="muted">不同设备用不同颜色标记；悬停在日期上可快速放大查看，当天点击可进入详细页面。</p>
     <div class="hero-actions">
-      <a class="badge info" href="index.html">返回设备列表</a>
-      <a class="badge" href="admin.html">返回后台</a>
+      <a id="calendar-user-link" class="badge info" href="index.html">返回设备列表</a>
     </div>
   </section>
 
-  <section class="card">
+  <section class="card calendar-card">
     <div class="section-head">
       <div>
         <h3 id="month-title">使用安排</h3>
-        <p class="muted">包含待审、已通过和使用中的预约。</p>
       </div>
       <div class="actions">
-        <button id="prev-month" class="secondary">上个月</button>
-        <button id="next-month" class="secondary">下个月</button>
+        <select id="month-jump" aria-label="选择月份"></select>
+        <button id="prev-month" type="button" class="secondary">上个月</button>
+        <button id="next-month" type="button" class="secondary">下个月</button>
       </div>
     </div>
     <div id="calendar-message"></div>
@@ -34,41 +39,142 @@
 </main>
 
 <script src="js/config.js"></script>
-<script src="js/api.js?v=20260629b"></script>
-<script src="js/ui.js"></script>
-<script src="js/common-header.js?v=20260629c"></script>
-<script src="js/calendar-ui.js?v=20260629d"></script>
+<script src="js/api.js?v=20260702a"></script>
+<script src="js/ui.js?v=20260701e"></script>
+<script src="js/common-header.js?v=20260703b"></script>
+<script src="js/calendar-ui.js?v=20260701d"></script>
+<script src="js/page-shortcuts.js?v=20260701e"></script>
 <script>
-if (!isLoggedIn() && !isAdminLoggedIn()) {
-  location.href = 'login.html';
+const adminView = qs('admin') === '1';
+const calendarBackHref = qs('back') || (adminView ? 'admin.html#overview' : '');
+
+if (adminView) {
+  if (!isAdminLoggedIn()) {
+    location.replace('admin.html');
+    throw new Error('Admin login required');
+  }
+} else if (!isLoggedIn()) {
+  location.replace('login.html');
   throw new Error('Login required');
 }
 
-const adminView = qs('admin') === '1';
-let currentMonth = qs('month') || new Date().toISOString().slice(0, 7);
+function buildCalendarPageUrl(monthText) {
+  const params = new URLSearchParams();
+  params.set('month', monthText);
+  if (adminView) params.set('admin', '1');
+  if (calendarBackHref) params.set('back', calendarBackHref);
+  return `calendar.html?${params.toString()}`;
+}
+
+function currentLocalMonth() {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+}
+const calendarInitialMonthParam = qs('month');
+let currentMonth = calendarInitialMonthParam || currentLocalMonth();
+let calendarServerToday = '';
+let calendarServerMonthApplied = Boolean(calendarInitialMonthParam);
+const monthJump = document.getElementById('month-jump');
+
+function monthTextFromOffset(offset) {
+  const today = new Date();
+  const date = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function ensureMonthOption(monthText) {
+  if ([...monthJump.options].some((option) => option.value === monthText)) return;
+  const option = document.createElement('option');
+  option.value = monthText;
+  option.textContent = `${monthText} 月`;
+  monthJump.appendChild(option);
+}
+
+function setupMonthJump() {
+  monthJump.innerHTML = '';
+  for (let offset = -2; offset <= 24; offset += 1) {
+    ensureMonthOption(monthTextFromOffset(offset));
+  }
+  ensureMonthOption(currentMonth);
+  monthJump.value = currentMonth;
+}
+
+function renderCalendarMonth(events = []) {
+  CalendarUi.renderMonth(document.getElementById('calendar'), events, currentMonth, {
+    admin: adminView,
+    back: calendarBackHref,
+    serverToday: calendarServerToday
+  });
+}
+
+function setMonthControlsLoading(loading) {
+  document.getElementById('prev-month').disabled = loading;
+  document.getElementById('next-month').disabled = loading;
+  monthJump.disabled = loading;
+}
 
 function shiftMonth(delta) {
   const [year, month] = currentMonth.split('-').map(Number);
   const date = new Date(year, month - 1 + delta, 1);
-  currentMonth = date.toISOString().slice(0, 7);
+  currentMonth = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  ensureMonthOption(currentMonth);
   loadCalendar();
 }
 
 async function loadCalendar() {
+  setMonthControlsLoading(true);
+  monthJump.value = currentMonth;
+  if (window.IdbsNavigation && typeof window.IdbsNavigation.replaceCurrentUrl === 'function') {
+    window.IdbsNavigation.replaceCurrentUrl(buildCalendarPageUrl(currentMonth));
+  } else {
+    history.replaceState(null, '', buildCalendarPageUrl(currentMonth));
+  }
   document.getElementById('month-title').textContent = `${currentMonth} 使用安排`;
+  document.getElementById('calendar-message').innerHTML = '';
   const { start, end } = CalendarUi.monthRange(currentMonth);
   const startText = CalendarUi.localDate(start);
   const endText = CalendarUi.localDate(end);
+  renderCalendarMonth([]);
   try {
     const result = await callRestApi(`/calendar?start=${encodeURIComponent(startText)}&end=${encodeURIComponent(endText)}`, { admin: adminView });
-    CalendarUi.renderMonth(document.getElementById('calendar'), result.events || [], currentMonth, { admin: adminView });
+    const serverToday = String(result?.server_today || result?.data?.server_today || '').slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(serverToday)) {
+      calendarServerToday = serverToday;
+      const serverMonth = serverToday.slice(0, 7);
+      if (!calendarServerMonthApplied && !calendarInitialMonthParam && serverMonth && serverMonth !== currentMonth) {
+        calendarServerMonthApplied = true;
+        currentMonth = serverMonth;
+        ensureMonthOption(currentMonth);
+        await loadCalendar();
+        return;
+      }
+    }
+    calendarServerMonthApplied = true;
+    const events = Array.isArray(result?.events)
+      ? result.events
+      : Array.isArray(result?.data?.events)
+        ? result.data.events
+        : [];
+    renderCalendarMonth(events);
   } catch (error) {
     showPageMessage('calendar-message', 'danger', error.message);
+  } finally {
+    setMonthControlsLoading(false);
   }
 }
 
+if (adminView && isAdminLoggedIn()) {
+  document.body.dataset.area = 'admin';
+  document.getElementById('calendar-hero').classList.add('hidden');
+  document.getElementById('calendar-user-link').classList.add('hidden');
+}
 document.getElementById('prev-month').addEventListener('click', () => shiftMonth(-1));
 document.getElementById('next-month').addEventListener('click', () => shiftMonth(1));
+monthJump.addEventListener('change', () => {
+  currentMonth = monthJump.value;
+  loadCalendar();
+});
+setupMonthJump();
 loadCalendar();
 </script>
 </body>

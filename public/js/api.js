@@ -15,11 +15,28 @@ const STATUS_LABELS = {
   overdue: '逾期',
   active: '启用',
   processing: '处理中',
-  resolved: '已解决'
+  resolved: '已解决',
+  confirmed: '已确认',
+  change_requested: '申请修改',
+  closed: '已关闭'
 };
 
 function normalizeBaseUrl(url) {
-  return (url || '').replace(/\/$/, '');
+  const raw = String(url || '').trim();
+  if (!raw) return '';
+
+  let normalized = raw;
+  if (/^\/\//.test(normalized)) {
+    normalized = `${window.location.protocol}${normalized}`;
+  } else if (!/^https?:\/\//i.test(normalized)) {
+    const hostPart = normalized.split('/')[0];
+    const looksLikeHost = !normalized.startsWith('/') && !/\s/.test(hostPart) && (hostPart.includes('.') || hostPart.startsWith('localhost'));
+    normalized = looksLikeHost
+      ? `${window.location.protocol}//${normalized}`
+      : `${window.location.origin}/${normalized.replace(/^\/+/, '')}`;
+  }
+
+  return normalized.replace(/\/+$/, '').replace(/\/api$/i, '');
 }
 
 function getApiBaseUrl() {
@@ -32,6 +49,25 @@ function clearUserToken() { localStorage.removeItem('USER_TOKEN'); }
 function getAdminToken() { return localStorage.getItem('ADMIN_TOKEN') || ''; }
 function setAdminToken(token) { localStorage.setItem('ADMIN_TOKEN', token || ''); }
 function clearAdminToken() { localStorage.removeItem('ADMIN_TOKEN'); }
+
+function parseTokenPayload(token) {
+  const body = String(token || '').split('.')[0];
+  if (!body) return null;
+  try {
+    const base64 = body.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+    const binary = atob(padded);
+    const json = decodeURIComponent([...binary].map((char) => `%${char.charCodeAt(0).toString(16).padStart(2, '0')}`).join(''));
+    return JSON.parse(json);
+  } catch (_) {
+    return null;
+  }
+}
+
+function isAdminToken(token) {
+  const payload = parseTokenPayload(token);
+  return !!payload && payload.scope === 'admin' && isRoleAdmin(payload.role);
+}
 
 function getUserInfo() {
   try {
@@ -76,13 +112,24 @@ function isLoggedIn() {
 }
 
 function isAdminLoggedIn() {
-  if (isLoggedIn()) return isCurrentUserAdmin();
-  return !!getAdminToken();
+  return isAdminToken(getAdminToken());
 }
 
 function getEffectiveAdminToken() {
-  if (isLoggedIn()) return isCurrentUserAdmin() ? (getAdminToken() || getUserToken()) : '';
-  return getAdminToken();
+  const token = getAdminToken();
+  return isAdminToken(token) ? token : '';
+}
+
+function getAuthTokenForContext(admin = false) {
+  return admin ? getEffectiveAdminToken() : getUserToken();
+}
+
+function buildRestUrl(path, params = {}) {
+  const url = new URL(`${getApiBaseUrl()}/api${path}`);
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, value);
+  });
+  return url.toString();
 }
 
 function escapeHtml(value) {
@@ -96,9 +143,14 @@ function escapeHtml(value) {
 }
 
 function formatBadgeClass(status) {
-  if (['available', 'approved', 'returned', 'completed', 'active'].includes(status)) return 'success';
-  if (['disabled', 'rejected', 'abnormal_pending'].includes(status)) return 'danger';
-  if (['maintenance', 'pending', 'overdue'].includes(status)) return 'warn';
+  if (status === 'available') return 'available';
+  if (['in_use', 'reserved'].includes(status)) return 'busy';
+  if (status === 'maintenance') return 'maintenance';
+  if (status === 'disabled') return 'disabled';
+  if (status === 'abnormal_pending') return 'danger';
+  if (['approved', 'returned', 'completed', 'active'].includes(status)) return 'success';
+  if (['rejected', 'overdue'].includes(status)) return 'danger';
+  if (['pending'].includes(status)) return 'warn';
   return 'info';
 }
 
@@ -120,25 +172,6 @@ async function requestJson(url, options = {}) {
     throw error;
   }
   return data;
-}
-
-async function callApi(action, payload = {}, admin = false) {
-  try {
-    return await requestJson(`${getApiBaseUrl()}/api/${encodeURIComponent(action)}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(admin
-          ? (getEffectiveAdminToken() ? { Authorization: `Bearer ${getEffectiveAdminToken()}` } : {})
-          : (getUserToken() ? { Authorization: `Bearer ${getUserToken()}` } : {}))
-      },
-      body: JSON.stringify(payload || {})
-    });
-  } catch (error) {
-    if (error.status === 401 && !admin) logoutUser();
-    if (error.status === 401 && admin && getAdminToken()) logoutAdmin();
-    throw error;
-  }
 }
 
 async function callRestApi(path, options = {}) {
@@ -236,5 +269,29 @@ function csvDownload(filename, rows) {
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
   link.download = filename;
+  link.click();
+}
+
+function excelDownload(filename, rows) {
+  if (!rows || !rows.length) {
+    throw new Error('没有可导出的记录');
+  }
+  const headers = Object.keys(rows[0]);
+  const cells = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  const table = `
+    <html><head><meta charset="utf-8"></head><body>
+      <table border="1">
+        <tr>${headers.map((header) => `<th>${cells(header)}</th>`).join('')}</tr>
+        ${rows.map((row) => `<tr>${headers.map((header) => `<td>${cells(row[header])}</td>`).join('')}</tr>`).join('')}
+      </table>
+    </body></html>
+  `;
+  const blob = new Blob(['\ufeff' + table], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = filename.endsWith('.xls') ? filename : `${filename}.xls`;
   link.click();
 }

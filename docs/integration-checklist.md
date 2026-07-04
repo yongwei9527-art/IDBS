@@ -10,6 +10,7 @@ This checklist is for IDBS VPS + PostgreSQL deployment, frontend/backend integra
 - Confirm readiness endpoint: `curl http://127.0.0.1:3000/ready`
 - Run local syntax checks before deploying: `npm run check`
 - Run smoke test from `/var/www/idbs/current`: `npm run smoke -- http://127.0.0.1:3000`
+- For local E2E verification, start the service with a non-production test-only rate-limit override when necessary, for example `API_RATE_LIMIT_MAX=1000`, then run `npm run e2e` against the same base URL.
 
 ## 2. Environment Variables
 
@@ -39,7 +40,31 @@ WECHAT_ADMIN_OPENIDS=<openid_a,openid_b>
 - Confirm PostgreSQL is running: `sudo systemctl status postgresql`
 - Confirm schema exists: `sudo -u postgres psql -d idbs -c "\dt"`
 - Confirm app user can connect: `psql "$DATABASE_URL" -c "select 1"`
+- Apply schema upgrades with a table owner or PostgreSQL superuser, not a limited runtime account, because migrations may run `ALTER TABLE` on existing tables:
+
+  ```bash
+  sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 -f sql/migrations/2026-06-30_long_term_upgrade_foundation.sql
+  ```
+
+- Confirm long-term upgrade tables/views exist:
+
+  ```bash
+  sudo -u postgres psql -d idbs -c "select to_regclass('public.device_time_slots'), to_regclass('public.reservation_items'), to_regclass('public.permissions'), to_regclass('public.calendar_events_view');"
+  ```
+
 - Confirm `/ready` returns `200` after `.env` is finalized and service restarted
+- If `npm run db:upgrade-schema` prints a "Manual SQL" block, apply that block with the table owner/PostgreSQL admin account before running smoke tests.
+- Confirm item-first reservation columns exist before go-live:
+
+  ```bash
+  sudo -u postgres psql -d idbs -c "select column_name from information_schema.columns where table_name in ('borrow_records','device_fault_reports','usage_log') and column_name = 'reservation_item_id';"
+  ```
+
+- Confirm chat management group columns exist:
+
+  ```bash
+  sudo -u postgres psql -d idbs -c "select column_name from information_schema.columns where table_name = 'chat_conversations' and column_name in ('system_key','is_system','retention_days');"
+  ```
 
 ## 4. Manual End-To-End User Flow
 
@@ -74,13 +99,13 @@ Expected result:
 - Verify it appears on the home page
 - Submit an abnormal return
 - Restore device availability in admin
-- Export CSV from statistics page
+- Export CSV and Excel from statistics page
 
 Expected result:
 
 - Device creation is visible immediately
 - Status badge changes match business flow
-- CSV downloads with readable columns
+- CSV and Excel downloads with readable columns
 
 ## 6. API Verification
 
@@ -98,8 +123,16 @@ Recommended requests:
 - `POST /api/borrow-records`
 - `PUT /api/borrow-records/:recordId/return`
 - `GET /api/admin/users`
+- `GET /api/admin/users/:userId/detail`
+- `GET /api/admin/devices`
+- `GET /api/admin/devices/:deviceId/detail`
 - `GET /api/admin/bookings`
 - `GET /api/admin/statistics/usage`
+- `GET /api/admin/exports/usage`
+- `GET /api/admin/exports/device_summary`
+- `GET /api/admin/reservation-batches`
+- `GET /api/admin/reservation-batches/:id`
+- `PATCH /api/admin/reservation-items/:id/approval`
 
 Use the contract in [api-contract.md](./api-contract.md).
 

@@ -4,66 +4,99 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>发起预约</title>
-  <link rel="stylesheet" href="css/style.css?v=20260629c">
+  <link rel="stylesheet" href="css/style.css?v=20260702a">
+  <link rel="stylesheet" href="css/formal.css?v=20260702b">
 </head>
 <body>
 <main>
-  <section class="hero">
-    <h2>发起设备预约</h2>
-    <p class="muted">系统会自动校验时间冲突，待审核预约也会占用时间段。</p>
+  <section class="hero reserve-hero">
+    <div>
+      <h2>发起设备预约</h2>
+    </div>
+    <div class="hero-actions">
+      <a class="badge info" href="calendar.html">查看使用日历</a>
+      <a class="badge" href="my.html">我的预约</a>
+    </div>
   </section>
 
-  <section class="card">
+  <section class="card reserve-panel">
     <div id="message"></div>
-    <label for="device_search">搜索并选择设备（支持多个）</label>
-    <div class="combo-box">
-      <input id="device_search" class="mono" autocomplete="off" placeholder="输入设备编号、名称或位置">
-      <div id="device_suggestions" class="suggestion-list hidden"></div>
-    </div>
-    <input id="device_codes" type="hidden">
-    <div id="selected_devices" class="chip-list"></div>
-    <div class="form-grid">
-      <div>
-        <label for="reservation_date">预约日期</label>
-        <input id="reservation_date" type="date">
+    <div class="reserve-steps">
+      <div class="reserve-step soft-panel">
+        <div class="step-kicker">选设备</div>
+        <label for="device_search">搜索并选择设备</label>
+        <div class="combo-box">
+          <input id="device_search" class="mono" autocomplete="off" placeholder="输入设备编号、名称或位置，点击下方结果即可加入">
+          <div id="device_suggestions" class="suggestion-list hidden"></div>
+        </div>
+        <input id="device_codes" type="hidden">
+        <div id="selected_devices" class="chip-list"></div>
       </div>
-      <div class="actions">
-        <button id="add-date-btn" class="secondary">添加日期</button>
-        <button id="clear-dates-btn" class="secondary">清空日期</button>
+
+      <div class="reserve-step soft-panel">
+        <div class="step-kicker">选时间</div>
+        <div class="section-head compact-head">
+          <div>
+            <label for="reservation_date">预约日期</label>
+          </div>
+        </div>
+        <div class="reserve-date-row">
+          <input id="reservation_date" type="date">
+          <button id="add-date-btn" class="secondary">添加日期</button>
+          <button id="clear-dates-btn" class="secondary">清空日期</button>
+        </div>
+        <div class="quick-date-actions actions">
+          <button type="button" class="secondary" data-quick-date="tomorrow">明天</button>
+          <button type="button" class="secondary" data-quick-date="afterTomorrow">后天</button>
+          <button type="button" class="secondary" data-quick-date="workweek">未来 5 个工作日</button>
+        </div>
+        <div id="selected_dates" class="chip-list"></div>
+
+        <div class="section-head compact-head">
+          <div>
+            <h3>选择预约时间段</h3>
+          </div>
+          <div class="actions">
+            <button id="select-all-slots-btn" class="secondary">选择全天四段</button>
+            <button id="clear-slots-btn" class="secondary">清空时间段</button>
+          </div>
+        </div>
+        <div id="slot_options" class="slot-grid"></div>
+        <div id="slot_preview"></div>
       </div>
-    </div>
-    <div id="selected_dates" class="chip-list"></div>
-    <div class="section-head">
-      <div>
-        <h3>选择预约时间段</h3>
-        <p class="muted">可选择一个或多个互不重叠的时间段；“选择全天四段”会选择上午、下午、傍晚和夜间。</p>
+
+      <div class="reserve-step soft-panel">
+        <div class="step-kicker">提交</div>
+        <div class="section-head compact-head">
+          <div>
+            <h3>确认并提交</h3>
+          </div>
+        </div>
+        <details class="advanced-reserve">
+          <summary>批量预约 / 多组预约</summary>
+          <div class="actions">
+            <button id="add-plan-btn" type="button" class="secondary">加入计划组后继续选择</button>
+            <button id="clear-plans-btn" type="button" class="secondary">清空计划组</button>
+          </div>
+          <div id="plan_groups" class="stack"></div>
+        </details>
+        <label for="purpose">使用目的</label>
+        <textarea id="purpose" rows="4" placeholder="请说明用途，方便管理员审核"></textarea>
+        <div class="actions reserve-submit-actions">
+          <button id="submit-btn" class="success">确认并提交预约</button>
+          <a href="index.html">返回设备列表</a>
+        </div>
       </div>
-      <div class="actions">
-        <button id="select-all-slots-btn" class="secondary">选择全天四段</button>
-        <button id="clear-slots-btn" class="secondary">清空时间段</button>
-      </div>
-    </div>
-    <div id="slot_options" class="slot-grid"></div>
-    <div id="slot_preview"></div>
-    <div class="actions">
-      <button id="add-plan-btn" class="secondary">添加为一组预约计划</button>
-      <button id="clear-plans-btn" class="secondary">清空计划组</button>
-    </div>
-    <div id="plan_groups" class="stack"></div>
-    <label for="purpose">使用目的</label>
-    <textarea id="purpose" rows="4" placeholder="请说明用途，方便管理员审核"></textarea>
-    <div class="actions">
-      <button id="submit-btn">提交预约</button>
-      <a href="index.html">返回设备列表</a>
     </div>
   </section>
 </main>
 
 <script src="js/config.js"></script>
-<script src="js/api.js?v=20260629b"></script>
-<script src="js/ui.js"></script>
-<script src="js/reservation-slots.js?v=20260629c"></script>
-<script src="js/common-header.js?v=20260629c"></script>
+<script src="js/api.js?v=20260702a"></script>
+<script src="js/ui.js?v=20260701e"></script>
+<script src="js/reservation-slots.js?v=20260703b"></script>
+<script src="js/common-header.js?v=20260703b"></script>
+<script src="js/page-shortcuts.js?v=20260701e"></script>
 <script>
 if (!requireLogin()) throw new Error('User login required');
 
@@ -82,6 +115,7 @@ let selectedDeviceCodes = new Set();
 let selectedDates = new Set();
 let reservationGroups = [];
 let slotPresets = ReservationSlots.fallbackPresets;
+let submittingReservation = false;
 
 function dateText(date) {
   const copy = new Date(date);
@@ -90,12 +124,50 @@ function dateText(date) {
 }
 
 function setupDefaultDate() {
-  const today = new Date();
   const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
-  reservationDateInput.min = dateText(today);
+  reservationDateInput.min = dateText(tomorrow);
   reservationDateInput.value = dateText(tomorrow);
   selectedDates.add(dateText(tomorrow));
   renderSelectedDates();
+}
+
+function addDateIfAllowed(value) {
+  if (!value) return false;
+  if (value < reservationDateInput.min) {
+    showPageMessage('message', 'warn', '预约日期必须是明天或更晚日期。');
+    return false;
+  }
+  selectedDates.add(value);
+  renderSelectedDates();
+  updateSlotPreview();
+  return true;
+}
+
+function addQuickDates(type) {
+  const base = new Date();
+  const addOffsetDate = (offset) => {
+    const date = new Date(base);
+    date.setDate(base.getDate() + offset);
+    selectedDates.add(dateText(date));
+  };
+  if (type === 'tomorrow') addOffsetDate(1);
+  if (type === 'afterTomorrow') addOffsetDate(2);
+  if (type === 'workweek') {
+    let offset = 1;
+    let added = 0;
+    while (added < 5 && offset < 14) {
+      const date = new Date(base);
+      date.setDate(base.getDate() + offset);
+      const day = date.getDay();
+      if (day !== 0 && day !== 6) {
+        selectedDates.add(dateText(date));
+        added += 1;
+      }
+      offset += 1;
+    }
+  }
+  renderSelectedDates();
+  updateSlotPreview();
 }
 
 function isReservableDevice(device) {
@@ -200,7 +272,7 @@ function updateSlotPreview() {
     <div class="soft-panel">
       <div class="metric-label">${escapeHtml(date)}</div>
       ${results[index].valid
-        ? `<div class="slot-preview">${results[index].ranges.map((range) => `<span class="badge info">${escapeHtml(range.label)}：${escapeHtml(range.start)} - ${escapeHtml(range.end)}</span>`).join('')}</div>`
+        ? `<div class="slot-preview">${results[index].ranges.map((range) => `<span class="slot-time-badge slot-${escapeHtml(range.key)}">${escapeHtml(range.label)}：${escapeHtml(range.start)} - ${escapeHtml(range.end)}</span>`).join('')}</div>`
         : '<div class="alert warn">请选择互不重叠的预约时间段。</div>'}
     </div>
   `).join('');
@@ -218,7 +290,10 @@ async function refreshSlotOptions() {
   const result = await callRestApi(`/reservation-slots?device_codes=${encodeURIComponent([...selectedDeviceCodes].join(','))}`);
   slotPresets = result.presets || ReservationSlots.fallbackPresets;
   const allowedKeys = slotPresets.map((slot) => slot.key);
-  ReservationSlots.renderCheckboxes(slotOptionsEl, slotPresets, previousKeys.filter((key) => allowedKeys.includes(key)), { name: 'reserve_slot_keys' });
+  const nextKeys = previousKeys.length
+    ? previousKeys.filter((key) => allowedKeys.includes(key))
+    : allowedKeys.slice(0, 1);
+  ReservationSlots.renderCheckboxes(slotOptionsEl, slotPresets, nextKeys, { name: 'reserve_slot_keys' });
   bindSlotEvents();
   updateSlotPreview();
 }
@@ -279,8 +354,38 @@ function addCurrentPlan() {
   showPageMessage(messageEl, 'success', '已加入一组预约计划，可继续选择其他设备和日期。');
 }
 
+function renderPrecheckConflicts(conflicts = []) {
+  if (!conflicts.length) return '';
+  return `
+    <div class="alert warn">
+      <strong>提交前发现 ${conflicts.length} 个问题：</strong>
+      <ul class="conflict-list">
+        ${conflicts.map((item) => `
+          <li>
+            ${escapeHtml(item.reason || '该预约计划暂不可提交。')}
+            ${item.start_time ? `<br><span class="muted">${escapeHtml(fmtTime(item.start_time))} - ${escapeHtml(fmtTime(item.end_time))}</span>` : ''}
+            ${item.conflict_start_time ? `<br><span class="muted">冲突记录：${escapeHtml(fmtTime(item.conflict_start_time))} - ${escapeHtml(fmtTime(item.conflict_end_time))} · ${escapeHtml(statusText(item.conflict_status))}</span>` : ''}
+          </li>
+        `).join('')}
+      </ul>
+    </div>
+  `;
+}
+
+async function precheckReservation(payload) {
+  const result = await callRestApi('/reservation-batches/precheck', { method: 'POST', body: payload });
+  if (!result.available) {
+    const conflicts = result.conflicts || [];
+    const messageEl = document.getElementById('message');
+    messageEl.innerHTML = renderPrecheckConflicts(conflicts);
+    return false;
+  }
+  return true;
+}
+
 async function submitReserve() {
   if (!requireLogin()) return;
+  if (submittingReservation) return;
   const messageEl = document.getElementById('message');
   messageEl.innerHTML = '';
 
@@ -295,15 +400,43 @@ async function submitReserve() {
     if (!preview.valid) return showPageMessage(messageEl, 'warn', '请选择互不重叠的预约时间段。');
   }
 
+  const firstGroup = groups[0] || {};
+  if (!groups.every((group) => group.device_codes?.length && group.reservation_dates?.length && group.slot_keys?.length)) {
+    return showPageMessage(messageEl, 'warn', '预约计划不完整，请检查设备、日期和时间段。');
+  }
+
   try {
-    const result = await callApi('createReservation', {
+    submittingReservation = true;
+    const submitButton = document.getElementById('submit-btn');
+    if (typeof setButtonBusy === 'function') setButtonBusy(submitButton, true, '检查中...');
+    else {
+      submitButton.disabled = true;
+      submitButton.textContent = '检查中...';
+    }
+    const payload = {
+      device_codes: firstGroup.device_codes || [],
+      reservation_dates: firstGroup.reservation_dates || [],
+      slot_keys: firstGroup.slot_keys || [],
       reservation_groups: groups,
       purpose: purpose.value.trim()
-    });
+    };
+    const precheckOk = await precheckReservation(payload);
+    if (!precheckOk) return;
+    if (typeof setButtonBusy === 'function') setButtonBusy(submitButton, true, '提交中...');
+    else submitButton.textContent = '提交中...';
+    const result = await callRestApi('/reservation-batches', { method: 'POST', body: payload });
     showPageMessage(messageEl, 'success', result.message || '预约已提交。');
-    setTimeout(() => { location.href = 'my.html'; }, 700);
+    setTimeout(() => { location.replace('my.html'); }, 700);
   } catch (error) {
     showPageMessage(messageEl, 'danger', error.message);
+  } finally {
+    submittingReservation = false;
+    const submitButton = document.getElementById('submit-btn');
+    if (typeof setButtonBusy === 'function') setButtonBusy(submitButton, false);
+    else {
+      submitButton.disabled = false;
+      submitButton.textContent = '提交预约';
+    }
   }
 }
 
@@ -315,9 +448,10 @@ document.addEventListener('click', (event) => {
 });
 reservationDateInput.addEventListener('change', updateSlotPreview);
 document.getElementById('add-date-btn').addEventListener('click', () => {
-  if (reservationDateInput.value) selectedDates.add(reservationDateInput.value);
-  renderSelectedDates();
-  updateSlotPreview();
+  addDateIfAllowed(reservationDateInput.value);
+});
+document.querySelectorAll('[data-quick-date]').forEach((button) => {
+  button.addEventListener('click', () => addQuickDates(button.dataset.quickDate));
 });
 document.getElementById('clear-dates-btn').addEventListener('click', () => {
   selectedDates.clear();

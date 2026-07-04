@@ -8,5 +8,8 @@ uploads/
 .vscode/
 *.log
 npm-debug.log*
+test-results/
+ERR
+$null
 Thumbs.db
 .DS_Store

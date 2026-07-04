@@ -33,25 +33,94 @@
     return presets.filter((preset) => preset.type === 'base').map((preset) => preset.key);
   }
 
+  function normalizeTimeText(value, fallback) {
+    const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?/);
+    if (!match) return fallback;
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+    if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return fallback;
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  }
+
+  function normalizePreset(preset = {}) {
+    const key = String(preset.key || preset.slot_key || '').trim();
+    const start = normalizeTimeText(preset.start || preset.start_time, '08:00');
+    const end = normalizeTimeText(preset.end || preset.end_time, '12:00');
+    return {
+      ...preset,
+      key,
+      label: String(preset.label || key).trim(),
+      start,
+      end,
+      crosses_midnight: preset.crosses_midnight === true || preset.crosses_day === true || end <= start,
+      type: preset.type || 'base'
+    };
+  }
+
+  function timeRangeText(preset = {}) {
+    const item = normalizePreset(preset);
+    return `${item.start}-${item.crosses_midnight ? '次日 ' : ''}${item.end}`;
+  }
+
+  function editablePresetsFrom(container, sourcePresets = []) {
+    const sourceMap = new Map(sourcePresets.map((preset) => [preset.key, preset]));
+    return [...container.querySelectorAll('.slot-edit-row')].map((row) => {
+      const key = row.dataset.slotKey;
+      const source = sourceMap.get(key) || {};
+      const label = row.querySelector('[data-slot-field="label"]')?.value || source.label || key;
+      const start = row.querySelector('[data-slot-field="start"]')?.value || source.start || '08:00';
+      const end = row.querySelector('[data-slot-field="end"]')?.value || source.end || '12:00';
+      return normalizePreset({ ...source, key, label, start, end });
+    }).filter((slot) => slot.key);
+  }
+
+  function renderEditableCheckboxes(container, presets, checkedKeys = [], options = {}) {
+    const name = options.name || 'reservation_slot_keys';
+    if (!presets.length) {
+      container.innerHTML = '<div class="empty-state">当前设备没有可选预约时间段。</div>';
+      return;
+    }
+    container.innerHTML = presets.map((preset) => {
+      const item = normalizePreset(preset);
+      return `
+        <label class="slot-card slot-edit-row" data-slot-key="${escapeHtml(item.key)}">
+          <input type="checkbox" name="${escapeHtml(name)}" value="${escapeHtml(item.key)}" ${checkedKeys.includes(item.key) ? 'checked' : ''}>
+          <span>
+            <strong>${escapeHtml(item.label)}</strong>
+            <small>${escapeHtml(item.type === 'shortcut' ? '整段快捷选项' : '标准分段')} · ${escapeHtml(timeRangeText(item))}</small>
+            <input data-slot-field="label" value="${escapeHtml(item.label)}" placeholder="显示名称">
+            <span class="form-grid compact-slot-time-grid">
+              <input data-slot-field="start" type="time" value="${escapeHtml(item.start)}" aria-label="开始时间">
+              <input data-slot-field="end" type="time" value="${escapeHtml(item.end)}" aria-label="结束时间">
+            </span>
+          </span>
+        </label>
+      `;
+    }).join('');
+  }
+
   function renderCheckboxes(container, presets, checkedKeys = [], options = {}) {
     const name = options.name || 'reservation_slot_keys';
     if (!presets.length) {
       container.innerHTML = '<div class="empty-state">当前设备没有可选预约时间段。</div>';
       return;
     }
-    container.innerHTML = presets.map((preset) => `
-      <label class="slot-card">
-        <input type="checkbox" name="${escapeHtml(name)}" value="${escapeHtml(preset.key)}" ${checkedKeys.includes(preset.key) ? 'checked' : ''}>
+    container.innerHTML = presets.map((preset) => {
+      const item = normalizePreset(preset);
+      return `
+      <label class="slot-card slot-${escapeHtml(item.key)} ${item.type === 'shortcut' ? 'slot-shortcut' : 'slot-base'}">
+        <input type="checkbox" name="${escapeHtml(name)}" value="${escapeHtml(item.key)}" ${checkedKeys.includes(item.key) ? 'checked' : ''}>
         <span>
-          <strong>${escapeHtml(preset.label)}</strong>
-          <small>${escapeHtml(preset.type === 'shortcut' ? '整段快捷选项' : '标准分段')}</small>
+          <strong>${escapeHtml(item.label)}</strong>
+          <small>${escapeHtml(item.type === 'shortcut' ? '整段快捷选项' : '标准分段')} · ${escapeHtml(timeRangeText(item))}</small>
         </span>
       </label>
-    `).join('');
+    `;
+    }).join('');
   }
 
   function buildRanges(dateText, keys, presets) {
-    const presetMap = new Map(presets.map((preset) => [preset.key, preset]));
+    const presetMap = new Map(presets.map(normalizePreset).map((preset) => [preset.key, preset]));
     return keys.map((key) => presetMap.get(key)).filter(Boolean).map((preset) => toRange(dateText, preset));
   }
 
@@ -78,7 +147,7 @@
     }
     container.innerHTML = `
       <div class="slot-preview">
-        ${ranges.map((range) => `<span class="badge info">${escapeHtml(range.label)}：${escapeHtml(range.start)} - ${escapeHtml(range.end)}</span>`).join('')}
+        ${ranges.map((range) => `<span class="slot-time-badge slot-${escapeHtml(range.key)}">${escapeHtml(range.label)}：${escapeHtml(range.start)} - ${escapeHtml(range.end)}</span>`).join('')}
       </div>
     `;
     return { valid: true, ranges };
@@ -89,9 +158,13 @@
     addDays,
     baseKeys,
     buildRanges,
+    editablePresetsFrom,
     findOverlap,
+    normalizePreset,
     renderCheckboxes,
+    renderEditableCheckboxes,
     renderPreview,
-    selectedKeys
+    selectedKeys,
+    timeRangeText
   };
 })(window);

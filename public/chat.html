@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>聊天</title>
+  <link rel="stylesheet" href="css/style.css?v=20260702a">
+  <link rel="stylesheet" href="css/formal.css?v=20260702b">
+</head>
+<body>
+<main class="chat-main">
+  <section class="hero chat-hero">
+    <div>
+      <h2>聊天</h2>
+    </div>
+    <div class="hero-actions">
+      <span id="chat-realtime-status" class="badge info">连接中</span>
+    </div>
+  </section>
+
+  <section id="chat-message"></section>
+
+  <section class="chat-layout">
+    <aside class="card chat-sidebar">
+      <div class="section-head">
+        <div>
+          <h3>会话</h3>
+        </div>
+        <button id="reload-chat-btn" class="secondary">刷新</button>
+      </div>
+      <div id="conversation-list" class="conversation-list"></div>
+
+      <details class="chat-create-panel">
+        <summary>发起聊天</summary>
+        <label for="direct-user">一对一聊天</label>
+        <select id="direct-user"><option value="">选择联系人</option></select>
+        <div class="actions"><button id="start-direct-chat-btn">发起私聊</button></div>
+
+        <label for="group-title">群聊名称</label>
+        <input id="group-title" maxlength="120" placeholder="可不填，默认自动生成">
+        <div class="section-head compact-head">
+          <div>
+            <label>群聊成员</label>
+          </div>
+          <button id="clear-group-selection-btn" type="button" class="secondary">清空</button>
+        </div>
+        <input id="group-user-filter" placeholder="搜索姓名、电话或学号">
+        <div id="group-user-picker" class="chat-user-picker"></div>
+        <div id="group-selected-users" class="selected-user-chips"></div>
+        <div class="actions"><button id="start-group-chat-btn" class="secondary">发起群聊</button></div>
+      </details>
+    </aside>
+
+    <section class="card chat-panel">
+      <div class="section-head">
+        <div>
+          <h3 id="chat-title">请选择会话</h3>
+          <p id="chat-subtitle" class="muted"></p>
+        </div>
+        <div id="group-actions" class="actions chat-group-actions hidden">
+          <button id="toggle-members-drawer-btn" class="secondary" type="button">群信息</button>
+          <button id="leave-group-btn" class="secondary">退出群聊</button>
+          <button id="dissolve-group-btn" class="danger">解散群聊</button>
+        </div>
+      </div>
+      <div id="group-announcement" class="group-announcement hidden"></div>
+      <div id="chat-context-panel" class="chat-context-panel hidden"></div>
+      <div class="actions chat-history-actions">
+        <button id="load-older-messages-btn" type="button" class="secondary hidden">加载更早消息</button>
+      </div>
+      <div id="message-list" class="message-list"></div>
+      <div id="mention-panel" class="mention-panel hidden"></div>
+      <div class="chat-composer">
+        <div class="chat-composer-tools">
+          <button id="attach-image-btn" type="button" class="secondary">图片</button>
+          <input id="chat-image-input" class="hidden" type="file" accept="image/*">
+        </div>
+        <textarea id="message-content" rows="3" placeholder="输入消息内容"></textarea>
+        <button id="send-message-btn">发送</button>
+      </div>
+    </section>
+
+    <div id="chat-members-overlay" class="chat-members-overlay hidden"></div>
+    <aside class="card chat-members chat-members-drawer hidden" aria-label="群信息与成员">
+      <div class="section-head">
+        <div>
+          <h3>群信息</h3>
+        </div>
+        <button id="close-members-drawer-btn" type="button" class="secondary">关闭</button>
+      </div>
+      <div id="member-tool-actions" class="member-tool-actions hidden">
+        <button id="toggle-add-members-btn" type="button" class="secondary">添加成员</button>
+        <button id="toggle-member-actions-btn" type="button" class="secondary">成员操作</button>
+      </div>
+      <div id="add-members-panel" class="chat-add-members hidden">
+        <label>添加成员</label>
+        <input id="add-member-filter" placeholder="搜索联系人">
+        <div id="add-member-picker" class="chat-user-picker compact"></div>
+        <div class="actions"><button id="confirm-add-members-btn" class="secondary">确认添加</button></div>
+      </div>
+      <div id="member-actions-panel" class="chat-member-actions-panel hidden">
+        <div id="selected-member-info" class="selected-member-info">选择右侧成员后操作。</div>
+        <div class="actions">
+          <button id="member-direct-btn" type="button" class="secondary">私聊</button>
+          <button id="member-kick-btn" type="button" class="danger">踢出</button>
+        </div>
+      </div>
+      <div id="member-list" class="member-list"></div>
+    </aside>
+  </section>
+</main>
+
+<script src="js/config.js"></script>
+<script src="js/api.js?v=20260702b"></script>
+<script src="js/ui.js?v=20260701f"></script>
+<script src="js/common-header.js?v=20260703b"></script>
+<script src="js/page-shortcuts.js?v=20260701f"></script>
+  <script src="js/chat.js?v=20260702c"></script>
+</body>
+</html>

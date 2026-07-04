@@ -4,19 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>管理后台</title>
-  <link rel="stylesheet" href="css/style.css?v=20260629c">
+  <link rel="stylesheet" href="css/style.css?v=20260702b">
+  <link rel="stylesheet" href="css/formal.css?v=20260702b">
 </head>
-<body>
-<main>
-  <section class="hero">
-    <h2>管理后台</h2>
-    <p class="muted">统一处理设备、用户审核、预约审批、公众号配置、系统提醒和运营数据。页面保持轻柔清晰，方便在 VPS 上长期维护。</p>
-    <div class="hero-meta">
-      <span class="badge warn">后台工作台</span>
-      <span class="badge info">审核、排错、统计、安全</span>
-    </div>
-  </section>
-
+<body class="admin-page">
+<main class="admin-main">
   <section class="card" id="login-box">
     <div id="login-message"></div>
     <label for="adminPwd">管理员密码</label>
@@ -27,38 +19,49 @@
   </section>
 
   <section id="admin-box" class="hidden">
-    <section id="admin-summary" class="kpi"></section>
-
     <div class="admin-layout">
       <aside class="admin-sidebar card">
         <div class="tabs tabs-vertical">
-          <button data-tab="devices">设备管理</button>
-          <button data-tab="users">用户审核</button>
-          <button data-tab="reservations">预约审核</button>
-          <button data-tab="security">系统配置</button>
-          <button data-tab="roles">管理员权限</button>
-          <button data-tab="faults">故障报备</button>
-          <a class="tab-link" href="calendar.html?admin=1">使用日历</a>
-          <button data-tab="stats">统计导出</button>
-          <button data-tab="user-info">用户信息</button>
-          <button data-tab="notice">注意事项</button>
+          <div class="nav-group-title">后台模块</div>
         </div>
       </aside>
 
       <div class="admin-content">
+        <section id="tab_overview" class="card hidden">
+          <div class="section-head">
+            <div>
+              <h3>后台总览</h3>
+            </div>
+            <button id="reload-overview-btn" class="secondary">刷新总览</button>
+          </div>
+          <div id="overviewBox"></div>
+        </section>
+
+        <section id="tab_analytics" class="card hidden">
+          <div class="section-head">
+            <div>
+              <h3>数据分析</h3>
+            </div>
+            <div class="actions">
+              <select id="analytics_range">
+                <option value="7d">近 7 天</option>
+                <option value="30d" selected>近 30 天</option>
+              </select>
+              <button id="reload-analytics-btn" class="secondary">刷新分析</button>
+            </div>
+          </div>
+          <div id="analyticsBox"></div>
+        </section>
+
         <section id="tab_devices" class="card hidden">
           <div class="section-head">
             <div>
               <h3>新增设备</h3>
-              <p class="muted">完善设备资料后，用户可在列表、详情和预约页面看到统一信息。</p>
             </div>
           </div>
           <div class="form-grid">
             <div><label for="device_code">设备编号</label><input id="device_code"></div>
             <div><label for="device_name">设备名称</label><input id="device_name"></div>
-            <div><label for="category">类别</label><input id="category"></div>
-            <div><label for="location">位置</label><input id="location"></div>
-            <div><label for="manager">负责人</label><input id="manager"></div>
             <div>
               <label for="status">状态</label>
               <select id="status">
@@ -68,17 +71,24 @@
               </select>
             </div>
           </div>
-          <label for="description">设备说明</label>
-          <textarea id="description"></textarea>
-          <label for="usage_notice">使用说明 / 注意事项</label>
-          <textarea id="usage_notice"></textarea>
+          <details class="optional-device-fields">
+            <summary>可选设备资料模板</summary>
+            <div class="form-grid">
+              <div><label for="category">类别</label><input id="category"></div>
+              <div><label for="location">位置</label><input id="location"></div>
+              <div><label for="manager">负责人</label><input id="manager"></div>
+            </div>
+            <label for="description">设备说明</label>
+            <textarea id="description"></textarea>
+            <label for="usage_notice">使用说明 / 注意事项</label>
+            <textarea id="usage_notice"></textarea>
+          </details>
           <label for="require_return_photo">结束使用是否必须上传图片</label>
           <select id="require_return_photo"><option value="1">必须上传</option><option value="0">不强制</option></select>
           <div class="soft-panel settings-group">
             <div class="section-head">
               <div>
                 <h3>允许预约时间段</h3>
-                <p class="muted">用户预约该设备时，只能选择这里勾选的时间段。全选默认选择互不重叠的四个标准分段。</p>
               </div>
               <div class="actions">
                 <button id="select-device-slots-btn" class="secondary">选择全天四段</button>
@@ -89,7 +99,10 @@
           </div>
           <label for="cover_photo">设备照片</label>
           <input id="cover_photo" type="file" accept="image/*">
-          <div class="actions"><button id="create-device-btn">添加设备</button></div>
+          <div class="actions">
+            <button id="create-device-btn">添加设备</button>
+            <button id="cancel-device-edit-btn" class="secondary hidden" type="button">取消编辑</button>
+          </div>
           <div id="deviceList"></div>
         </section>
 
@@ -97,7 +110,6 @@
           <div class="section-head">
             <div>
               <h3>用户审核与微信绑定</h3>
-              <p class="muted">支持查看注册用户信息、批量勾选、全选/取消全选以及删除用户，便于处理异常账号。</p>
             </div>
           </div>
           <div class="actions" style="margin-bottom: 12px;">
@@ -111,8 +123,8 @@
           <div class="section-head">
             <div>
               <h3>预约审核</h3>
-              <p class="muted">审核通过后，用户才能在预约时间附近开始使用设备。</p>
             </div>
+            <button id="reload-reservations-btn" class="secondary">刷新预约</button>
           </div>
           <div id="reservationList"></div>
         </section>
@@ -121,7 +133,6 @@
           <div class="section-head">
             <div>
               <h3>系统配置</h3>
-              <p class="muted">这里的设置保存后即时生效，包括公众号、管理员密码、预约信息可见性、登录提醒。</p>
             </div>
           </div>
           <div class="settings-sections settings-grid-two">
@@ -143,6 +154,10 @@
                 <div>
                   <label for="enable_image_captcha">图形验证码</label>
                   <select id="enable_image_captcha"><option value="0">关闭</option><option value="1">开启</option></select>
+                </div>
+                <div>
+                  <label for="block_ip_access_enabled">禁止 IP 直连注册/浏览</label>
+                  <select id="block_ip_access_enabled"><option value="0">关闭</option><option value="1">开启</option></select>
                 </div>
                 <div>
                   <label for="admin_report_enabled">日报推送</label>
@@ -227,10 +242,19 @@
           <div class="section-head">
             <div>
               <h3>使用统计与导出</h3>
-              <p class="muted">可按用户、设备、时间筛选，用于验收、复盘和留档。</p>
             </div>
           </div>
           <div class="toolbar">
+            <div>
+              <label for="export_type">导出类型</label>
+              <select id="export_type">
+                <option value="usage">使用记录</option>
+                <option value="reservations">预约记录</option>
+                <option value="faults">故障记录</option>
+                <option value="user_activity">用户活跃记录</option>
+                <option value="device_summary">设备使用汇总</option>
+              </select>
+            </div>
             <div><label for="stat_user">用户</label><select id="stat_user"><option value="">全部用户</option></select></div>
             <div><label for="stat_device">设备</label><select id="stat_device"><option value="">全部设备</option></select></div>
             <div><label for="stat_start">开始日期</label><input id="stat_start" type="date"></div>
@@ -239,15 +263,43 @@
           <div class="actions">
             <button id="stats-btn">查询统计</button>
             <button id="export-btn" class="secondary">导出 CSV</button>
+            <button id="export-excel-btn" class="secondary">导出 Excel</button>
+            <button id="export-job-btn" class="secondary">加入导出队列</button>
+            <button id="run-export-job-btn" class="secondary">处理下一个任务</button>
           </div>
           <div id="statsBox"></div>
+          <div id="exportJobList" class="soft-panel hidden"></div>
+
+          <hr class="section-divider">
+
+          <div class="section-head">
+            <div>
+              <h3>注意事项</h3>
+            </div>
+          </div>
+          <div class="form-grid">
+            <div>
+              <label for="system_notice_enabled">登录注意事项弹窗</label>
+              <select id="system_notice_enabled"><option value="1">开启</option><option value="0">关闭</option></select>
+            </div>
+            <div>
+              <label for="system_notice_title">注意事项标题</label>
+              <input id="system_notice_title" maxlength="120" placeholder="例如：设备使用注意事项">
+            </div>
+            <div>
+              <label for="system_notice_content">注意事项内容</label>
+              <textarea id="system_notice_content" rows="5" placeholder="用户登录时会自动弹出，确认或 10 秒后自动进入系统。"></textarea>
+            </div>
+          </div>
+          <div class="actions">
+            <button id="save-notice-btn">保存注意事项</button>
+          </div>
         </section>
 
         <section id="tab_user-info" class="card hidden">
           <div class="section-head">
             <div>
               <h3>用户信息</h3>
-              <p class="muted">控制登录后弹窗提示和预约信息可见性，方便管理显示内容。</p>
             </div>
           </div>
           <div class="form-grid">
@@ -264,42 +316,20 @@
               <select id="public_show_reserver_student_no"><option value="1">显示</option><option value="0">隐藏</option></select>
             </div>
           </div>
-          <div class="soft-panel">
-            <div class="metric-label">说明</div>
-            <p class="muted">开启后，前台预约详情会显示对应信息；关闭后将隐藏，以减少非必要信息暴露。</p>
-          </div>
           <div class="actions">
             <button id="save-user-info-btn">保存用户信息设置</button>
           </div>
         </section>
 
-        <section id="tab_notice" class="card hidden">
+        <section id="tab_contacts" class="card hidden">
           <div class="section-head">
             <div>
-              <h3>注意事项</h3>
-              <p class="muted">设置登录后弹出的提示内容，提醒用户按规范使用设备并完成归还。</p>
+              <h3>工作人员联系方式</h3>
             </div>
           </div>
-          <div class="form-grid">
-            <div>
-              <label for="system_notice_enabled">登录注意事项弹窗</label>
-              <select id="system_notice_enabled"><option value="1">开启</option><option value="0">关闭</option></select>
-            </div>
-            <div>
-              <label for="system_notice_title">注意事项标题</label>
-              <input id="system_notice_title" maxlength="120" placeholder="例如：设备使用注意事项">
-            </div>
-            <div>
-              <label for="system_notice_content">注意事项内容</label>
-              <textarea id="system_notice_content" rows="5" placeholder="用户登录后会自动弹出，需自行关闭。"></textarea>
-            </div>
-          </div>
-          <div class="soft-panel">
-            <div class="metric-label">使用提示</div>
-            <p class="muted">建议写清楚预约时间、设备状态检查、归还确认和异常上报等规则，避免用户误操作。</p>
-          </div>
+          <div id="staffContactEditor" class="staff-contact-admin-grid"></div>
           <div class="actions">
-            <button id="save-notice-btn">保存注意事项</button>
+            <button id="save-contacts-btn">保存联系方式</button>
           </div>
         </section>
 
@@ -307,7 +337,6 @@
           <div class="section-head">
             <div>
               <h3>管理员与权限</h3>
-              <p class="muted">可为多个管理员分配不同角色和权限，支持扩展超级管理员、运营和审计等职责。</p>
             </div>
           </div>
           <div class="form-grid">
@@ -317,18 +346,27 @@
                 <option value="">请选择用户</option>
               </select>
             </div>
-            <div>
-              <label for="role_key">角色</label>
-              <select id="role_key">
-                <option value="admin">admin</option>
-                <option value="ops">ops</option>
-                <option value="auditor">auditor</option>
-                <option value="super_admin">super_admin</option>
-              </select>
+            <div class="permission-template-editor">
+              <label>权限模板</label>
+              <input type="hidden" id="role_key" value="admin">
+              <div id="role-template-buttons" class="role-template-grid">
+                <button type="button" class="role-template-button active" data-role-key="admin">
+                  <strong>管理员</strong><em>admin</em><span>设备、预约、用户、统计</span>
+                </button>
+                <button type="button" class="role-template-button" data-role-key="ops">
+                  <strong>运营维护</strong><em>ops</em><span>设备、预约、故障处理</span>
+                </button>
+                <button type="button" class="role-template-button" data-role-key="auditor">
+                  <strong>审计查看</strong><em>auditor</em><span>查看预约、设备和导出统计</span>
+                </button>
+                <button type="button" class="role-template-button" data-role-key="super_admin">
+                  <strong>超级管理员</strong><em>super_admin</em><span>全部权限</span>
+                </button>
+              </div>
             </div>
-            <div>
+            <div class="permission-editor">
               <label>权限</label>
-              <div id="role_permissions_picker" class="permission-grid"></div>
+              <div id="role_permissions_picker" class="permission-grid permission-grid-wide"></div>
             </div>
             <div><label for="role_note">备注</label><input id="role_note" placeholder="可选"></div>
           </div>
@@ -344,11 +382,71 @@
           <div class="section-head">
             <div>
               <h3>故障报备</h3>
-              <p class="muted">用户在使用中上报后，设备会自动进入异常待处理状态。可在这里查看详情并处理。</p>
             </div>
             <button id="reload-faults-btn" class="secondary">刷新故障列表</button>
           </div>
+          <div class="toolbar">
+            <div>
+              <label for="fault_status_filter">故障状态</label>
+              <select id="fault_status_filter">
+                <option value="">全部状态</option>
+                <option value="pending">待处理</option>
+                <option value="processing">处理中</option>
+                <option value="resolved">已解决</option>
+              </select>
+            </div>
+          </div>
           <div id="faultReportList"></div>
+        </section>
+
+        <section id="tab_requests" class="card hidden">
+          <div class="section-head">
+            <div>
+              <h3>需求上报</h3>
+            </div>
+            <button id="reload-requests-btn" class="secondary">刷新需求</button>
+          </div>
+          <div class="toolbar">
+            <div>
+              <label for="request_status_filter">需求状态</label>
+              <select id="request_status_filter">
+                <option value="">全部状态</option>
+                <option value="pending">待确认</option>
+                <option value="confirmed">已确认</option>
+                <option value="change_requested">修改申请</option>
+                <option value="rejected">已驳回</option>
+                <option value="closed">已关闭</option>
+                <option value="cancelled">已撤回</option>
+              </select>
+            </div>
+          </div>
+          <div id="userRequestList"></div>
+        </section>
+
+        <section id="tab_logs" class="card hidden">
+          <div class="section-head">
+            <div>
+              <h3>操作日志</h3>
+            </div>
+            <button id="reload-logs-btn" class="secondary">刷新日志</button>
+          </div>
+          <div class="toolbar">
+            <div class="form-grid">
+              <div>
+                <label for="log_operator_filter">筛选操作人</label>
+                <input id="log_operator_filter" placeholder="输入姓名、账号或手机号">
+              </div>
+              <div>
+                <label for="log_start_filter">开始日期</label>
+                <input id="log_start_filter" type="date">
+              </div>
+              <div>
+                <label for="log_end_filter">结束日期</label>
+                <input id="log_end_filter" type="date">
+              </div>
+            </div>
+          </div>
+          <div id="operationLogList"></div>
         </section>
       </div>
     </div>
@@ -356,9 +454,16 @@
 </main>
 
 <script src="js/config.js?v=20260625b"></script>
-<script src="js/api.js?v=20260629b"></script>
-<script src="js/ui.js?v=20260625b"></script>
-<script src="js/reservation-slots.js?v=20260629c"></script>
-<script src="js/admin.js?v=20260629c"></script>
+<script src="js/api.js?v=20260702a"></script>
+<script src="js/ui.js?v=20260701e"></script>
+<script src="js/drawer.js?v=20260703a"></script>
+<script src="js/reservation-slots.js?v=20260703b"></script>
+<script src="js/common-header.js?v=20260703b"></script>
+<script src="js/page-shortcuts.js?v=20260701e"></script>
+<script src="js/admin-workbench.js?v=20260702c"></script>
+<script src="js/admin-business.js?v=20260703b"></script>
+<script src="js/admin-system.js?v=20260702c"></script>
+<script src="js/admin-ops.js?v=20260630a"></script>
+<script src="js/admin.js?v=20260703b"></script>
 </body>
 </html>

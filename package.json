@@ -8,18 +8,29 @@
     "dev": "node server.js",
     "build": "node -e \"console.log('No build step required')\"",
     "db:setup-local": "powershell -ExecutionPolicy Bypass -File scripts/setup-local-db.ps1",
+    "db:migrate": "node scripts/migrate-db.js",
+    "db:upgrade-schema": "node scripts/upgrade-schema.js",
+    "db:reset-schema": "node scripts/reset-schema.js",
+    "db:prepare-demo": "node scripts/prepare-demo-db.js",
     "db:seed-local": "node scripts/seed-local-db.js",
-    "check": "node --check server.js && node --check src/app/create-app.js && node --check src/config/env.js && node --check src/routes/health.js && node --check src/routes/upload.js && node --check src/routes/wechat.js && node --check src/routes/rest-api.js && node --check src/routes/legacy-api.js && node --check src/lib/wechat-xml.js && node --check src/services/create-rental-service.js && node --check src/tasks/daily-report-scheduler.js && node --check public/js/admin.js && node --check public/js/common-header.js && node --check public/js/reservation-slots.js && node --check public/js/calendar-ui.js && node --check scripts/seed-local-db.js && node --check scripts/check-mojibake.js && node scripts/check-inline-scripts.js && node scripts/check-mojibake.js",
-    "smoke": "node scripts/smoke-test.js"
+    "db:seed-demo": "node scripts/seed-demo-data.js",
+    "admin:reset-password": "node scripts/reset-admin-password.js",
+    "demo:reset": "node scripts/prepare-demo-db.js && node scripts/seed-demo-data.js",
+    "doctor": "node scripts/doctor.js",
+    "check": "node scripts/check-syntax.js && node scripts/check-inline-scripts.js && node scripts/check-mojibake.js",
+    "smoke": "node scripts/smoke-test.js",
+    "exports:run": "node scripts/run-export-jobs.js",
+    "e2e": "playwright test"
   },
   "dependencies": {
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "multer": "^1.4.5-lts.1",
-    "pg": "^8.13.0"
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "multer": "^2.2.0",
+    "pg": "^8.22.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "esbuild": "^0.28.1"
   }
 }
