@@ -1,36 +1,50 @@
 {
-  "name": "idbs",
-  "private": true,
-  "version": "1.0.0",
-  "type": "commonjs",
-  "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js",
-    "build": "node -e \"console.log('No build step required')\"",
-    "db:setup-local": "powershell -ExecutionPolicy Bypass -File scripts/setup-local-db.ps1",
-    "db:migrate": "node scripts/migrate-db.js",
-    "db:upgrade-schema": "node scripts/upgrade-schema.js",
-    "db:reset-schema": "node scripts/reset-schema.js",
-    "db:prepare-demo": "node scripts/prepare-demo-db.js",
-    "db:seed-local": "node scripts/seed-local-db.js",
-    "db:seed-demo": "node scripts/seed-demo-data.js",
-    "admin:reset-password": "node scripts/reset-admin-password.js",
-    "demo:reset": "node scripts/prepare-demo-db.js && node scripts/seed-demo-data.js",
-    "doctor": "node scripts/doctor.js",
-    "check": "node scripts/check-syntax.js && node scripts/check-inline-scripts.js && node scripts/check-mojibake.js",
-    "smoke": "node scripts/smoke-test.js",
-    "exports:run": "node scripts/run-export-jobs.js",
-    "e2e": "playwright test"
-  },
-  "dependencies": {
-    "cors": "^2.8.6",
-    "dotenv": "^17.4.2",
-    "express": "^5.2.1",
-    "multer": "^2.2.0",
-    "pg": "^8.22.0"
-  },
-  "devDependencies": {
-    "@playwright/test": "^1.61.1",
-    "esbuild": "^0.28.1"
-  }
+    "name":  "idbs",
+    "private":  true,
+    "version":  "5.0.0",
+    "type":  "commonjs",
+    "scripts":  {
+                    "start":  "node server.js",
+                    "dev":  "node server.js",
+                    "build":  "npm run v5:build",
+                    "v5:build":  "cd web \u0026\u0026 npm run build",
+                    "v5:typecheck":  "cd web \u0026\u0026 npm run typecheck",
+                    "v5:selftest":  "node scripts/v5-selftest.js \u0026\u0026 node scripts/v5-entry-selftest.js \u0026\u0026 node scripts/v5-return-archive-selftest.js",
+                    "db:setup-local":  "powershell -ExecutionPolicy Bypass -File scripts/setup-local-db.ps1",
+                    "db:migrate":  "node scripts/migrate-db.js",
+                    "db:migrate-2-to-3":  "node scripts/migrate-2-to-3.js --check",
+                    "db:migrate-2-to-3:export":  "node scripts/migrate-2-to-3.js --export",
+                    "db:migrate-2-to-3:import":  "node scripts/migrate-2-to-3.js --import",
+                    "db:upgrade-schema":  "node scripts/upgrade-schema.js",
+                    "db:reset-schema":  "node scripts/reset-schema.js",
+                    "db:prepare-demo":  "node scripts/prepare-demo-db.js",
+                    "db:seed-local":  "node scripts/seed-local-db.js",
+                    "db:seed-demo":  "node scripts/seed-demo-data.js",
+                    "admin:reset-password":  "node scripts/reset-admin-password.js",
+                    "demo:reset":  "node scripts/prepare-demo-db.js \u0026\u0026 node scripts/seed-demo-data.js",
+                    "doctor":  "node scripts/doctor.js",
+                    "check":  "node scripts/check-syntax.js \u0026\u0026 node scripts/check-inline-scripts.js \u0026\u0026 node scripts/check-mojibake.js \u0026\u0026 node scripts/check-v5-api-contract.js",
+                    "unit":  "node scripts/run-unit-tests.js",
+                    "smoke":  "node scripts/smoke-test.js",
+                    "exports:run":  "node scripts/run-export-jobs.js",
+                    "e2e":  "playwright test",
+                    "db:transfer-owner":  "node scripts/transfer-public-owner.js",
+                    "v5:permission-audit":  "node scripts/v5-permission-matrix-audit.js",
+                    "v5:click-audit":  "node scripts/v5-click-audit.js",
+                    "v5:quality":  "npm run check \u0026\u0026 npm run unit \u0026\u0026 npm run v5:typecheck \u0026\u0026 npm run v5:build \u0026\u0026 npm run v5:selftest \u0026\u0026 npm run v5:permission-audit \u0026\u0026 npm run v5:click-audit",
+                    "e2e:isolated":  "node scripts/run-isolated-e2e.js"
+                },
+    "dependencies":  {
+                         "cors":  "^2.8.6",
+                         "dotenv":  "^17.4.2",
+                         "express":  "^5.2.1",
+                         "multer":  "^2.2.0",
+                         "pg":  "^8.22.0",
+                         "ws":  "^8.18.0",
+                         "zod":  "^3.24.1"
+                     },
+    "devDependencies":  {
+                            "@playwright/test":  "^1.61.1",
+                            "esbuild":  "^0.28.1"
+                        }
 }

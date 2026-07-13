@@ -2,6 +2,6 @@
 
 Staged extraction from `create-rental-service.js`:
 
-- `chat-service.js`: chat users and conversations, participants and group management, message normalization/sending, SSE client registry and event publishing, management group bootstrap and cleanup.
+- `chat-service.js`: chat users and conversations, participants and group management, message normalization/sending, WebSocket/SSE event publishing, realtime principal resolution, management group bootstrap and cleanup.
 
-SSE state remains process-local inside `chat-service.js`. Multi-instance deployment still requires Redis Pub/Sub or database notifications.
+Realtime events are fanned out between instances through PostgreSQL `LISTEN/NOTIFY`; SSE remains only as a transition-compatible process-local endpoint.

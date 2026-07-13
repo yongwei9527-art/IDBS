@@ -1,4 +1,4 @@
-const { AppError } = require('../../../lib/app-error');
+﻿const { AppError } = require('../../../lib/app-error');
 
 function createWechatService(context = {}) {
   const {
@@ -53,7 +53,7 @@ function createWechatService(context = {}) {
     const clientKey = getClientKey(context);
     const now = Date.now();
     const recent = [...challengeStore.values()].filter((item) => item.client_key === clientKey && (now - item.created_at) < 60 * 60 * 1000);
-    if (recent.length >= config.captcha_hourly_limit) return fail('Too many challenge requests, please retry in one hour', 429, 2001);
+    if (recent.length >= config.captcha_hourly_limit) return fail('验证码请求过于频繁，请一小时后再试。', 429, 2001);
     let code = makeChallengeCode();
     while (challengeStore.has(code)) code = makeChallengeCode();
     challengeStore.set(code, { code, client_key: clientKey, created_at: now, expire_at: now + config.captcha_expire_minutes * 60 * 1000, ip: context.ip || '', user_agent: context.userAgent || '', openid: null, nickname: '', used_at: null });
@@ -64,10 +64,10 @@ function createWechatService(context = {}) {
     cleanupExpiredChallenges();
     const code = assertText(query.code || query.tempCode, 'code', 20);
     const challenge = challengeStore.get(code);
-    if (!challenge) return fail('Challenge code expired or invalid', 404, 3004);
+    if (!challenge) return fail('验证码已过期或不正确。', 404, 3004);
     if (challenge.expire_at <= Date.now()) {
       challengeStore.delete(code);
-      return fail('Challenge code expired or invalid', 404, 3004);
+      return fail('验证码已过期或不正确。', 404, 3004);
     }
     if (!challenge.openid) {
       return ok({ logged_in: false, need_bind: false, status: 'pending', expire_at: new Date(challenge.expire_at).toISOString() });
@@ -91,23 +91,23 @@ function createWechatService(context = {}) {
     const challenge = challengeStore.get(tempCode);
     if (!challenge || !challenge.openid || challenge.expire_at <= Date.now()) {
       if (challenge && challenge.expire_at <= Date.now()) challengeStore.delete(tempCode);
-      return fail('Challenge code expired or invalid', 400, 2001);
+      return fail('验证码已过期或不正确。', 400, 2001);
     }
     const config = await getSecurityConfig();
     const dayStart = new Date();
     dayStart.setHours(0, 0, 0, 0);
     const bindEvents = await query('select * from user_activity_logs where wechat_openid = $1 and event_type = $2 and created_at >= $3', [challenge.openid, 'wechat_bind', dayStart.toISOString()]);
     if ((bindEvents || []).length >= config.openid_daily_register_limit) {
-      return fail('This WeChat account has reached the daily binding limit', 429, 3001);
+      return fail('该微信账号今日绑定次数已达上限。', 429, 3001);
     }
     const existingByOpenId = await getUserByOpenId(challenge.openid);
     if (existingByOpenId) {
-      return fail('This WeChat account is already bound to another user', 409, 3001);
+      return fail('该微信账号已绑定其他用户。', 409, 3001);
     }
     let user = await queryOne('select * from users where name = $1 and student_no = $2 limit 1', [name, studentNo]);
     if (!user) {
       const phoneExists = await queryOne('select id from users where phone = $1 limit 1', [phone]);
-      if (phoneExists) return fail('Phone number already registered', 409, 3001);
+      if (phoneExists) return fail('手机号已注册。', 409, 3001);
       const salt = crypto.randomBytes(8).toString('hex');
       user = {
         id: uuid(),
@@ -132,11 +132,11 @@ function createWechatService(context = {}) {
       challenge.used_at = Date.now();
       challengeStore.delete(tempCode);
       await recordUserEvent({ user_id: user.id, user_name: user.name, phone: user.phone, wechat_openid: challenge.openid, event_type: 'register', device_type: context.deviceType || 'wechat', client_key: getClientKey(context), ip_address: context.ip || '', remark: `Registered and bound through challenge ${tempCode}` });
-      return ok({ message: 'Registered and bound successfully, waiting for administrator approval', need_review: true, user: safeUser(user) });
+      return ok({ message: '注册与绑定已完成，请等待管理员审核。', need_review: true, user: safeUser(user) });
     }
-    if (user.is_banned) return fail('This account has been banned', 403, 1003);
+    if (user.is_banned) return fail('该账号已被禁用。', 403, 1003);
     if (user.wechat_openid && user.wechat_openid !== challenge.openid) {
-      return fail('This account is already bound to another WeChat account', 409, 3001);
+      return fail('该账号已绑定其他微信。', 409, 3001);
     }
     await query('update users set wechat_openid = $1, wechat_nickname = $2, updated_at = $3 where id = $4', [challenge.openid, challenge.nickname || user.wechat_nickname || '', nowIso(), user.id]);
     challenge.used_at = Date.now();
@@ -144,7 +144,7 @@ function createWechatService(context = {}) {
     const boundUser = { ...user, wechat_openid: challenge.openid, wechat_nickname: challenge.nickname || user.wechat_nickname || '' };
     await recordUserEvent({ user_id: user.id, user_name: user.name, phone: user.phone, wechat_openid: challenge.openid, event_type: 'wechat_bind', device_type: context.deviceType || 'wechat', client_key: getClientKey(context), ip_address: context.ip || '', remark: `Bound through challenge ${tempCode}` });
     if (boundUser.status !== 'active') {
-      return ok({ message: 'WeChat bound successfully, waiting for administrator approval', need_review: true, user: safeUser(boundUser) });
+      return ok({ message: '微信绑定已完成，请等待管理员审核。', need_review: true, user: safeUser(boundUser) });
     }
     return finalizeUserLogin(boundUser, { ...context, remark: 'wechat_bind_and_login', deviceType: context.deviceType || 'wechat' });
   }
@@ -192,7 +192,7 @@ function createWechatService(context = {}) {
   async function verifyWechatHandshake(query = {}) {
     const { signature, timestamp, nonce, echostr } = query;
     if (!signature || !timestamp || !nonce || !(await verifyWechatSignature({ signature, timestamp, nonce }))) {
-      throw new AppError('Invalid WeChat signature', { status: 403, code: 1003 });
+      throw new AppError('微信签名校验失败。', { status: 403, code: 1003 });
     }
     return String(echostr || '');
   }
@@ -225,3 +225,5 @@ function createWechatService(context = {}) {
 }
 
 module.exports = { createWechatService };
+
+

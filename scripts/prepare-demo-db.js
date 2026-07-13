@@ -1,5 +1,6 @@
- const { Pool } = require('pg');
-require('dotenv').config();
+const { Pool } = require('pg');
+const { postgresSslOptions } = require('../src/lib/postgres-ssl');
+require('dotenv').config({ quiet: true });
 
 const connectionString = process.env.DATABASE_URL || '';
 
@@ -15,6 +16,7 @@ async function createDemoRelations(client) {
       crosses_day boolean not null default false,
       sort_order integer not null default 0,
       enabled boolean not null default true,
+      capacity integer not null default 1,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now(),
       unique(device_id, slot_key)
@@ -50,6 +52,9 @@ async function createDemoRelations(client) {
       approved_by uuid references users(id) on delete set null,
       approved_at timestamptz,
       reservation_id uuid references reservations(id) on delete set null,
+      created_by uuid references users(id) on delete set null,
+      updated_by uuid references users(id) on delete set null,
+      deleted_at timestamptz,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now(),
       check (end_time > start_time)
@@ -73,6 +78,59 @@ async function createDemoRelations(client) {
         end;
       end if;
     end$$
+  `);
+
+  await client.query(`alter table device_time_slots add column if not exists capacity integer not null default 1`);
+  await client.query(`alter table reservation_items add column if not exists created_by uuid references users(id) on delete set null`);
+  await client.query(`alter table reservation_items add column if not exists updated_by uuid references users(id) on delete set null`);
+  await client.query(`alter table reservation_items add column if not exists deleted_at timestamptz`);
+
+  await client.query(`
+    create table if not exists audit_logs (
+      id uuid primary key default gen_random_uuid(),
+      actor_id uuid references users(id) on delete set null,
+      actor_name text,
+      action text not null,
+      target_type text,
+      target_id uuid,
+      detail jsonb not null default '{}'::jsonb,
+      ip_address text,
+      user_agent text,
+      request_id text,
+      created_at timestamptz not null default now()
+    )
+  `);
+
+  await client.query(`
+    create table if not exists user_wechat_bindings (
+      id uuid primary key default gen_random_uuid(),
+      user_id uuid not null references users(id) on delete cascade,
+      openid text not null,
+      unionid text,
+      app_id text,
+      nickname text,
+      bound_at timestamptz not null default now(),
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique(openid, app_id)
+    )
+  `);
+
+  await client.query(`
+    create table if not exists intelligence_action_logs (
+      id uuid primary key default gen_random_uuid(),
+      action_id text not null,
+      action_type text,
+      action_title text,
+      status text not null default 'open',
+      note text,
+      assigned_to uuid references users(id) on delete set null,
+      handled_by uuid references users(id) on delete set null,
+      handled_at timestamptz,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      check (status in ('open','done','ignored','delegated'))
+    )
   `);
 
   await client.query(`
@@ -123,6 +181,11 @@ async function seedPermissions(client) {
       ('user.manage', '管理用户', '搜索、禁用、恢复、解绑用户', '用户', 20),
       ('reservation.view', '查看预约', '查看预约与日历数据', '预约', 30),
       ('reservation.approve', '同意用户预约', '审批预约批次和明细', '预约', 40),
+      ('reservation.change_plan', '调整预约计划', '修改用户预约明细的时间与时段', '预约', 45),
+      ('return.view', '查看归还记录', '查看归还状态、照片和归档路径', '归还', 46),
+      ('return.confirm', '确认设备归还', '代用户确认归还或补录归还结果', '归还', 47),
+      ('return.image_review', '复核归还图片', '查看并复核归还照片证据', '归还', 48),
+      ('return.export', '导出归还归档', '导出归还记录与图片归档清单', '归还', 49),
       ('device.view', '查看设备', '查看设备和设备状态', '设备', 50),
       ('device.manage', '管理设备', '新增、编辑、停用设备和时间段', '设备', 60),
       ('fault.manage', '处理故障报备', '处理故障并联动设备状态', '故障', 70),
@@ -130,7 +193,7 @@ async function seedPermissions(client) {
       ('stats.export', '导出统计', '导出统计数据', '统计', 90),
       ('system.config', '系统配置', '修改系统配置', '系统', 100),
       ('admin.manage', '管理管理员权限', '授权或撤销管理员权限', '系统', 110),
-      ('operation.view', '查看操作日志', '查看后台操作日志', '系统', 120)
+      ('audit.view', '查看操作日志', '查看后台操作日志', '系统', 120)
     on conflict (permission_key) do update set
       name = excluded.name,
       description = excluded.description,
@@ -143,7 +206,7 @@ async function seedPermissions(client) {
     values
       ('super_admin', '超级管理员', '全部权限', true),
       ('admin', '管理员', '设备、用户、预约、统计管理', true),
-      ('ops', '运营', '设备、预约、故障处理', true),
+      ('duty_admin', '值班管理员', '预约、归还、故障处理', true),
       ('auditor', '审计', '查看与导出', true)
     on conflict (role_key) do update set role_name = excluded.role_name, description = excluded.description, is_system = excluded.is_system
   `);
@@ -154,9 +217,9 @@ async function seedPermissions(client) {
     from roles r
     join permissions p on (
       r.role_key = 'super_admin'
-      or (r.role_key = 'admin' and p.permission_key in ('user.approve','user.manage','reservation.view','reservation.approve','device.view','device.manage','fault.manage','stats.view','stats.export'))
-      or (r.role_key = 'ops' and p.permission_key in ('reservation.view','reservation.approve','device.view','device.manage','fault.manage'))
-      or (r.role_key = 'auditor' and p.permission_key in ('reservation.view','device.view','stats.view','stats.export','operation.view'))
+      or (r.role_key = 'admin' and p.permission_key in ('user.approve','user.manage','reservation.view','device.view','device.manage','fault.manage','stats.view','stats.export'))
+      or (r.role_key = 'duty_admin' and p.permission_key in ('reservation.view','reservation.approve','return.view','return.confirm','return.image_review','device.view','fault.manage'))
+      or (r.role_key = 'auditor' and p.permission_key in ('reservation.view','device.view','stats.view','stats.export','audit.view'))
     )
     on conflict do nothing
   `);
@@ -194,6 +257,9 @@ async function createViewsAndIndexes(client) {
   `);
 
   await client.query('create index if not exists idx_device_time_slots_device on device_time_slots(device_id, enabled, sort_order)');
+  await client.query('create index if not exists idx_audit_logs_actor_time on audit_logs(actor_id, created_at desc)');
+  await client.query('create index if not exists idx_user_wechat_bindings_user on user_wechat_bindings(user_id)');
+  await client.query('create index if not exists idx_intelligence_action_logs_status_time on intelligence_action_logs(status, updated_at desc)');
   await client.query('create index if not exists idx_reservation_items_batch on reservation_items(batch_id, created_at desc)');
   await client.query('create index if not exists idx_reservation_items_user_time on reservation_items(user_id, start_time desc)');
   await client.query('create index if not exists idx_reservation_items_device_time on reservation_items(device_id, start_time, end_time)');
@@ -202,10 +268,10 @@ async function createViewsAndIndexes(client) {
 }
 
 async function main() {
-  if (!connectionString) throw new Error('DATABASE_URL is not configured.');
+  if (!connectionString) throw new Error('DATABASE_URL 未配置。');
   const pool = new Pool({
     connectionString,
-    ssl: String(process.env.PGSSL || '').toLowerCase() === 'true' ? { rejectUnauthorized: false } : undefined
+    ssl: postgresSslOptions()
   });
   const client = await pool.connect();
   try {
@@ -214,7 +280,7 @@ async function main() {
     await seedPermissions(client);
     await createViewsAndIndexes(client);
     await client.query('commit');
-    console.log('Demo database relations are ready.');
+    console.log('演示数据库关系已准备完成。');
   } catch (error) {
     await client.query('rollback').catch(() => {});
     throw error;
@@ -228,3 +294,6 @@ main().catch((error) => {
   console.error(error.message || error);
   process.exit(1);
 });
+
+
+

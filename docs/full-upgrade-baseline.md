@@ -1,5 +1,7 @@
 # IDBS 全量升级基线
 
+> **Historical record.** Current IDBS 5.0 release material is [v5-release.md](./v5-release.md) and [v5-api-contract.md](./v5-api-contract.md).
+
 更新时间：2026-07-03
 
 本轮升级策略改为“新版本基线重建”，不再兼容旧数据库结构。旧库只作为备份和必要数据迁移来源；运行态数据库必须以 `sql/schema.sql` 为准。

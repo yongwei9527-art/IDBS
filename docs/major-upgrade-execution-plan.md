@@ -1,5 +1,7 @@
 # IDBS 大升级执行方案
 
+> **Historical record.** Current IDBS 5.0 release material is [v5-release.md](./v5-release.md) and [v5-api-contract.md](./v5-api-contract.md).
+
 更新时间：2026-07-03
 
 本文档用于把“大升级”拆成可执行、可检查、可回滚的阶段。原则是：整体规划、分批落地；每一批完成后必须能启动、能检查、核心流程不被破坏。

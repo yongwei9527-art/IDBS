@@ -1,4 +1,4 @@
-function createDashboardService(context = {}) {
+﻿function createDashboardService(context = {}) {
   const {
     currentReservationDateCondition,
     ok,
@@ -8,7 +8,7 @@ function createDashboardService(context = {}) {
   } = context;
 
   async function adminDashboard(_, token) {
-    await requireAdminRole(token, ['super_admin', 'admin', 'ops', 'auditor'], ['reservation.view', 'device.view', 'stats.view']);
+    await requireAdminRole(token, ['super_admin', 'admin', 'auditor'], ['reservation.view', 'reservation.approve', 'reservation.change_plan', 'device.view', 'stats.view', 'user.manage', 'device.manage', 'fault.manage', 'stats.export', 'audit.view', 'user.approve', 'return.view', 'return.confirm', 'return.image_review', 'return.export']);
     const deviceRows = await query('select status, count(*)::int as count from devices group by status');
     const userPending = await queryOne("select count(*)::int as count from users where status = 'pending'");
     const reservationPending = await queryOne(`select count(*)::int as count from reservation_items where status = 'pending' and ${currentReservationDateCondition('reservation_items')}`);
@@ -47,3 +47,4 @@ function createDashboardService(context = {}) {
 }
 
 module.exports = { createDashboardService };
+

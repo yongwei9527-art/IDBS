@@ -39,10 +39,11 @@ function createChatService(context = {}) {
     parseBoolean,
     query,
     queryOne,
+    realtimePublisher = async () => 0,
     requireUser,
     rowsFrom,
     uuid,
-    verifyToken,
+    resolveServiceAuth,
     withTransaction
   } = context;
 
@@ -82,9 +83,34 @@ function createChatService(context = {}) {
     return publicChatUser({ ...user, can_announce: context.canAnnounce, can_kick: context.canKick });
   }
 
+  function isChatAdministrator(user = {}) {
+    return ['admin', 'super_admin'].includes(String(user.role || ''));
+  }
+
+  async function conversationMatchesChatPolicy(conversation = {}) {
+    if (!conversation?.id) return false;
+    if (conversation.type === 'group') {
+      if (isManagementGroup(conversation)) return true;
+      const owner = conversation.created_by
+        ? await queryOne('select role from users where id = $1 limit 1', [conversation.created_by])
+        : null;
+      return owner?.role === 'super_admin';
+    }
+    if (conversation.type !== 'direct') return false;
+    const members = await query(`
+      select u.role
+      from chat_participants p
+      join users u on u.id = p.user_id
+      where p.conversation_id = $1
+    `, [conversation.id]);
+    return members.length === 2
+      && members.some(isChatAdministrator)
+      && members.some((member) => !isChatAdministrator(member));
+  }
+
   async function requireChatActor(token) {
-    const payload = verifyToken(token);
-    if (!payload) throw new AppError('Authentication required', { status: 401, code: 1001 });
+    const payload = resolveServiceAuth(token);
+    if (!payload) throw new AppError('未登录或登录已过期。', { status: 401, code: 1001 });
     if (payload.user_id) return requireUser(token);
     if (['admin', 'super_admin'].includes(payload.role) || payload.admin_role_key) {
       const adminUser = await queryOne(`
@@ -99,7 +125,45 @@ function createChatService(context = {}) {
       if (adminUser) return adminUser;
       throw new AppError('后台密码登录需要至少一个启用的管理员用户才能发起聊天。', { status: 409, code: 3001 });
     }
-    throw new AppError('Authentication required', { status: 401, code: 1001 });
+    throw new AppError('未登录或登录已过期。', { status: 401, code: 1001 });
+  }
+
+  async function resolveRealtimePrincipal(auth = {}) {
+    const userId = String(auth.sub || '').trim();
+    if (userId && userId !== 'admin') {
+      const user = await queryOne(`
+        select id, role
+        from users
+        where id = $1 and status = 'active' and coalesce(is_banned, false) = false
+        limit 1
+      `, [userId]);
+      return user ? { ...auth, sub: user.id, role: auth.role || user.role } : null;
+    }
+    if (['admin', 'super_admin'].includes(auth.role) || auth.scope === 'admin') {
+      const adminUser = await queryOne(`
+        select id, role
+        from users
+        where status = 'active'
+          and coalesce(is_banned, false) = false
+          and role in ('super_admin','admin')
+        order by case role when 'super_admin' then 0 else 1 end, created_at asc
+        limit 1
+      `);
+      return adminUser ? { ...auth, sub: adminUser.id, role: auth.role || adminUser.role } : null;
+    }
+    return null;
+  }
+
+  async function canSubscribeChatChannel(userId, conversationId) {
+    if (!userId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(conversationId))) return false;
+    const participant = await queryOne(`
+      select 1 as allowed
+      from chat_participants p
+      join chat_conversations c on c.id = p.conversation_id
+      where p.user_id = $1 and p.conversation_id = $2
+      limit 1
+    `, [userId, conversationId]);
+    return Boolean(participant);
   }
 
   function writeChatEvent(res, event, data = {}) {
@@ -121,16 +185,26 @@ function createChatService(context = {}) {
 
   async function publishChatEvent(userIds = [], event, data = {}) {
     const targetIds = [...new Set((userIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+    const payload = { ...data, server_time: nowIso() };
+    const realtimeType = event === 'message' ? 'new_message' : event;
     for (const userId of targetIds) {
       const clients = chatEventClients.get(userId);
-      if (!clients) continue;
-      for (const res of [...clients]) {
-        try {
-          writeChatEvent(res, event, { ...data, server_time: nowIso() });
-        } catch (_) {
-          removeChatEventClient(userId, res);
+      if (clients) {
+        for (const res of [...clients]) {
+          try {
+            writeChatEvent(res, event, payload);
+          } catch (_) {
+            removeChatEventClient(userId, res);
+          }
         }
       }
+      const channel = `notifications:${userId}`;
+      await realtimePublisher(channel, { type: realtimeType, channel, payload });
+    }
+    const conversationId = String(data.conversation_id || '').trim();
+    if (conversationId) {
+      const channel = `chat:${conversationId}`;
+      await realtimePublisher(channel, { type: realtimeType, channel, payload });
     }
   }
 
@@ -167,6 +241,9 @@ function createChatService(context = {}) {
     const keyword = String(params.keyword || '').trim();
     const sqlParams = [actor.id];
     let where = "where status = 'active' and coalesce(is_banned, false) = false and id <> $1";
+    where += isChatAdministrator(actor)
+      ? " and role not in ('super_admin','admin')"
+      : " and role in ('super_admin','admin')";
     if (keyword) {
       sqlParams.push(`%${keyword}%`);
       where += ` and (name ilike $${sqlParams.length} or phone ilike $${sqlParams.length} or coalesce(student_no, '') ilike $${sqlParams.length})`;
@@ -182,13 +259,14 @@ function createChatService(context = {}) {
   }
 
   async function conversationForActor(conversationId, actorId) {
-    return queryOne(`
+    const conversation = await queryOne(`
       select c.*
       from chat_conversations c
       join chat_participants p on p.conversation_id = c.id
       where c.id = $1 and p.user_id = $2
       limit 1
     `, [conversationId, actorId]);
+    return conversation && await conversationMatchesChatPolicy(conversation) ? conversation : null;
   }
 
   async function directConversationBetween(actorId, targetId) {
@@ -338,8 +416,11 @@ function createChatService(context = {}) {
       where c.id = $1
       limit 1
     `, [conversationId, actor.id]);
-    if (!conversation) return { error: fail('Chat conversation not found', 404, 3004) };
+    if (!conversation) return { error: fail('会话不存在。', 404, 3004) };
     if (conversation.type !== 'group') return { error: fail('只有群聊支持该操作。', 400, 2001) };
+    if (!isManagementGroup(conversation) && actor.role !== 'super_admin') {
+      return { error: fail('仅超级管理员可以管理自建群聊。', 403, 1003) };
+    }
     const canManage = ['admin', 'super_admin'].includes(actor.role)
       || ['owner', 'admin'].includes(conversation.actor_participant_role);
     if (!canManage) return { error: fail('只有群主或管理员可以管理群聊。', 403, 1003) };
@@ -425,7 +506,11 @@ function createChatService(context = {}) {
       order by coalesce(c.last_message_at, c.updated_at, c.created_at) desc
       limit $2
     `, [actor.id, limit]);
-    return ok({ conversations: await hydrateChatConversations(rows || [], actor.id), current_user: await publicChatUserWithPermissions(actor) });
+    const allowed = [];
+    for (const conversation of rows || []) {
+      if (await conversationMatchesChatPolicy(conversation)) allowed.push(conversation);
+    }
+    return ok({ conversations: await hydrateChatConversations(allowed, actor.id), current_user: await publicChatUserWithPermissions(actor) });
   }
 
   async function createChatConversation(payload = {}, token) {
@@ -433,7 +518,7 @@ function createChatService(context = {}) {
     await ensureManagementGroup();
     const actor = await requireChatActor(token);
     const type = String(payload.type || (payload.user_id || payload.userId ? 'direct' : 'group')).trim();
-    if (!['direct', 'group'].includes(type)) return fail('Invalid chat type', 400, 2001);
+    if (!['direct', 'group'].includes(type)) return fail('会话类型不正确。', 400, 2001);
     const rawIds = [
       ...(Array.isArray(payload.user_ids) ? payload.user_ids : []),
       ...(Array.isArray(payload.userIds) ? payload.userIds : []),
@@ -445,6 +530,10 @@ function createChatService(context = {}) {
     const users = await query('select id, name, phone, role, status, is_banned from users where id = any($1)', [participantIds]);
     if ((users || []).length !== participantIds.length) return fail('聊天成员不存在。', 404, 3004);
     if ((users || []).some((user) => user.status !== 'active' || user.is_banned)) return fail('聊天成员包含未启用或被封禁账号。', 409, 3001);
+    if (type === 'direct' && (!(users || []).some(isChatAdministrator) || !(users || []).some((user) => !isChatAdministrator(user)))) {
+      return fail('私聊仅支持用户与管理员之间沟通。', 403, 1003);
+    }
+    if (type === 'group' && actor.role !== 'super_admin') return fail('仅超级管理员可以创建群聊。', 403, 1003);
     if (type === 'group') {
       const fullGroupError = await rejectFullMemberGroup(participantIds, payload.allow_all_members || payload.allowAllMembers);
       if (fullGroupError) return fullGroupError;
@@ -539,7 +628,7 @@ function createChatService(context = {}) {
     const conversationId = assertText(payload.conversation_id || payload.id, 'conversation_id', 60);
     const managed = await manageableChatGroup(conversationId, actor);
     if (managed.error) return managed.error;
-    if (isManagementGroup(managed.conversation)) return fail('The management group cannot be dissolved', 403, 1003);
+    if (isManagementGroup(managed.conversation)) return fail('管理群不能解散。', 403, 1003);
     if (!canDissolveGroup(managed.conversation, actor)) return fail('只有群创建者可以解散该群聊。', 403, 1003);
     const members = await query('select user_id from chat_participants where conversation_id = $1 and user_id <> $2', [conversationId, actor.id]);
     await query('delete from chat_conversations where id = $1', [conversationId]);
@@ -566,7 +655,7 @@ function createChatService(context = {}) {
     const actor = await requireChatActor(token);
     const conversationId = assertText(payload.conversation_id || payload.id, 'conversation_id', 60);
     const conversation = await conversationForActor(conversationId, actor.id);
-    if (!conversation) return fail('Chat conversation not found', 404, 3004);
+    if (!conversation) return fail('会话不存在。', 404, 3004);
     if (conversation.type !== 'group') return fail('只有群聊可以退出。', 400, 2001);
     if (isManagementGroup(conversation)) return fail('实验管理总群不能主动退出。', 403, 1003);
     if (canDissolveGroup(conversation, actor)) return fail('你是群创建者，请解散群聊或先转交群主。', 409, 3001);
@@ -587,7 +676,7 @@ function createChatService(context = {}) {
     const actor = await requireChatActor(token);
     const conversationId = assertText(params.conversation_id || params.id, 'conversation_id', 60);
     const conversation = await conversationForActor(conversationId, actor.id);
-    if (!conversation) return fail('Chat conversation not found', 404, 3004);
+    if (!conversation) return fail('会话不存在。', 404, 3004);
     const limit = Math.min(Math.max(Number(params.limit || 80) || 80, 1), 200);
     const before = params.before ? new Date(params.before) : null;
     const beforeIso = before && Number.isFinite(before.getTime()) ? before.toISOString() : null;
@@ -633,7 +722,7 @@ function createChatService(context = {}) {
     const actor = await requireChatActor(token);
     const conversationId = assertText(payload.conversation_id || payload.id, 'conversation_id', 60);
     const conversation = await conversationForActor(conversationId, actor.id);
-    if (!conversation) return fail('Chat conversation not found', 404, 3004);
+    if (!conversation) return fail('会话不存在。', 404, 3004);
     const readAt = nowIso();
     await query('update chat_participants set last_read_at = $1 where conversation_id = $2 and user_id = $3', [readAt, conversationId, actor.id]);
     await query(`
@@ -653,12 +742,12 @@ function createChatService(context = {}) {
     const actor = await requireChatActor(token);
     const conversationId = assertText(payload.conversation_id || payload.id, 'conversation_id', 60);
     const userId = assertText(payload.user_id || payload.userId, 'user_id', 60);
-    if (userId === actor.id) return fail('Cannot kick yourself', 400, 2001);
+    if (userId === actor.id) return fail('不能移除自己。', 400, 2001);
     const managed = await manageableChatGroup(conversationId, actor);
     if (managed.error) return managed.error;
     const target = await getById('users', userId);
-    if (!target) return fail('User not found', 404, 3004);
-    if (target.role === 'super_admin') return fail('Cannot kick super admin', 403, 1003);
+    if (!target) return fail('用户不存在。', 404, 3004);
+    if (target.role === 'super_admin') return fail('不能移除最高权限管理员。', 403, 1003);
     const permissionError = await requireChatPermission(actor, 'chat.kick', '只有被授予“踢出群成员”权限的管理员可以踢出成员。');
     if (permissionError) return permissionError;
     const now = nowIso();
@@ -709,20 +798,20 @@ function createChatService(context = {}) {
     const attachments = normalizeChatAttachments(payload.attachments || payload.files || payload.file_urls || payload.fileUrls);
     const metadata = normalizeChatMetadata(payload.metadata || payload.context || {});
     let content = String(payload.content ?? payload.message ?? '').trim();
-    if (content.length > 1500) throw new AppError('content is too long', { status: 400, code: 2001 });
+    if (content.length > 1500) throw new AppError('消息内容过长。', { status: 400, code: 2001 });
     if (!content) {
       if (messageType === 'image' && attachments.length) content = '图片';
       else if (messageType === 'file' && attachments.length) content = '文件';
       else if (CHAT_CARD_LABELS[messageType]) content = chatCardContent(messageType, metadata);
-      else throw new AppError('content is required', { status: 400, code: 2001 });
+      else throw new AppError('请填写消息内容。', { status: 400, code: 2001 });
     }
-    if (messageType === 'image' && !attachments.length) return fail('Image attachment is required', 400, 2001);
+    if (messageType === 'image' && !attachments.length) return fail('请上传图片附件。', 400, 2001);
     const mentionIds = [...new Set([
       ...(Array.isArray(payload.mention_user_ids) ? payload.mention_user_ids : []),
       ...(Array.isArray(payload.mentionUserIds) ? payload.mentionUserIds : [])
     ].map((id) => String(id || '').trim()).filter(Boolean))];
     const conversation = await conversationForActor(conversationId, actor.id);
-    if (!conversation) return fail('Chat conversation not found', 404, 3004);
+    if (!conversation) return fail('会话不存在。', 404, 3004);
     const clientMessageId = String(payload.client_message_id || payload.clientMessageId || '').trim().slice(0, 120);
     if (clientMessageId) {
       const existing = await queryOne(`
@@ -800,6 +889,7 @@ function createChatService(context = {}) {
     addChatParticipants,
     addUserToManagementGroup,
     bootstrapSystem,
+    canSubscribeChatChannel,
     createChatConversation,
     dissolveChatConversation,
     leaveChatConversation,
@@ -809,6 +899,7 @@ function createChatService(context = {}) {
     markChatConversationRead,
     removeChatParticipant,
     removeUserFromManagementGroup,
+    resolveRealtimePrincipal,
     sendChatMessage,
     streamChatEvents
   };

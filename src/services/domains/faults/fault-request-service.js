@@ -1,4 +1,4 @@
-function normalizeUserRequest(row = {}) {
+﻿function normalizeUserRequest(row = {}) {
   return {
     ...row,
     locked: ['confirmed', 'rejected', 'closed', 'change_requested'].includes(row.status),
@@ -15,6 +15,7 @@ function createFaultRequestService(context = {}) {
     fail,
     getById,
     getDeviceByCode,
+    lockDeviceSchedule,
     log,
     markDeviceFaultReportsResolved,
     notifyReservationUsersForDevice,
@@ -34,6 +35,8 @@ function createFaultRequestService(context = {}) {
     const deviceCode = String(payload.device_code || payload.deviceCode || '').trim();
     const issueType = String(payload.issue_type || payload.issueType || 'fault').trim().slice(0, 50);
     const severity = String(payload.severity || 'normal').trim().slice(0, 30) || 'normal';
+    const reasonCategory = String(payload.reason_category || payload.reasonCategory || 'unknown').trim().slice(0, 50) || 'unknown';
+    const impact = severity === 'urgent' ? { autoAction: 'cancel_future', current: true, future: true, notify: true, backup: true } : severity === 'high' ? { autoAction: 'maintenance', current: true, future: true, notify: true, backup: false } : { autoAction: 'inspect', current: false, future: false, notify: false, backup: false };
     const description = assertText(payload.description || payload.note, 'description', 1000);
     const photos = Array.isArray(payload.photos) ? payload.photos.slice(0, 5).map((value) => String(value).slice(0, 500)).filter(Boolean) : [];
     let record = null;
@@ -60,30 +63,55 @@ function createFaultRequestService(context = {}) {
       photos,
       status: 'pending',
       severity,
+      reason_category: reasonCategory,
+      auto_action: impact.autoAction,
+      impact_current_borrow: impact.current,
+      impact_future_reservations: impact.future,
+      notify_affected_users: impact.notify,
+      transfer_to_backup: impact.backup,
       created_at: nowIso(),
       updated_at: nowIso()
     };
     await withTransaction(async (client) => {
       const txQuery = (sql, params = []) => client.query(sql, params);
-      await client.query('insert into device_fault_reports (id, device_id, user_id, borrow_record_id, reservation_id, reservation_item_id, issue_type, severity, description, photos, status, created_at, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)', [
-        report.id, report.device_id, report.user_id, report.borrow_record_id, report.reservation_id, record?.reservation_item_id || null, report.issue_type, report.severity, report.description, JSON.stringify(report.photos), report.status, report.created_at, report.updated_at
+      await lockDeviceSchedule(client, device.id);
+      await client.query('insert into device_fault_reports (id, device_id, user_id, borrow_record_id, reservation_id, reservation_item_id, issue_type, severity, reason_category, auto_action, impact_current_borrow, impact_future_reservations, notify_affected_users, transfer_to_backup, description, photos, status, created_at, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)', [
+        report.id, report.device_id, report.user_id, report.borrow_record_id, report.reservation_id, record?.reservation_item_id || null, report.issue_type, report.severity, report.reason_category, report.auto_action, report.impact_current_borrow, report.impact_future_reservations, report.notify_affected_users, report.transfer_to_backup, report.description, JSON.stringify(report.photos), report.status, report.created_at, report.updated_at
       ]);
       if (record?.reservation_item_id) {
         await client.query('update reservation_items set status = $1, updated_at = $2 where id = $3', ['faulted', nowIso(), record.reservation_item_id]);
       }
-      await client.query('update devices set status = $1, allow_reservation = false, last_condition = $2, updated_at = $3 where id = $4', ['abnormal_pending', issueType, nowIso(), device.id]);
-      await notifyReservationUsersForDevice(device, {
-        type: 'device_fault',
-        title: '预约设备临时不可用',
-        content: '你预约的设备 {device_code} {device_name} 有用户上报异常，管理员正在处理。你的预约不会被取消，但设备当前暂时不可用；维修恢复后会再次通知你。预约时间：{start_time} - {end_time}',
-        related_type: 'fault_report',
-        related_id: report.id
-      }, txQuery);
+      if (impact.future) {
+        await client.query('update devices set status = $1, allow_reservation = false, last_condition = $2, updated_at = $3 where id = $4', ['maintenance', issueType, nowIso(), device.id]);
+        await notifyReservationUsersForDevice(device, {
+          type: 'device_fault', title: impact.autoAction === 'cancel_future' ? '设备紧急故障，请调整实验安排' : '预约设备临时不可用',
+          content: impact.autoAction === 'cancel_future' ? '你预约的 {device_code} {device_name} 发生紧急故障，请立即联系管理员调整设备或实验时段。预约时间：{time_range}' : '你预约的设备 {device_code} {device_name} 已进入维护，管理员正在处理。预约时间：{time_range}',
+          related_type: 'fault_report', related_id: report.id
+        }, txQuery);
+      }
       await log('report_device_fault', `Reported device fault: ${issueType}`, user, device.id, report.id, txQuery);
     });
     return ok({ message: '故障已提交', report });
   }
 
+  async function listMyFaultReports(params = {}, token) {
+    const user = await requireUser(token);
+    const status = String(params.status || '').trim();
+    const sqlParams = [user.id];
+    const clauses = ['f.user_id = $1'];
+    if (status) {
+      sqlParams.push(status);
+      clauses.push(`f.status = $${sqlParams.length}`);
+    }
+    const rows = await query(`
+      select f.*, d.device_code, d.name as device_name, d.location as device_location
+      from device_fault_reports f
+      join devices d on d.id = f.device_id
+      where ${clauses.join(' and ')}
+      order by f.created_at desc
+    `, sqlParams);
+    return ok({ reports: rows || [] });
+  }
   async function createUserRequest(payload, token) {
     const user = await requireUser(token);
     const title = assertText(payload.title, 'title', 120);
@@ -170,7 +198,7 @@ function createFaultRequestService(context = {}) {
   }
 
   async function adminListUserRequests(params = {}, token) {
-    await requireAdminRole(token, ['super_admin', 'admin', 'ops'], ['user.manage', 'reservation.view']);
+    await requireAdminRole(token, ['super_admin', 'admin'], ['user.manage', 'reservation.view', 'reservation.approve']);
     const status = String(params.status || '').trim();
     const sqlParams = [];
     let where = '';
@@ -192,13 +220,19 @@ function createFaultRequestService(context = {}) {
   }
 
   async function adminReviewUserRequest(payload, token) {
-    const { admin } = await requireAdminRole(token, ['super_admin', 'admin', 'ops'], ['user.manage']);
+    const { admin, role } = await requireAdminRole(token, ['super_admin', 'admin'], ['user.manage', 'reservation.approve']);
     const requestId = assertText(payload.request_id || payload.id, 'request_id', 60);
     const status = String(payload.status || '').trim();
     if (!['pending', 'confirmed', 'rejected', 'closed'].includes(status)) return fail('不支持的需求状态。', 400, 2001);
     const adminNote = String(payload.admin_note || payload.adminNote || '').trim().slice(0, 500);
     const row = await getById('user_requests', requestId);
     if (!row) return fail('需求不存在。', 404, 3004);
+    const roleKey = String(role?.role_key || '').trim();
+    const rolePermissions = Array.isArray(role?.permissions) ? role.permissions : [];
+    const hasPermission = (permission) => rolePermissions.includes('*') || rolePermissions.includes(permission) || roleKey === 'super_admin';
+    const canReviewGeneralRequest = hasPermission('user.manage');
+    const canReviewReservationRequest = canReviewGeneralRequest || (row.category === 'reservation' && hasPermission('reservation.approve'));
+    if (!canReviewReservationRequest) return fail('当前账号无权处理该类诉求。', 403, 1003);
     await withTransaction(async (client) => {
       const txQuery = (sql, params = []) => client.query(sql, params);
       await client.query(`
@@ -227,14 +261,20 @@ function createFaultRequestService(context = {}) {
   }
 
   async function adminListFaultReports(params = {}, token) {
-    await requireAdminRole(token, ['super_admin', 'admin', 'ops'], ['fault.manage', 'device.manage']);
+    await requireAdminRole(token, ['super_admin', 'admin'], ['fault.manage', 'device.manage', 'device.view']);
     const status = String(params.status || '').trim();
+    const deviceCode = String(params.device_code || params.deviceCode || params.device || '').trim();
     const sqlParams = [];
-    let where = '';
+    const clauses = [];
     if (status) {
       sqlParams.push(status);
-      where = `where f.status = $${sqlParams.length}`;
+      clauses.push(`f.status = $${sqlParams.length}`);
     }
+    if (deviceCode) {
+      sqlParams.push(deviceCode);
+      clauses.push(`d.device_code = $${sqlParams.length}`);
+    }
+    const where = clauses.length ? `where ${clauses.join(' and ')}` : '';
     const rows = await query(`
       select f.*, d.device_code, d.name as device_name, d.location as device_location, u.name as user_name, u.phone as user_phone, u.student_no as user_student_no
       from device_fault_reports f
@@ -247,7 +287,7 @@ function createFaultRequestService(context = {}) {
   }
 
   async function adminResolveFaultReport(payload, token) {
-    const { admin } = await requireAdminRole(token, ['super_admin', 'admin', 'ops'], ['fault.manage', 'device.manage']);
+    const { admin } = await requireAdminRole(token, ['super_admin', 'admin'], ['fault.manage', 'device.manage']);
     const reportId = assertText(payload.report_id || payload.reportId, 'report_id', 60);
     const status = String(payload.status || 'resolved').trim();
     if (!['pending', 'processing', 'resolved', 'closed'].includes(status)) return fail('不支持的故障状态。', 400, 2001);
@@ -256,8 +296,9 @@ function createFaultRequestService(context = {}) {
     const keepMaintenance = parseBoolean(payload.keep_maintenance ?? payload.keepMaintenance);
     const report = await getById('device_fault_reports', reportId);
     if (!report) return fail('故障记录不存在。', 404, 3004);
-    await withTransaction(async (client) => {
+    const resolution = await withTransaction(async (client) => {
       const txQuery = (sql, params = []) => client.query(sql, params);
+      await lockDeviceSchedule(client, report.device_id);
       await client.query('update device_fault_reports set status = $1, admin_note = $2, updated_at = $3, resolved_at = $4 where id = $5', [
         status, adminNote, nowIso(), ['resolved', 'closed'].includes(status) ? nowIso() : null, reportId
       ]);
@@ -267,20 +308,23 @@ function createFaultRequestService(context = {}) {
       if (['resolved', 'closed'].includes(status) && (keepMaintenance || !setAvailable)) {
         await client.query('update devices set status = $1, allow_reservation = false, updated_at = $2 where id = $3', ['maintenance', nowIso(), report.device_id]);
       }
+      let recoveryBlocked = false;
       if (status === 'resolved' && setAvailable) {
-        await client.query('update devices set status = $1, allow_reservation = true, updated_at = $2 where id = $3', ['available', nowIso(), report.device_id]);
-        await markDeviceFaultReportsResolved(report.device_id, adminNote, admin, txQuery);
-        await notifyReservationUsersForDevice(report.device_id, {
-          type: 'device_recovered',
-          title: '预约设备已恢复可用',
-          content: '你预约的设备 {device_code} {device_name} 已由管理员处理并恢复为可预约状态。你的原预约仍然有效，请按原预约时间使用：{start_time} - {end_time}',
-          related_type: 'fault_report',
-          related_id: reportId
-        }, txQuery);
+        const activeWindow = await client.query(`select 1 from device_maintenance_windows where device_id=$1 and status in ('scheduled','active') and start_time <= now() and end_time > now() limit 1`, [report.device_id]);
+        const openWorkOrder = await client.query(`select 1 from device_maintenance_work_orders where device_id=$1 and status in ('pending','in_progress') limit 1`, [report.device_id]);
+        recoveryBlocked = Boolean(activeWindow.rowCount || openWorkOrder.rowCount);
+        if (!recoveryBlocked) {
+          await client.query('update devices set status = $1, allow_reservation = true, updated_at = $2 where id = $3', ['available', nowIso(), report.device_id]);
+          await markDeviceFaultReportsResolved(report.device_id, adminNote, admin, txQuery);
+          await notifyReservationUsersForDevice(report.device_id, { type: 'device_recovered', title: 'Device available again', content: 'Your reserved device {device_code} {device_name} is available again. Your original reservation remains valid: {time_range}', related_type: 'fault_report', related_id: reportId }, txQuery);
+        } else {
+          await client.query('update devices set status = $1, allow_reservation = false, updated_at = $2 where id = $3', ['maintenance', nowIso(), report.device_id]);
+        }
       }
-      await log('resolve_device_fault', `Updated fault report to ${status}`, admin, report.device_id, reportId, txQuery);
+      await log('resolve_device_fault', { message: 'Updated fault report', status, recovery_blocked: recoveryBlocked }, admin, report.device_id, reportId, txQuery);
+      return { recoveryBlocked };
     });
-    return ok({ message: '故障状态已更新。' });
+    return ok({ message: resolution?.recoveryBlocked ? 'Fault status was updated, but the device has open maintenance work and remains unavailable.' : 'Fault status updated.', recovery_blocked: Boolean(resolution?.recoveryBlocked) });
   }
 
   return {
@@ -290,6 +334,7 @@ function createFaultRequestService(context = {}) {
     adminReviewUserRequest,
     cancelUserRequest,
     createUserRequest,
+    listMyFaultReports,
     listMyUserRequests,
     reportDeviceFault,
     requestUserRequestChange,
@@ -298,3 +343,6 @@ function createFaultRequestService(context = {}) {
 }
 
 module.exports = { createFaultRequestService, normalizeUserRequest };
+
+
+

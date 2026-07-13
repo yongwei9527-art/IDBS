@@ -1,6 +1,6 @@
 const express = require('express');
 const { success } = require('../lib/http');
-const { buildRuntimeStatus } = require('../config/env');
+const { getReadinessStatus } = require('../lib/runtime-diagnostics');
 
 function createHealthRouter(config, db) {
   const router = express.Router();
@@ -14,28 +14,8 @@ function createHealthRouter(config, db) {
   });
 
   router.get('/ready', async (_, res) => {
-    const runtime = buildRuntimeStatus(config);
-    let databaseReady = false;
-    if (config.databaseUrl && db && db.healthCheck) {
-      try {
-        databaseReady = await db.healthCheck();
-      } catch (error) {
-        runtime.warnings.push(`PostgreSQL health check failed: ${error.message || error}`);
-      }
-    }
-    if (config.databaseUrl && !databaseReady) {
-      runtime.ready = false;
-    }
-    const statusCode = runtime.ready ? 200 : 503;
-    res.status(statusCode).json(success({
-      status: runtime.ready ? 'ready' : 'degraded',
-      time: new Date().toISOString(),
-      database: {
-        postgres: !!config.databaseUrl,
-        ready: databaseReady
-      },
-      runtime
-    }));
+    const readiness = await getReadinessStatus(config, db);
+    res.status(readiness.runtime.ready ? 200 : 503).json(success(readiness));
   });
 
   return router;

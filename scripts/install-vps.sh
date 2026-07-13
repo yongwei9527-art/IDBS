@@ -81,10 +81,11 @@ fi
 chmod +x scripts/prepare-vps.sh
 chmod +x scripts/deploy-ubuntu.sh
 sudo -E env RESET_IDBS_DATA=0 DOMAIN_NAME="$DOMAIN_NAME" ./scripts/prepare-vps.sh
-sudo -E DOMAIN_NAME="$DOMAIN_NAME" ./scripts/deploy-ubuntu.sh
+sudo -E DOMAIN_NAME="$DOMAIN_NAME" CORS_ORIGIN="$CORS_ORIGIN" ./scripts/deploy-ubuntu.sh
 
 if [ "$DOMAIN_NAME" = "_" ]; then
   echo "Open: http://SERVER_IP/"
 else
   echo "Open: https://${DOMAIN_NAME}/"
 fi
+

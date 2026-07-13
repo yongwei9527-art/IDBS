@@ -1,5 +1,7 @@
 # IDBS
 
+> **Current release: IDBS 5.0.0.** The canonical API and realtime contract is [docs/v5-api-contract.md](./docs/v5-api-contract.md). `/v5/` and `/api/v5` are stable compatibility paths, not the product version.
+
 IDBS 是一套面向 Ubuntu VPS 的设备预约、借还、图片归还、微信绑定和后台管理系统。后端使用 Node.js + Express，数据库使用 PostgreSQL，前端静态页面位于 `public/`。
 
 使用或部署前，请先阅读 [免责声明](./DISCLAIMER.md)。
@@ -77,6 +79,18 @@ sudo journalctl -u idbs -f
 
 ```bash
 sudo systemctl restart idbs
+```
+
+重置后台管理员密码（VPS 一键安装/更新后可用）：
+
+```bash
+sudo idbs-reset-admin-password
+```
+
+命令会要求输入两次新密码，输入时不会回显。也可以用于自动化脚本：
+
+```bash
+sudo ADMIN_NEW_PASSWORD='新的强密码至少8位' idbs-reset-admin-password
 ```
 
 检查接口：

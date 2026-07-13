@@ -122,7 +122,7 @@ function createDeviceReadService(context = {}) {
   }
 
   async function adminListDevices(filters = {}, token) {
-    await requireAdminRole(token, ['super_admin', 'admin', 'ops'], ['device.manage', 'device.view']);
+    await requireAdminRole(token, ['super_admin', 'admin'], ['device.manage', 'device.view']);
     const result = await listDevices(filters);
     const list = await addReservationSnapshotsToDevices(result.list || [], { fullAccess: true });
     return ok({ list, devices: list, total: list.length });

@@ -1,5 +1,6 @@
-const { Pool } = require('pg');
-require('dotenv').config();
+﻿const { Pool } = require('pg');
+const { postgresSslOptions } = require('../src/lib/postgres-ssl');
+require('dotenv').config({ quiet: true });
 
 const connectionString = process.env.DATABASE_URL || '';
 
@@ -176,12 +177,49 @@ const REQUIRED_TABLES = [
     )`
   },
   {
+    name: 'audit_logs',
+    sql: `create table if not exists audit_logs (
+      id uuid primary key default gen_random_uuid(),
+      actor_id uuid references users(id) on delete set null,
+      actor_name text,
+      action text not null,
+      target_type text,
+      target_id uuid,
+      detail jsonb not null default '{}'::jsonb,
+      ip_address text,
+      user_agent text,
+      request_id text,
+      created_at timestamptz not null default now()
+    )`
+  },
+  {
+    name: 'user_wechat_bindings',
+    sql: `create table if not exists user_wechat_bindings (
+      id uuid primary key default gen_random_uuid(),
+      user_id uuid not null references users(id) on delete cascade,
+      openid text not null,
+      unionid text,
+      app_id text,
+      nickname text,
+      bound_at timestamptz not null default now(),
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique(openid, app_id)
+    )`
+  },
+  {
     name: 'export_jobs',
     sql: `create table if not exists export_jobs (
       id uuid primary key default gen_random_uuid(),
       type text not null,
       params jsonb not null default '{}'::jsonb,
       status text not null default 'pending',
+      attempt_count integer not null default 0,
+      max_attempts integer not null default 3,
+      available_at timestamptz,
+      worker_id text,
+      lease_token uuid,
+      lease_expires_at timestamptz,
       row_count integer not null default 0,
       file_path text,
       error_message text,
@@ -190,10 +228,126 @@ const REQUIRED_TABLES = [
       started_at timestamptz,
       finished_at timestamptz
     )`
-  }
+  },
+  {
+    name: 'intelligence_action_logs',
+    sql: `create table if not exists intelligence_action_logs (
+      id uuid primary key default gen_random_uuid(),
+      action_id text not null,
+      action_type text,
+      action_title text,
+      status text not null default 'open',
+      note text,
+      assigned_to uuid references users(id) on delete set null,
+      handled_by uuid references users(id) on delete set null,
+      handled_at timestamptz,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      check (status in ('open','done','ignored','delegated'))
+    )`
+  },
+  {
+    name: 'refresh_token_sessions',
+    sql: `create table if not exists refresh_token_sessions (
+      jti uuid primary key,
+      subject text not null,
+      token_hash text not null,
+      expires_at timestamptz not null,
+      user_agent text,
+      ip_address text,
+      revoked_at timestamptz,
+      replaced_by uuid,
+      created_at timestamptz not null default now()
+    )`
+  },
+  {
+    name: 'scheduled_job_runs',
+    sql: `create table if not exists scheduled_job_runs (
+      job_key text primary key,
+      job_name text not null,
+      scheduled_for timestamptz not null,
+      status text not null default 'running',
+      instance_id text,
+      error_message text,
+      started_at timestamptz not null default now(),
+      finished_at timestamptz,
+      check (status in ('running','success','failed'))
+    )`
+  },
+  {
+    name: 'rate_limit_buckets',
+    sql: `create table if not exists rate_limit_buckets (
+      bucket_key text not null,
+      window_start timestamptz not null,
+      count integer not null default 1,
+      expires_at timestamptz not null,
+      primary key (bucket_key, window_start)
+    )`
+  },
+  {
+    name: 'device_maintenance_plans',
+    sql: `create table if not exists device_maintenance_plans (id uuid primary key default gen_random_uuid(), device_id uuid not null references devices(id) on delete cascade, title text not null, maintenance_type text not null default 'inspection', interval_days integer not null default 0 check (interval_days >= 0), next_due_at timestamptz, last_completed_at timestamptz, status text not null default 'active' check (status in ('active','paused','archived')), notes text, created_by uuid references users(id) on delete set null, created_at timestamptz not null default now(), updated_at timestamptz not null default now())`
+  },
+  {
+    name: 'device_maintenance_windows',
+    sql: `create table if not exists device_maintenance_windows (id uuid primary key default gen_random_uuid(), device_id uuid not null references devices(id) on delete cascade, plan_id uuid references device_maintenance_plans(id) on delete set null, title text not null, start_time timestamptz not null, end_time timestamptz not null, status text not null default 'scheduled' check (status in ('scheduled','active','completed','cancelled')), created_by uuid references users(id) on delete set null, created_at timestamptz not null default now(), updated_at timestamptz not null default now(), check (end_time > start_time))`
+  },
+  {
+    name: 'device_maintenance_work_orders',
+    sql: `create table if not exists device_maintenance_work_orders (id uuid primary key default gen_random_uuid(), device_id uuid not null references devices(id) on delete cascade, plan_id uuid references device_maintenance_plans(id) on delete set null, maintenance_window_id uuid references device_maintenance_windows(id) on delete set null, fault_report_id uuid references device_fault_reports(id) on delete set null, title text not null, maintenance_type text not null default 'inspection', status text not null default 'pending' check (status in ('pending','in_progress','completed','cancelled')), assigned_to uuid references users(id) on delete set null, description text, result_note text, window_start timestamptz, window_end timestamptz, started_at timestamptz, completed_at timestamptz, created_by uuid references users(id) on delete set null, created_at timestamptz not null default now(), updated_at timestamptz not null default now(), check (window_end is null or window_start is null or window_end > window_start))`
+  },
 ];
 
 const REQUIRED_INDEXES = [
+  { table: 'device_maintenance_plans', label: 'idx_maintenance_plans_due', sql: 'create index if not exists idx_maintenance_plans_due on device_maintenance_plans(status, next_due_at)' },
+  { table: 'device_maintenance_windows', label: 'idx_maintenance_windows_device_time', sql: "create index if not exists idx_maintenance_windows_device_time on device_maintenance_windows(device_id, start_time, end_time) where status in ('scheduled','active')" },
+  { table: 'device_maintenance_windows', label: 'idx_maintenance_windows_lifecycle', sql: "create index if not exists idx_maintenance_windows_lifecycle on device_maintenance_windows(status, start_time, end_time) where status in ('scheduled','active')" },
+  { table: 'device_maintenance_work_orders', label: 'idx_maintenance_work_orders_status_time', sql: 'create index if not exists idx_maintenance_work_orders_status_time on device_maintenance_work_orders(status, window_start desc)' },
+  {
+    table: 'refresh_token_sessions',
+    label: 'idx_refresh_token_sessions_subject',
+    sql: 'create index if not exists idx_refresh_token_sessions_subject on refresh_token_sessions(subject, created_at desc)'
+  },
+  {
+    table: 'refresh_token_sessions',
+    label: 'idx_refresh_token_sessions_expiry',
+    sql: 'create index if not exists idx_refresh_token_sessions_expiry on refresh_token_sessions(expires_at) where revoked_at is null'
+  },
+  {
+    table: 'scheduled_job_runs',
+    label: 'idx_scheduled_job_runs_name_time',
+    sql: 'create index if not exists idx_scheduled_job_runs_name_time on scheduled_job_runs(job_name, scheduled_for desc)'
+  },
+  {
+    table: 'rate_limit_buckets',
+    label: 'idx_rate_limit_buckets_expiry',
+    sql: 'create index if not exists idx_rate_limit_buckets_expiry on rate_limit_buckets(expires_at)'
+  },
+  {
+    table: 'audit_logs',
+    label: 'idx_audit_logs_actor_time',
+    sql: 'create index if not exists idx_audit_logs_actor_time on audit_logs(actor_id, created_at desc)'
+  },
+  {
+    table: 'audit_logs',
+    label: 'idx_audit_logs_action_time',
+    sql: 'create index if not exists idx_audit_logs_action_time on audit_logs(action, created_at desc)'
+  },
+  {
+    table: 'audit_logs',
+    label: 'idx_audit_logs_target',
+    sql: 'create index if not exists idx_audit_logs_target on audit_logs(target_type, target_id)'
+  },
+  {
+    table: 'user_wechat_bindings',
+    label: 'idx_user_wechat_bindings_user',
+    sql: 'create index if not exists idx_user_wechat_bindings_user on user_wechat_bindings(user_id)'
+  },
+  {
+    table: 'user_wechat_bindings',
+    label: 'idx_user_wechat_bindings_unionid',
+    sql: 'create index if not exists idx_user_wechat_bindings_unionid on user_wechat_bindings(unionid) where unionid is not null'
+  },
   {
     table: 'device_time_slots',
     label: 'idx_device_time_slots_device',
@@ -213,6 +367,21 @@ const REQUIRED_INDEXES = [
     table: 'reservation_items',
     label: 'idx_reservation_items_device_time',
     sql: 'create index if not exists idx_reservation_items_device_time on reservation_items(device_id, start_time, end_time)'
+  },
+  {
+    table: 'reservation_items',
+    label: 'idx_reservation_items_pending_time',
+    sql: "create index if not exists idx_reservation_items_pending_time on reservation_items(start_time, created_at desc) where status = 'pending'"
+  },
+  {
+    table: 'borrow_records',
+    label: 'idx_borrow_records_active_due',
+    sql: "create index if not exists idx_borrow_records_active_due on borrow_records(expected_return_time) where status = 'in_use'"
+  },
+  {
+    table: 'users',
+    label: 'idx_users_pending_active',
+    sql: "create index if not exists idx_users_pending_active on users(created_at desc) where status = 'pending' and coalesce(is_banned, false) = false"
   },
   {
     table: 'user_requests',
@@ -248,10 +417,52 @@ const REQUIRED_INDEXES = [
     table: 'chat_conversations',
     label: 'idx_chat_conversations_last_message',
     sql: 'create index if not exists idx_chat_conversations_last_message on chat_conversations(last_message_at desc nulls last, updated_at desc)'
-  }
+  },
+  {
+    table: 'intelligence_action_logs',
+    label: 'idx_intelligence_action_logs_action_time',
+    sql: 'create index if not exists idx_intelligence_action_logs_action_time on intelligence_action_logs(action_id, updated_at desc, created_at desc)'
+  },
+  {
+    table: 'intelligence_action_logs',
+    label: 'idx_intelligence_action_logs_status_time',
+    sql: 'create index if not exists idx_intelligence_action_logs_status_time on intelligence_action_logs(status, updated_at desc)'
+  },
+  {
+    table: 'export_jobs',
+    label: 'idx_export_jobs_worker_queue',
+    sql: 'create index if not exists idx_export_jobs_worker_queue on export_jobs(status, available_at, created_at)'
+  },
+  {
+    table: 'export_jobs',
+    label: 'idx_export_jobs_expired_files',
+    sql: "create index if not exists idx_export_jobs_expired_files on export_jobs(finished_at) where status = 'finished' and file_path is not null"  }
 ];
 
 const REQUIRED_COLUMNS = [
+  { table: 'users', column: 'deleted_at', definition: "timestamptz" },
+  { table: 'devices', column: 'deleted_at', definition: "timestamptz" },
+  { table: 'devices', column: 'created_by', definition: "uuid references users(id) on delete set null" },
+  { table: 'devices', column: 'updated_by', definition: "uuid references users(id) on delete set null" },
+  { table: 'reservations', column: 'deleted_at', definition: "timestamptz" },
+  { table: 'reservations', column: 'created_by', definition: "uuid references users(id) on delete set null" },
+  { table: 'reservations', column: 'updated_by', definition: "uuid references users(id) on delete set null" },
+  { table: 'reservation_items', column: 'deleted_at', definition: "timestamptz" },
+  { table: 'reservation_items', column: 'created_by', definition: "uuid references users(id) on delete set null" },
+  { table: 'reservation_items', column: 'updated_by', definition: "uuid references users(id) on delete set null" },
+  { table: 'reservation_batches', column: 'deleted_at', definition: "timestamptz" },
+  { table: 'reservation_batches', column: 'updated_by', definition: "uuid references users(id) on delete set null" },
+  { table: 'borrow_records', column: 'deleted_at', definition: "timestamptz" },
+  { table: 'borrow_records', column: 'updated_by', definition: "uuid references users(id) on delete set null" },
+  { table: 'device_fault_reports', column: 'deleted_at', definition: "timestamptz" },
+  { table: 'device_fault_reports', column: 'updated_by', definition: "uuid references users(id) on delete set null" },
+  { table: 'user_requests', column: 'deleted_at', definition: "timestamptz" },
+  { table: 'user_requests', column: 'updated_by', definition: "uuid references users(id) on delete set null" },
+  { table: 'device_time_slots', column: 'capacity', definition: "integer not null default 1" },
+  { table: 'user_notifications', column: 'action_url', definition: "text" },
+  { table: 'user_notifications', column: 'level', definition: "text not null default 'info'" },
+  { table: 'chat_conversations', column: 'last_message_preview', definition: "text" },
+  { table: 'chat_conversations', column: 'last_message_type', definition: "text" },
   { table: 'users', column: 'avatar_url', definition: 'text' },
   { table: 'users', column: 'department', definition: 'text' },
   { table: 'users', column: 'last_active_at', definition: 'timestamptz' },
@@ -264,6 +475,12 @@ const REQUIRED_COLUMNS = [
   { table: 'export_jobs', column: 'type', definition: 'text not null default \'usage\'' },
   { table: 'export_jobs', column: 'params', definition: "jsonb not null default '{}'::jsonb" },
   { table: 'export_jobs', column: 'status', definition: "text not null default 'pending'" },
+  { table: 'export_jobs', column: 'attempt_count', definition: 'integer not null default 0' },
+  { table: 'export_jobs', column: 'max_attempts', definition: 'integer not null default 3' },
+  { table: 'export_jobs', column: 'available_at', definition: 'timestamptz' },
+  { table: 'export_jobs', column: 'worker_id', definition: 'text' },
+  { table: 'export_jobs', column: 'lease_token', definition: 'uuid' },
+  { table: 'export_jobs', column: 'lease_expires_at', definition: 'timestamptz' },
   { table: 'export_jobs', column: 'row_count', definition: 'integer not null default 0' },
   { table: 'export_jobs', column: 'file_path', definition: 'text' },
   { table: 'export_jobs', column: 'error_message', definition: 'text' },
@@ -286,6 +503,10 @@ const REQUIRED_COLUMNS = [
   { table: 'borrow_records', column: 'reservation_item_id', definition: 'uuid references reservation_items(id) on delete set null' },
   { table: 'borrow_records', column: 'actual_start_time', definition: 'timestamptz' },
   { table: 'borrow_records', column: 'actual_end_time', definition: 'timestamptz' },
+  { table: 'borrow_records', column: 'return_archive_folder', definition: 'text' },
+  { table: 'borrow_records', column: 'return_archive_photos', definition: "jsonb not null default '[]'::jsonb" },
+  { table: 'devices', column: 'return_mode', definition: "text not null default 'image_required'" },
+  { table: 'devices', column: 'return_require_note', definition: 'boolean not null default false' },
   { table: 'reservation_batches', column: 'submit_note', definition: 'text' },
   { table: 'reservation_batches', column: 'admin_note', definition: 'text' },
   { table: 'device_fault_reports', column: 'severity', definition: "text default 'normal'" },
@@ -308,16 +529,24 @@ const OPTIONAL_DETAIL_UPGRADES = [
 
 const REQUIRED_STATEMENTS = [
   {
+    label: 'remove deprecated admin password seed',
+    sql: "delete from system_configs where config_key = 'admin_default_password_seed'"
+  },
+  {
+    label: 'seed v3 runtime configs',
+    sql: "insert into system_configs (config_key, config_value, description)\n      values\n        ('jwt_access_ttl_minutes', '15', 'Access token validity in minutes'),\n        ('jwt_refresh_ttl_days', '7', 'Refresh token validity in days'),\n        ('v3_feature_chat_ws_enabled', '1', 'Whether chat over WebSocket is enabled in v3'),\n        ('v3_feature_notifications_ws_enabled', '1', 'Whether realtime notifications over WebSocket is enabled in v3'),\n        ('overdue_auto_mark_enabled', '1', 'Whether to auto-mark overdue borrow records'),\n        ('overdue_check_cron', '*/15 * * * *', 'Cron for overdue scan'),\n        ('schema_v3_applied_at', to_char(now() at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), 'IDBS schema baseline applied timestamp'),\n        ('schema_v5_applied_at', to_char(now() at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), 'IDBS 5.0 release baseline applied timestamp')\n      on conflict (config_key) do update set\n        config_value = case when system_configs.config_key in ('schema_v3_applied_at', 'schema_v5_applied_at') then excluded.config_value else system_configs.config_value end,\n        updated_at = now()"
+  },
+  {
     label: 'seed device time slots',
     sql: `insert into device_time_slots (device_id, slot_key, label, start_time, end_time, crosses_day, sort_order)
       select d.id, slot.slot_key, slot.label, slot.start_time::time, slot.end_time::time, slot.crosses_day, slot.sort_order
       from devices d
       cross join (values
-        ('morning', '上午 8:00-12:00', '08:00', '12:00', false, 10),
-        ('afternoon', '下午 12:00-17:00', '12:00', '17:00', false, 20),
-        ('evening', '傍晚 17:00-22:00', '17:00', '22:00', false, 30),
-        ('night', '夜间 22:00-次日 8:00', '22:00', '08:00', true, 40),
-        ('daytime', '白天 8:00-22:00', '08:00', '22:00', false, 50)
+        ('morning', '涓婂崍 8:00-12:00', '08:00', '12:00', false, 10),
+        ('afternoon', '涓嬪崍 12:00-17:00', '12:00', '17:00', false, 20),
+        ('evening', '鍌嶆櫄 17:00-22:00', '17:00', '22:00', false, 30),
+        ('night', '澶滈棿 22:00-娆℃棩 8:00', '22:00', '08:00', true, 40),
+        ('daytime', '鐧藉ぉ 8:00-22:00', '08:00', '22:00', false, 50)
       ) as slot(slot_key, label, start_time, end_time, crosses_day, sort_order)
       on conflict (device_id, slot_key) do nothing`
   },
@@ -328,7 +557,7 @@ const REQUIRED_STATEMENTS = [
   {
     label: 'seed management chat group',
     sql: `insert into chat_conversations (type, title, system_key, is_system, retention_days, created_at, updated_at)
-      values ('group', '实验室管理群', 'lab_management', true, 90, now(), now())
+      values ('group', '瀹為獙瀹ょ鐞嗙兢', 'lab_management', true, 90, now(), now())
       on conflict (system_key) where system_key is not null do update set
         title = excluded.title,
         is_system = true,
@@ -359,21 +588,50 @@ const REQUIRED_STATEMENTS = [
       end$$`
   },
   {
+    label: 'migrate legacy ops administrators to duty_admin',
+    sql: `do $
+      begin
+        if to_regclass('public.admin_roles') is not null then
+          update admin_roles
+          set role_key = 'duty_admin', updated_at = now()
+          where role_key = 'ops';
+        end if;
+        if to_regclass('public.roles') is not null and to_regclass('public.user_roles') is not null then
+          insert into roles (role_key, role_name, description, is_system)
+          values ('duty_admin', 'Duty administrator', 'Reservation, return and fault handling', true)
+          on conflict (role_key) do update set role_name = excluded.role_name, description = excluded.description, is_system = excluded.is_system;
+          insert into user_roles (user_id, role_id, granted_by, granted_at)
+          select ur.user_id, duty.id, ur.granted_by, ur.granted_at
+          from user_roles ur
+          join roles legacy on legacy.id = ur.role_id and legacy.role_key = 'ops'
+          join roles duty on duty.role_key = 'duty_admin'
+          on conflict do nothing;
+          delete from user_roles using roles legacy where user_roles.role_id = legacy.id and legacy.role_key = 'ops';
+          delete from roles where role_key = 'ops';
+        end if;
+      end$`
+  },
+  {
     label: 'seed permissions',
     sql: `insert into permissions (permission_key, name, description, group_name, sort_order)
       values
-        ('user.approve', '同意用户注册', '审核新用户注册申请', '用户', 10),
-        ('user.manage', '管理用户', '搜索、禁用、恢复、解绑用户', '用户', 20),
-        ('reservation.view', '查看预约', '查看预约与日历数据', '预约', 30),
-        ('reservation.approve', '同意用户预约', '审批预约批次和明细', '预约', 40),
-        ('device.view', '查看设备', '查看设备和设备状态', '设备', 50),
-        ('device.manage', '管理设备', '新增、编辑、停用设备和时间段', '设备', 60),
-        ('fault.manage', '处理故障报备', '处理故障并联动设备状态', '故障', 70),
-        ('stats.view', '查看统计', '查看统计与分析图', '统计', 80),
-        ('stats.export', '导出统计', '导出统计数据', '统计', 90),
-        ('system.config', '系统配置', '修改系统配置', '系统', 100),
-        ('admin.manage', '管理管理员权限', '授权或撤销管理员权限', '系统', 110),
-        ('operation.view', '查看操作日志', '查看后台操作日志', '系统', 120)
+        ('user.approve', 'Approve user registration', 'Review new user registration requests', 'Users', 10),
+        ('user.manage', 'Manage users', 'Search, disable, restore and unbind users', 'Users', 20),
+        ('reservation.view', 'View reservations', 'View reservation and calendar data', 'Reservations', 30),
+        ('reservation.approve', 'Approve reservations', 'Approve reservation batches and items', 'Reservations', 40),
+        ('reservation.change_plan', 'Change reservation plan', 'Modify reservation time and slot', 'Reservations', 45),
+        ('return.view', 'View return records', 'View return status and archive data', 'Returns', 46),
+        ('return.confirm', 'Confirm returns', 'Confirm or record device returns', 'Returns', 47),
+        ('return.image_review', 'Review return images', 'Review return image evidence', 'Returns', 48),
+        ('return.export', 'Export return archives', 'Export return records and archives', 'Returns', 49),
+        ('device.view', 'View devices', 'View device inventory and status', 'Devices', 50),
+        ('device.manage', 'Manage devices', 'Create, edit and maintain devices', 'Devices', 60),
+        ('fault.manage', 'Manage fault reports', 'Process device fault reports', 'Faults', 70),
+        ('stats.view', 'View analytics', 'View analytics and reports', 'Analytics', 80),
+        ('stats.export', 'Export analytics', 'Export analytics data', 'Analytics', 90),
+        ('system.config', 'System configuration', 'Manage system configuration', 'System', 100),
+        ('admin.manage', 'Manage administrators', 'Grant or revoke administrator permissions', 'System', 110),
+        ('audit.view', 'View operation logs', 'View administrator operation logs', 'System', 120)
       on conflict (permission_key) do update set
         name = excluded.name,
         description = excluded.description,
@@ -384,22 +642,21 @@ const REQUIRED_STATEMENTS = [
     label: 'seed roles',
     sql: `insert into roles (role_key, role_name, description, is_system)
       values
-        ('super_admin', '超级管理员', '全部权限', true),
-        ('admin', '管理员', '设备、用户、预约、统计管理', true),
-        ('ops', '运营', '设备、预约、故障处理', true),
-        ('auditor', '审计', '查看与导出', true)
+        ('super_admin', 'Super administrator', 'All permissions', true),
+        ('admin', 'Administrator', 'Device, user, reservation and analytics management', true),
+        ('duty_admin', 'Duty administrator', 'Reservation, return and fault handling', true),
+        ('auditor', 'Auditor', 'Read and export access', true)
       on conflict (role_key) do update set role_name = excluded.role_name, description = excluded.description, is_system = excluded.is_system`
-  },
-  {
+  },  {
     label: 'seed role permissions',
     sql: `insert into role_permissions (role_id, permission_key)
       select r.id, p.permission_key
       from roles r
       join permissions p on (
         r.role_key = 'super_admin'
-        or (r.role_key = 'admin' and p.permission_key in ('user.approve','user.manage','reservation.view','reservation.approve','device.view','device.manage','fault.manage','stats.view','stats.export'))
-        or (r.role_key = 'ops' and p.permission_key in ('reservation.view','reservation.approve','device.view','device.manage','fault.manage'))
-        or (r.role_key = 'auditor' and p.permission_key in ('reservation.view','device.view','stats.view','stats.export','operation.view'))
+        or (r.role_key = 'admin' and p.permission_key in ('user.approve','user.manage','reservation.view','device.view','device.manage','fault.manage','stats.view','stats.export'))
+        or (r.role_key = 'duty_admin' and p.permission_key in ('reservation.view','reservation.approve','return.view','return.confirm','return.image_review','device.view','fault.manage'))
+        or (r.role_key = 'auditor' and p.permission_key in ('reservation.view','device.view','stats.view','stats.export','audit.view'))
       )
       on conflict do nothing`
   },
@@ -484,41 +741,70 @@ async function columnInfo(client, table, column) {
 async function tryStatement(client, label, sql) {
   try {
     await client.query(sql);
-    console.log(`DONE ${label}`);
+    console.log(`瀹屾垚 ${label}`);
     return { ok: true };
   } catch (error) {
     if (error.code === '42701') {
-      console.log(`SKIP ${label} -> already exists`);
+      console.log(`Skipped ${label}: already exists`);
       return { ok: true, skipped: true };
     }
     if (error.code === '42501' || /must be owner|permission denied/i.test(error.message || '')) {
-      console.warn(`WARN ${label} -> ${error.message}`);
+      console.warn(`鎻愮ず ${label} -> ${error.message}`);
       return { ok: false, permission: true, error };
     }
-    console.error(`FAIL ${label} -> ${error.message}`);
+    console.error(`澶辫触 ${label} -> ${error.message}`);
     return { ok: false, error };
   }
 }
 
+function getConnectionUser() {
+  try {
+    return new URL(connectionString).username || 'idbs_user';
+  } catch (_) {
+    return 'idbs_user';
+  }
+}
+
+function printOwnerTransferSql(appUser) {
+  if (!appUser || appUser === 'postgres') return;
+  const owner = quoteIdent(appUser);
+    console.log('Run the generated manual SQL with the database owner if required.');
+  console.log(`alter schema public owner to ${owner};`);
+  console.log(`do $idbs_owner$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename FROM pg_tables WHERE schemaname = 'public' LOOP
+    EXECUTE format('ALTER TABLE %I.%I OWNER TO ${owner}', r.schemaname, r.tablename);
+  END LOOP;
+  FOR r IN SELECT schemaname, viewname FROM pg_views WHERE schemaname = 'public' LOOP
+    EXECUTE format('ALTER VIEW %I.%I OWNER TO ${owner}', r.schemaname, r.viewname);
+  END LOOP;
+  FOR r IN SELECT sequence_schema, sequence_name FROM information_schema.sequences WHERE sequence_schema = 'public' LOOP
+    EXECUTE format('ALTER SEQUENCE %I.%I OWNER TO ${owner}', r.sequence_schema, r.sequence_name);
+  END LOOP;
+END $idbs_owner$;`);
+}
+
 function printManualSql(failedColumns = [], failedStatements = []) {
   if (!failedColumns.length && !failedStatements.length) return;
-  console.log('\nManual SQL for a PostgreSQL table owner/admin account:');
-  console.log('--------------------------------------------------');
+    console.log('Run the generated manual SQL with the database owner if required.');
+    console.log('Run the generated manual SQL with the database owner if required.');
+  printOwnerTransferSql(getConnectionUser());
   for (const item of failedColumns) {
     console.log(`alter table ${quoteIdent(item.table)} add column if not exists ${quoteIdent(item.column)} ${item.definition};`);
   }
   for (const item of failedStatements) {
     console.log(`${item.sql};`);
   }
-  console.log('--------------------------------------------------');
-  console.log('After applying the SQL above, run: npm run doctor');
+    console.log('Run the generated manual SQL with the database owner if required.');
+    console.log('Run the generated manual SQL with the database owner if required.');
 }
-
 async function main() {
-  if (!connectionString) throw new Error('DATABASE_URL is not configured.');
+  if (!connectionString) throw new Error('DATABASE_URL is required.');
   const pool = new Pool({
     connectionString,
-    ssl: String(process.env.PGSSL || '').toLowerCase() === 'true' ? { rejectUnauthorized: false } : undefined,
+    ssl: postgresSslOptions(),
     connectionTimeoutMillis: 5000
   });
 
@@ -529,32 +815,30 @@ async function main() {
   try {
     const client = await pool.connect();
     try {
-      console.log('Checking schema upgrade extensions...');
+    console.log('Run the generated manual SQL with the database owner if required.');
       for (const item of REQUIRED_EXTENSIONS) {
         const result = await tryStatement(client, item.label, item.sql);
         if (!result.ok && result.permission) failedStatements.push(item);
         else if (!result.ok) hardFailures.push(`${item.label}: ${result.error.message}`);
       }
-
-      console.log('Checking schema upgrade tables...');
+    console.log('Run the generated manual SQL with the database owner if required.');
       for (const item of REQUIRED_TABLES) {
         if (await tableExists(client, item.name)) {
-          console.log(`SKIP table ${item.name} -> exists`);
+          console.log(`Skipped table ${item.name}: already exists`);
           continue;
         }
         const result = await tryStatement(client, `table ${item.name}`, item.sql);
         if (!result.ok && result.permission) failedStatements.push(item);
         else if (!result.ok) hardFailures.push(`table ${item.name}: ${result.error.message}`);
       }
-
-      console.log('Checking schema upgrade columns...');
+    console.log('Run the generated manual SQL with the database owner if required.');
       for (const item of REQUIRED_COLUMNS) {
         if (!(await tableExists(client, item.table))) {
-          console.warn(`WARN ${item.table}.${item.column} -> table missing, skipped`);
+          console.warn(`鎻愮ず ${item.table}.${item.column} -> 琛ㄤ笉瀛樺湪锛屽凡璺宠繃`);
           continue;
         }
         if (await columnInfo(client, item.table, item.column)) {
-          console.log(`SKIP ${item.table}.${item.column} -> exists`);
+          console.log(`Skipped column ${item.table}.${item.column}: already exists`);
           continue;
         }
         const sql = `alter table ${quoteIdent(item.table)} add column ${quoteIdent(item.column)} ${item.definition}`;
@@ -570,7 +854,7 @@ async function main() {
           if (!result.ok && result.permission) failedStatements.push(OPTIONAL_DETAIL_UPGRADES[0]);
           else if (!result.ok) hardFailures.push(`${OPTIONAL_DETAIL_UPGRADES[0].label}: ${result.error.message}`);
         } else if (detail) {
-          console.log('SKIP operation_logs.detail jsonb conversion -> already jsonb');
+    console.log('Run the generated manual SQL with the database owner if required.');
         }
         if (detail) {
           const result = await tryStatement(client, OPTIONAL_DETAIL_UPGRADES[1].label, OPTIONAL_DETAIL_UPGRADES[1].sql);
@@ -578,19 +862,17 @@ async function main() {
           else if (!result.ok) hardFailures.push(`${OPTIONAL_DETAIL_UPGRADES[1].label}: ${result.error.message}`);
         }
       }
-
-      console.log('Checking schema upgrade indexes...');
+    console.log('Run the generated manual SQL with the database owner if required.');
       for (const item of REQUIRED_INDEXES) {
         if (!(await tableExists(client, item.table))) {
-          console.warn(`WARN ${item.label} -> table ${item.table} missing, skipped`);
+          console.warn('Skipped index because its table is absent.');
           continue;
         }
         const result = await tryStatement(client, item.label, item.sql);
         if (!result.ok && result.permission) failedStatements.push(item);
         else if (!result.ok) hardFailures.push(`${item.label}: ${result.error.message}`);
       }
-
-      console.log('Checking schema seed data and views...');
+    console.log('Run the generated manual SQL with the database owner if required.');
       for (const item of REQUIRED_STATEMENTS) {
         const result = await tryStatement(client, item.label, item.sql);
         if (!result.ok && result.permission) failedStatements.push(item);
@@ -605,14 +887,14 @@ async function main() {
 
   printManualSql(failedColumns, failedStatements);
   if (hardFailures.length) {
-    console.error('\nSchema upgrade failed:');
+    console.error('Schema upgrade failed:');
     for (const failure of hardFailures) console.error(`- ${failure}`);
     process.exitCode = 1;
   } else if (failedColumns.length || failedStatements.length) {
-    console.warn('\nSchema upgrade partially applied. Some changes require a PostgreSQL table owner/admin account.');
+    console.warn('Schema upgrade completed with warnings.');
     process.exitCode = 2;
   } else {
-    console.log('\nSchema upgrade finished successfully.');
+    console.log('Run the generated manual SQL with the database owner if required.');
   }
 }
 
@@ -620,3 +902,16 @@ main().catch((error) => {
   console.error(error.message || error);
   process.exit(1);
 });
+
+
+
+
+
+
+
+
+
+
+
+
+

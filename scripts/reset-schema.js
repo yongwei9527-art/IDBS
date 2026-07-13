@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const { postgresSslOptions } = require('../src/lib/postgres-ssl');
 require('dotenv').config();
 
 const root = path.resolve(__dirname, '..');
@@ -27,10 +28,10 @@ async function main() {
     throw new Error(`Schema file not found: ${schemaPath}`);
   }
 
-  const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+  const schemaSql = fs.readFileSync(schemaPath, 'utf8').replace(/^\uFEFF/, '');
   const pool = new Pool({
     connectionString,
-    ssl: String(process.env.PGSSL || '').toLowerCase() === 'true' ? { rejectUnauthorized: false } : undefined,
+    ssl: postgresSslOptions(),
     connectionTimeoutMillis: 5000
   });
 
@@ -55,3 +56,4 @@ main().catch((error) => {
   console.error(error.message || error);
   process.exit(1);
 });
+

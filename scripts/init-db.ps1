@@ -1,20 +1,23 @@
-param(
+﻿param(
   [string]$DatabaseUrl = $env:DATABASE_URL,
   [string]$SchemaPath = "./sql/schema.sql",
   [string]$MigrationsDir = "./sql/migrations"
 )
 
+$ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+
 if (-not $DatabaseUrl) {
-  Write-Error "DATABASE_URL is required. Set the environment variable or pass -DatabaseUrl."
+  Write-Error "未配置 DATABASE_URL，请设置环境变量或传入 -DatabaseUrl。"
   exit 1
 }
 
 if (-not (Get-Command psql -ErrorAction SilentlyContinue)) {
-  Write-Error "psql was not found. Install PostgreSQL client tools first."
+  Write-Error "未找到 psql，请先安装 PostgreSQL 客户端工具，或把 bin 目录加入 PATH。"
   exit 1
 }
 
-Write-Host "Initializing PostgreSQL schema from $SchemaPath"
+Write-Host "正在导入 PostgreSQL 表结构： $SchemaPath"
 psql $DatabaseUrl -v ON_ERROR_STOP=1 -f $SchemaPath
 
 if (Test-Path $MigrationsDir) {
@@ -25,15 +28,14 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 "@
   psql $DatabaseUrl -v ON_ERROR_STOP=1 -c $markerQuery | Out-Null
-  Get-ChildItem $MigrationsDir -Filter *.sql | Sort-Object Name | ForEach-Object {
+  Get-ChildItem $MigrationsDir -Filter *.sql | Where-Object { $_.Name -notmatch '(?i)(^|[._-])rollback([._-]|$)' } | Sort-Object Name | ForEach-Object {
     $version = $_.BaseName
     $check = psql $DatabaseUrl -tAc "SELECT 1 FROM schema_migrations WHERE version = '$version'"
     if ($check -ne '1') {
-      Write-Host "Applying migration $($_.Name)"
-      psql $DatabaseUrl -v ON_ERROR_STOP=1 -f $_.FullName
-      psql $DatabaseUrl -v ON_ERROR_STOP=1 -c "INSERT INTO schema_migrations (version) VALUES ('$version')"
+      Write-Host "正在执行迁移： $($_.Name)"
+      psql $DatabaseUrl -v ON_ERROR_STOP=1 --single-transaction -f $_.FullName -c "INSERT INTO schema_migrations (version) VALUES ('$version') ON CONFLICT DO NOTHING;"
     }
   }
 }
 
-Write-Host "Done."
+Write-Host "数据库初始化完成。"

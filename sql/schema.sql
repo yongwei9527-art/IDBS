@@ -1,4 +1,4 @@
--- IDBS schema for PostgreSQL
+﻿-- IDBS schema for PostgreSQL
 -- Run this in schema public.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -26,8 +26,11 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_login_at TIMESTAMPTZ,
-  last_active_at TIMESTAMPTZ
+  last_active_at TIMESTAMPTZ,
+  deleted_at TIMESTAMPTZ
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS users_single_super_admin_idx ON users ((role)) WHERE role = 'super_admin';
 
 CREATE TABLE IF NOT EXISTS admin_roles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -91,6 +94,11 @@ CREATE TABLE IF NOT EXISTS devices (
   last_return_user TEXT,
   last_return_time TIMESTAMPTZ,
   last_condition TEXT,
+  return_mode TEXT NOT NULL DEFAULT 'image_required',
+  return_require_note BOOLEAN NOT NULL DEFAULT FALSE,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -131,6 +139,9 @@ CREATE TABLE IF NOT EXISTS reservations (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   approved_at TIMESTAMPTZ,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  deleted_at TIMESTAMPTZ,
   CHECK (end_time > start_time)
 );
 
@@ -140,12 +151,19 @@ CREATE TABLE IF NOT EXISTS reservation_batches (
   device_codes TEXT NOT NULL,
   time_slots TEXT NOT NULL,
   purpose TEXT,
+  submit_note TEXT,
+  admin_note TEXT,
   status TEXT NOT NULL DEFAULT 'pending',
+  updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_reservation_batches_user_time ON reservation_batches(user_id, created_at DESC);
+
+ALTER TABLE reservations
+  ADD COLUMN IF NOT EXISTS batch_id UUID REFERENCES reservation_batches(id) ON DELETE SET NULL;
 
 CREATE TABLE IF NOT EXISTS borrow_records (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -159,11 +177,20 @@ CREATE TABLE IF NOT EXISTS borrow_records (
   duration_minutes INTEGER,
   return_condition TEXT,
   return_note TEXT,
+  overdue_reason_category TEXT,
+  abnormal_reason_category TEXT,
   return_photos JSONB NOT NULL DEFAULT '[]'::jsonb,
   status TEXT NOT NULL DEFAULT 'in_use', -- in_use/returned/abnormal_pending/overdue
   is_overdue BOOLEAN NOT NULL DEFAULT FALSE,
   actual_start_time TIMESTAMPTZ,
   actual_end_time TIMESTAMPTZ,
+  return_archive_folder TEXT,
+  return_archive_photos JSONB NOT NULL DEFAULT '[]'::jsonb,
+  return_reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  return_reviewed_at TIMESTAMPTZ,
+  return_review_note TEXT,
+  updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -189,16 +216,79 @@ CREATE TABLE IF NOT EXISTS device_fault_reports (
   reservation_item_id UUID,
   issue_type TEXT NOT NULL DEFAULT 'fault',
   severity TEXT DEFAULT 'normal',
+  reason_category TEXT,
+  auto_action TEXT NOT NULL DEFAULT 'inspect',
+  impact_current_borrow BOOLEAN NOT NULL DEFAULT FALSE,
+  impact_future_reservations BOOLEAN NOT NULL DEFAULT FALSE,
+  notify_affected_users BOOLEAN NOT NULL DEFAULT FALSE,
+  transfer_to_backup BOOLEAN NOT NULL DEFAULT FALSE,
   description TEXT,
   photos JSONB NOT NULL DEFAULT '[]'::jsonb,
   status TEXT NOT NULL DEFAULT 'pending', -- pending/processing/resolved/closed
   admin_note TEXT,
   handled_by UUID REFERENCES users(id) ON DELETE SET NULL,
   handled_at TIMESTAMPTZ,
+  updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   resolved_at TIMESTAMPTZ
 );
+
+
+-- Preventive maintenance, work orders and reservation-blocking windows (IDBS 5.0)
+CREATE TABLE IF NOT EXISTS device_maintenance_plans (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  maintenance_type TEXT NOT NULL DEFAULT 'inspection',
+  interval_days INTEGER NOT NULL DEFAULT 0 CHECK (interval_days >= 0),
+  next_due_at TIMESTAMPTZ,
+  last_completed_at TIMESTAMPTZ,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','paused','archived')),
+  notes TEXT,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS device_maintenance_windows (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  plan_id UUID REFERENCES device_maintenance_plans(id) ON DELETE SET NULL,
+  title TEXT NOT NULL,
+  start_time TIMESTAMPTZ NOT NULL,
+  end_time TIMESTAMPTZ NOT NULL,
+  status TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled','active','completed','cancelled')),
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (end_time > start_time)
+);
+CREATE TABLE IF NOT EXISTS device_maintenance_work_orders (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  plan_id UUID REFERENCES device_maintenance_plans(id) ON DELETE SET NULL,
+  maintenance_window_id UUID REFERENCES device_maintenance_windows(id) ON DELETE SET NULL,
+  fault_report_id UUID REFERENCES device_fault_reports(id) ON DELETE SET NULL,
+  title TEXT NOT NULL,
+  maintenance_type TEXT NOT NULL DEFAULT 'inspection',
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','in_progress','completed','cancelled')),
+  assigned_to UUID REFERENCES users(id) ON DELETE SET NULL,
+  description TEXT,
+  result_note TEXT,
+  window_start TIMESTAMPTZ,
+  window_end TIMESTAMPTZ,
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (window_end IS NULL OR window_start IS NULL OR window_end > window_start)
+);
+CREATE INDEX IF NOT EXISTS idx_maintenance_plans_due ON device_maintenance_plans(status, next_due_at);
+CREATE INDEX IF NOT EXISTS idx_maintenance_windows_device_time ON device_maintenance_windows(device_id, start_time, end_time) WHERE status IN ('scheduled','active');
+CREATE INDEX IF NOT EXISTS idx_maintenance_windows_lifecycle ON device_maintenance_windows(status, start_time, end_time) WHERE status IN ('scheduled','active');
+CREATE INDEX IF NOT EXISTS idx_maintenance_work_orders_status_time ON device_maintenance_work_orders(status, window_start DESC);
 
 CREATE TABLE IF NOT EXISTS user_requests (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -209,13 +299,17 @@ CREATE TABLE IF NOT EXISTS user_requests (
   description TEXT NOT NULL,
   priority TEXT NOT NULL DEFAULT 'normal',
   status TEXT NOT NULL DEFAULT 'pending',
+  no_show_reason_category TEXT,
   admin_note TEXT,
   change_request_note TEXT,
   confirmed_by UUID REFERENCES users(id) ON DELETE SET NULL,
   confirmed_at TIMESTAMPTZ,
   locked_at TIMESTAMPTZ,
+  updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (status IN ('pending','confirmed','rejected','closed','cancelled','change_requested'))
 );
 
 CREATE TABLE IF NOT EXISTS user_notifications (
@@ -229,6 +323,8 @@ CREATE TABLE IF NOT EXISTS user_notifications (
   device_id UUID REFERENCES devices(id) ON DELETE SET NULL,
   reservation_id UUID REFERENCES reservations(id) ON DELETE SET NULL,
   is_read BOOLEAN NOT NULL DEFAULT FALSE,
+  action_url TEXT,
+  level TEXT NOT NULL DEFAULT 'info',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   read_at TIMESTAMPTZ
 );
@@ -243,7 +339,9 @@ CREATE TABLE IF NOT EXISTS chat_conversations (
   created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  last_message_at TIMESTAMPTZ
+  last_message_at TIMESTAMPTZ,
+  last_message_preview TEXT,
+  last_message_type TEXT
 );
 
 CREATE TABLE IF NOT EXISTS chat_participants (
@@ -280,6 +378,95 @@ CREATE TABLE IF NOT EXISTS chat_message_reads (
   PRIMARY KEY (message_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  actor_name TEXT,
+  action TEXT NOT NULL,
+  target_type TEXT,
+  target_id UUID,
+  detail JSONB NOT NULL DEFAULT '{}'::jsonb,
+  ip_address TEXT,
+  user_agent TEXT,
+  request_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_actor_time ON audit_logs(actor_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action_time ON audit_logs(action, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_target ON audit_logs(target_type, target_id);
+
+CREATE TABLE IF NOT EXISTS user_wechat_bindings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  openid TEXT NOT NULL,
+  unionid TEXT,
+  app_id TEXT,
+  nickname TEXT,
+  bound_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(openid, app_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_wechat_bindings_user ON user_wechat_bindings(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_wechat_bindings_unionid ON user_wechat_bindings(unionid) WHERE unionid IS NOT NULL;
+
+
+CREATE TABLE IF NOT EXISTS intelligence_action_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  action_id TEXT NOT NULL,
+  action_type TEXT,
+  action_title TEXT,
+  status TEXT NOT NULL DEFAULT 'open',
+  note TEXT,
+  assigned_to UUID REFERENCES users(id) ON DELETE SET NULL,
+  handled_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  handled_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (status IN ('open','done','ignored','delegated'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_intelligence_action_logs_action_time ON intelligence_action_logs(action_id, updated_at DESC, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_intelligence_action_logs_status_time ON intelligence_action_logs(status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS refresh_token_sessions (
+  jti UUID PRIMARY KEY,
+  subject TEXT NOT NULL,
+  token_hash TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  user_agent TEXT,
+  ip_address TEXT,
+  revoked_at TIMESTAMPTZ,
+  replaced_by UUID,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_refresh_token_sessions_subject ON refresh_token_sessions(subject, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_refresh_token_sessions_expiry ON refresh_token_sessions(expires_at) WHERE revoked_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS scheduled_job_runs (
+  job_key TEXT PRIMARY KEY,
+  job_name TEXT NOT NULL,
+  scheduled_for TIMESTAMPTZ NOT NULL,
+  status TEXT NOT NULL DEFAULT 'running',
+  instance_id TEXT,
+  error_message TEXT,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ,
+  CHECK (status IN ('running','success','failed'))
+);
+CREATE INDEX IF NOT EXISTS idx_scheduled_job_runs_name_time ON scheduled_job_runs(job_name, scheduled_for DESC);
+
+CREATE TABLE IF NOT EXISTS rate_limit_buckets (
+  bucket_key TEXT NOT NULL,
+  window_start TIMESTAMPTZ NOT NULL,
+  count INTEGER NOT NULL DEFAULT 1,
+  expires_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (bucket_key, window_start)
+);
+CREATE INDEX IF NOT EXISTS idx_rate_limit_buckets_expiry ON rate_limit_buckets(expires_at);
+
 CREATE TABLE IF NOT EXISTS operation_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   operator_id UUID,
@@ -298,7 +485,13 @@ CREATE TABLE IF NOT EXISTS export_jobs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   type TEXT NOT NULL,
   params JSONB NOT NULL DEFAULT '{}'::jsonb,
-  status TEXT NOT NULL DEFAULT 'pending',
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'finished', 'failed')),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts BETWEEN 1 AND 10),
+  available_at TIMESTAMPTZ,
+  worker_id TEXT,
+  lease_token UUID,
+  lease_expires_at TIMESTAMPTZ,
   row_count INTEGER NOT NULL DEFAULT 0,
   file_path TEXT,
   error_message TEXT,
@@ -307,6 +500,13 @@ CREATE TABLE IF NOT EXISTS export_jobs (
   started_at TIMESTAMPTZ,
   finished_at TIMESTAMPTZ
 );
+
+CREATE INDEX IF NOT EXISTS idx_export_jobs_worker_queue
+  ON export_jobs(status, available_at, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_export_jobs_expired_files
+  ON export_jobs(finished_at)
+  WHERE status = 'finished' AND file_path IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS device_time_slots (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -317,6 +517,7 @@ CREATE TABLE IF NOT EXISTS device_time_slots (
   end_time TIME NOT NULL,
   crosses_day BOOLEAN NOT NULL DEFAULT FALSE,
   sort_order INTEGER NOT NULL DEFAULT 0,
+  capacity INTEGER NOT NULL DEFAULT 1,
   enabled BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -336,19 +537,34 @@ CREATE TABLE IF NOT EXISTS reservation_items (
   admin_note TEXT,
   approved_by UUID REFERENCES users(id) ON DELETE SET NULL,
   approved_at TIMESTAMPTZ,
+  cancel_previous_status TEXT,
+  cancel_requested_at TIMESTAMPTZ,
+  cancel_request_note TEXT,
+  cancel_reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  cancel_reviewed_at TIMESTAMPTZ,
+  cancel_review_note TEXT,
   reservation_id UUID REFERENCES reservations(id) ON DELETE SET NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK (end_time > start_time)
 );
 
-ALTER TABLE borrow_records
-  ADD CONSTRAINT borrow_records_reservation_item_fk
-  FOREIGN KEY (reservation_item_id) REFERENCES reservation_items(id) ON DELETE SET NULL;
-
-ALTER TABLE device_fault_reports
-  ADD CONSTRAINT device_fault_reports_reservation_item_fk
-  FOREIGN KEY (reservation_item_id) REFERENCES reservation_items(id) ON DELETE SET NULL;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'borrow_records_reservation_item_fk') THEN
+    ALTER TABLE borrow_records
+      ADD CONSTRAINT borrow_records_reservation_item_fk
+      FOREIGN KEY (reservation_item_id) REFERENCES reservation_items(id) ON DELETE SET NULL;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'device_fault_reports_reservation_item_fk') THEN
+    ALTER TABLE device_fault_reports
+      ADD CONSTRAINT device_fault_reports_reservation_item_fk
+      FOREIGN KEY (reservation_item_id) REFERENCES reservation_items(id) ON DELETE SET NULL;
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS permissions (
   permission_key TEXT PRIMARY KEY,
@@ -393,13 +609,18 @@ CROSS JOIN (VALUES
 ) AS slot(slot_key, label, start_time, end_time, crosses_day, sort_order)
 ON CONFLICT (device_id, slot_key) DO NOTHING;
 
-ALTER TABLE reservation_items
-  ADD CONSTRAINT reservation_items_no_overlap_active
-  EXCLUDE USING gist (
-    device_id WITH =,
-    tstzrange(start_time, end_time, '[)') WITH &&
-  )
-  WHERE (status IN ('pending','approved','in_use'));
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'reservation_items_no_overlap_active') THEN
+    ALTER TABLE reservation_items
+      ADD CONSTRAINT reservation_items_no_overlap_active
+      EXCLUDE USING gist (
+        device_id WITH =,
+        tstzrange(start_time, end_time, '[)') WITH &&
+      )
+      WHERE (status IN ('pending','approved','in_use'));
+  END IF;
+END $$;
 
 CREATE OR REPLACE VIEW calendar_events_view AS
 SELECT
@@ -457,6 +678,9 @@ CREATE INDEX IF NOT EXISTS idx_reservations_device_time ON reservations(device_i
 CREATE INDEX IF NOT EXISTS idx_reservations_user_time ON reservations(user_id, start_time);
 CREATE INDEX IF NOT EXISTS idx_borrow_records_device_time ON borrow_records(device_id, borrow_time, return_time);
 CREATE INDEX IF NOT EXISTS idx_borrow_records_user_time ON borrow_records(user_id, borrow_time, return_time);
+CREATE INDEX IF NOT EXISTS idx_borrow_records_active_due ON borrow_records(expected_return_time) WHERE status = 'in_use';
+CREATE INDEX IF NOT EXISTS idx_borrow_records_return_review ON borrow_records(status, return_time DESC) WHERE status IN ('return_pending', 'abnormal_pending');
+CREATE INDEX IF NOT EXISTS idx_users_pending_active ON users(created_at DESC) WHERE status = 'pending' AND coalesce(is_banned, FALSE) = FALSE;
 CREATE INDEX IF NOT EXISTS idx_user_activity_event_time ON user_activity_logs(event_type, created_at);
 CREATE INDEX IF NOT EXISTS idx_user_activity_openid_time ON user_activity_logs(wechat_openid, created_at);
 CREATE INDEX IF NOT EXISTS idx_usage_log_created_at ON usage_log(created_at);
@@ -464,6 +688,7 @@ CREATE INDEX IF NOT EXISTS idx_usage_log_record_action ON usage_log(record_id, a
 CREATE INDEX IF NOT EXISTS idx_wechat_push_logs_date ON wechat_push_logs(push_date, created_at);
 CREATE INDEX IF NOT EXISTS idx_fault_reports_device_time ON device_fault_reports(device_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_fault_reports_status_time ON device_fault_reports(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reservation_items_cancel_requested ON reservation_items(status, cancel_requested_at DESC) WHERE status = 'cancel_requested';
 CREATE INDEX IF NOT EXISTS idx_user_requests_user_time ON user_requests(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_user_requests_status_time ON user_requests(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_user_notifications_user_time ON user_notifications(user_id, created_at DESC);
@@ -481,7 +706,7 @@ CREATE INDEX IF NOT EXISTS idx_export_jobs_created_by_time ON export_jobs(create
 CREATE INDEX IF NOT EXISTS idx_export_jobs_status_time ON export_jobs(status, created_at DESC);
 
 INSERT INTO chat_conversations (type, title, system_key, is_system, retention_days, created_at, updated_at)
-VALUES ('group', '实验管理总群', 'lab_management', TRUE, 7, now(), now())
+VALUES ('group', '实验室管理总群', 'lab_management', TRUE, 90, now(), now())
 ON CONFLICT (system_key) WHERE system_key IS NOT NULL DO UPDATE SET
   title = EXCLUDED.title,
   is_system = TRUE,
@@ -502,6 +727,7 @@ CREATE INDEX IF NOT EXISTS idx_device_time_slots_device ON device_time_slots(dev
 CREATE INDEX IF NOT EXISTS idx_reservation_items_batch ON reservation_items(batch_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reservation_items_user_time ON reservation_items(user_id, start_time DESC);
 CREATE INDEX IF NOT EXISTS idx_reservation_items_device_time ON reservation_items(device_id, start_time, end_time);
+CREATE INDEX IF NOT EXISTS idx_reservation_items_pending_time ON reservation_items(start_time, created_at DESC) WHERE status = 'pending';
 
 INSERT INTO system_configs (config_key, config_value, description)
 VALUES
@@ -518,6 +744,14 @@ VALUES
   ('wechat_app_secret', '', 'WeChat official account AppSecret'),
   ('wechat_admin_openids', '', 'Comma-separated admin OpenIDs'),
   ('require_return_photo', '1', 'Whether return photos are required before ending usage'),
+  ('jwt_access_ttl_minutes', '15', 'Access token validity in minutes'),
+  ('jwt_refresh_ttl_days', '7', 'Refresh token validity in days'),
+  ('v3_feature_chat_ws_enabled', '1', 'Whether chat over WebSocket is enabled in v3'),
+  ('v3_feature_notifications_ws_enabled', '1', 'Whether realtime notifications over WebSocket is enabled in v3'),
+  ('overdue_auto_mark_enabled', '1', 'Whether to auto-mark overdue borrow records'),
+  ('overdue_check_cron', '*/15 * * * *', 'Cron for overdue scan'),
+  ('schema_v3_applied_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), 'IDBS 3.0/4.0 schema baseline applied timestamp'),
+  ('schema_v5_applied_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), 'IDBS 5.0 release baseline applied timestamp'),
   ('block_ip_access_enabled', '0', 'Whether public pages and login challenge are blocked when accessed by IP host'),
   ('public_show_reserver_name', '1', 'Whether public users can see reserver name'),
   ('public_show_reserver_phone', '1', 'Whether public users can see reserver phone'),
@@ -525,8 +759,7 @@ VALUES
   ('system_notice_enabled', '1', 'Whether login notice popup is enabled'),
   ('system_notice_title', '使用注意事项', 'Login notice popup title'),
   ('system_notice_content', '请按预约时间使用设备，归还前确认设备状态并按要求提交归还信息。', 'Login notice popup content'),
-  ('system_notice_version', '1', 'Login notice popup version'),
-  ('admin_default_password_seed', 'IDBS123456', 'Default initial admin password seed')
+  ('system_notice_version', '1', 'Login notice popup version')
 ON CONFLICT (config_key) DO NOTHING;
 
 INSERT INTO permissions (permission_key, name, description, group_name, sort_order)
@@ -576,6 +809,12 @@ ALTER TABLE reservations DISABLE ROW LEVEL SECURITY;
 ALTER TABLE borrow_records DISABLE ROW LEVEL SECURITY;
 ALTER TABLE receive_records DISABLE ROW LEVEL SECURITY;
 ALTER TABLE operation_logs DISABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_logs DISABLE ROW LEVEL SECURITY;
+ALTER TABLE user_wechat_bindings DISABLE ROW LEVEL SECURITY;
+ALTER TABLE intelligence_action_logs DISABLE ROW LEVEL SECURITY;
+ALTER TABLE refresh_token_sessions DISABLE ROW LEVEL SECURITY;
+ALTER TABLE scheduled_job_runs DISABLE ROW LEVEL SECURITY;
+ALTER TABLE rate_limit_buckets DISABLE ROW LEVEL SECURITY;
 ALTER TABLE export_jobs DISABLE ROW LEVEL SECURITY;
 ALTER TABLE device_time_slots DISABLE ROW LEVEL SECURITY;
 ALTER TABLE reservation_items DISABLE ROW LEVEL SECURITY;
@@ -594,3 +833,7 @@ ALTER TABLE chat_conversations DISABLE ROW LEVEL SECURITY;
 ALTER TABLE chat_participants DISABLE ROW LEVEL SECURITY;
 ALTER TABLE chat_messages DISABLE ROW LEVEL SECURITY;
 ALTER TABLE chat_message_reads DISABLE ROW LEVEL SECURITY;
+
+
+
+

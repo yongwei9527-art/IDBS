@@ -1,16 +1,26 @@
 const crypto = require('crypto');
 const { Pool } = require('pg');
-require('dotenv').config();
+const { postgresSslOptions } = require('../src/lib/postgres-ssl');
+
+const fs = require('fs');
+const path = require('path');
+
+const localEnvPath = path.resolve(process.cwd(), '.env');
+const vpsSharedEnvPath = '/var/www/idbs/shared/.env';
+require('dotenv').config({
+  path: fs.existsSync(localEnvPath) ? localEnvPath : vpsSharedEnvPath
+});
 
 const connectionString = process.env.DATABASE_URL || '';
 const newPassword = process.env.ADMIN_NEW_PASSWORD || process.argv[2] || '';
 
-function sha256(value) {
-  return crypto.createHash('sha256').update(value).digest('hex');
-}
-
 function hashPassword(password, salt) {
-  return sha256(`${salt}:${password}`);
+  return crypto.scryptSync(String(password), String(salt), 64, {
+    N: 16384,
+    r: 8,
+    p: 1,
+    maxmem: 64 * 1024 * 1024
+  }).toString('hex');
 }
 
 async function upsertConfig(client, key, value, description) {
@@ -26,13 +36,18 @@ async function upsertConfig(client, key, value, description) {
 
 async function main() {
   if (!connectionString) throw new Error('DATABASE_URL is not configured.');
-  if (!newPassword || newPassword.length < 8) {
-    throw new Error('Usage: ADMIN_NEW_PASSWORD=<at-least-8-chars> npm run admin:reset-password');
+  if (!newPassword || newPassword.length < 12) {
+    throw new Error([
+      'Usage:',
+      '  ADMIN_NEW_PASSWORD=<at-least-12-chars> npm run admin:reset-password',
+      '  npm run admin:reset-password -- <at-least-12-chars>',
+      '  idbs-reset-admin-password  # on VPS after deployment'
+    ].join('\n'));
   }
 
   const pool = new Pool({
     connectionString,
-    ssl: String(process.env.PGSSL || '').toLowerCase() === 'true' ? { rejectUnauthorized: false } : undefined,
+    ssl: postgresSslOptions(),
     connectionTimeoutMillis: 5000
   });
 

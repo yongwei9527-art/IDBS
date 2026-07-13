@@ -1,4 +1,5 @@
-const { AppError } = require('../lib/app-error');
+﻿const { AppError } = require('../lib/app-error');
+const { verifyJwt } = require('../lib/auth');
 const path = require('path');
 const {
   fail,
@@ -16,6 +17,7 @@ const {
 } = require('./core/validation');
 const { createCryptoUtils } = require('./core/crypto-utils');
 const {
+  compactDateTimeRangeForTimezone,
   durationMinutes,
   formatDateForTimezone,
   formatDateTimeForTimezone
@@ -28,13 +30,16 @@ const { createAuthService } = require('./domains/auth/auth-service');
 const { createDeviceAdminService } = require('./domains/devices/device-admin-service');
 const { createDeviceReadService } = require('./domains/devices/device-read-service');
 const { createFaultRequestService } = require('./domains/faults/fault-request-service');
+const { createMaintenanceService } = require('./domains/maintenance/maintenance-service');
 const { createExportService } = require('./domains/reports/export-service');
 const { createBorrowReturnService } = require('./domains/reservations/borrow-return-service');
 const { createReservationActionService } = require('./domains/reservations/reservation-action-service');
 const { createReservationReadService } = require('./domains/reservations/reservation-read-service');
+const { createReservationReminderService } = require('./domains/reservations/reservation-reminder-service');
 const { createUserService } = require('./domains/users/user-service');
 const { createWechatService } = require('./domains/wechat/wechat-service');
 const { createWechatPushService } = require('./domains/wechat/wechat-push-service');
+const { PERMISSION_KEYS, PERMISSION_OPTIONS, ROLE_PERMISSIONS, permissionModules } = require('../modules/lab-modules');
 
 function createRentalService(options) {
   const {
@@ -46,6 +51,7 @@ function createRentalService(options) {
     wechatAppId = '',
     wechatAppSecret = '',
     wechatAdminOpenids = '',
+    realtimePublisher = async () => 0,
     uploadDir = path.join(process.cwd(), 'uploads'),
     activeReservationStatus = ['pending', 'approved', 'in_use']
   } = options;
@@ -53,8 +59,10 @@ function createRentalService(options) {
   const {
     hashPassword,
     makeToken,
+    needsPasswordRehash,
     sha256,
-    verifyToken
+    verifyPassword,
+    verifySecret
   } = createCryptoUtils({ crypto, tokenSecret });
 
   const DEFAULT_SECURITY_CONFIG = {
@@ -93,26 +101,6 @@ function createRentalService(options) {
     { key: 'fault', label: '设备维修员', description: '设备故障、维修处理、异常恢复与现场检查' },
     { key: 'usage', label: '值班管理员（紧急联系）', description: '紧急情况、现场协助、无法归类的问题' }
   ];
-  const DEFAULT_ADMIN_PASSWORD = 'IDBS123456';
-  const ROLE_PERMISSIONS = {
-    super_admin: ['*'],
-    admin: ['user.manage', 'user.approve', 'device.manage', 'device.view', 'reservation.approve', 'reservation.view', 'fault.manage', 'stats.view', 'stats.export', 'chat.announce', 'chat.kick'],
-    ops: ['device.manage', 'reservation.approve', 'stats.view'],
-    auditor: ['stats.view', 'reservation.view']
-  };
-  const PERMISSION_OPTIONS = [
-    { key: 'user.approve', label: '同意用户注册' },
-    { key: 'user.manage', label: '管理用户/封禁/删除' },
-    { key: 'reservation.approve', label: '同意用户预约' },
-    { key: 'reservation.view', label: '查看预约记录' },
-    { key: 'device.manage', label: '管理设备与故障' },
-    { key: 'device.view', label: '查看设备' },
-    { key: 'fault.manage', label: '处理故障报备' },
-    { key: 'stats.view', label: '查看统计' },
-    { key: 'stats.export', label: '导出指定时间段使用统计' },
-    { key: 'chat.announce', label: '聊天群发公告 / @全体成员' },
-    { key: 'chat.kick', label: '踢出群成员 / 暂停预约资格' }
-  ];
   const RESERVATION_SLOT_PRESETS = [
     { key: 'morning', label: '上午 8:00-12:00', start: '08:00', end: '12:00', type: 'base' },
     { key: 'afternoon', label: '下午 12:00-17:00', start: '12:00', end: '17:00', type: 'base' },
@@ -133,13 +121,13 @@ function createRentalService(options) {
     const start = new Date(startTime);
     const end = new Date(endTime);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-      throw new AppError('Invalid datetime format', { status: 400, code: 2001 });
+      throw new AppError('时间格式不正确。', { status: 400, code: 2001 });
     }
     if (end <= start) {
-      throw new AppError('end_time must be later than start_time', { status: 400, code: 2001 });
+      throw new AppError('结束时间必须晚于开始时间。', { status: 400, code: 2001 });
     }
     if (start < new Date(Date.now() - 5 * 60_000)) {
-      throw new AppError('Cannot reserve a past time range', { status: 400, code: 3001 });
+      throw new AppError('不能预约已过去的时间段。', { status: 400, code: 3001 });
     }
     return { start, end };
   }
@@ -243,7 +231,7 @@ function createRentalService(options) {
     const sorted = [...slots].sort((a, b) => a.start - b.start);
     for (let index = 1; index < sorted.length; index += 1) {
       if (sorted[index].start < sorted[index - 1].end) {
-        throw new AppError('Selected time slots overlap. Please choose non-overlapping slots.', { status: 400, code: 2001 });
+        throw new AppError('选择的时间段存在重叠，请重新选择。', { status: 400, code: 2001 });
       }
     }
   }
@@ -251,19 +239,19 @@ function createRentalService(options) {
   function buildReservationSlotsFromKeys(payload, devices = []) {
     const dateTexts = parseReservationDates(payload.reservation_dates || payload.reservationDates || payload.reservation_date || payload.reservationDate);
     if (!dateTexts.length) {
-      throw new AppError('reservation_dates is required', { status: 400, code: 2001 });
+      throw new AppError('请选择预约日期。', { status: 400, code: 2001 });
     }
 
     const slotKeys = normalizeReservationSlotKeys(payload.slot_keys || payload.slotKeys, []);
     if (!slotKeys.length) {
-      throw new AppError('slot_keys is required', { status: 400, code: 2001 });
+      throw new AppError('请选择预约时间段。', { status: 400, code: 2001 });
     }
 
     for (const device of devices || []) {
       const allowedKeys = normalizeReservationSlotKeys(device.reservation_slot_keys);
       const blockedKey = slotKeys.find((key) => !allowedKeys.includes(key));
       if (blockedKey) {
-        throw new AppError(`Device ${device.device_code} does not allow slot ${blockedKey}`, { status: 409, code: 3001 });
+        throw new AppError(`设备 ${device.device_code || ''} 不支持所选时间段，请重新选择。`, { status: 409, code: 3001 });
       }
     }
 
@@ -274,7 +262,7 @@ function createRentalService(options) {
       const firstSlot = configuredSlots[0];
       const incompatibleSlot = firstSlot && configuredSlots.find((slot) => !reservationSlotTimesMatch(firstSlot, slot));
       if (incompatibleSlot) {
-        throw new AppError(`Slot ${key} has different time ranges across selected devices. Please reserve these devices separately.`, { status: 409, code: 3001 });
+        throw new AppError(`所选设备的 ${key} 时间段不一致，请分开预约。`, { status: 409, code: 3001 });
       }
     }
 
@@ -294,7 +282,7 @@ function createRentalService(options) {
     const unique = [...new Set(dates)];
     for (const dateText of unique) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) {
-        throw new AppError(`Invalid reservation date: ${dateText}`, { status: 400, code: 2001 });
+        throw new AppError(`预约日期格式不正确：${dateText}`, { status: 400, code: 2001 });
       }
     }
     return unique;
@@ -330,12 +318,12 @@ function createRentalService(options) {
   function parseReservationTimeSlot(value) {
     const text = String(value || '').trim();
     if (!text) {
-      throw new AppError('time_slots is required', { status: 400, code: 2001 });
+      throw new AppError('请选择预约时间段。', { status: 400, code: 2001 });
     }
     const normalized = text.replace(/[~～]/g, '-').replace(/\s+/g, ' ');
     const match = normalized.match(/^(.*?)(?:\s+-\s+)(.*)$/);
     if (!match) {
-      throw new AppError('Invalid time slot format', { status: 400, code: 2001 });
+      throw new AppError('时间段格式不正确。', { status: 400, code: 2001 });
     }
     const startRaw = match[1].trim().replace(' ', 'T');
     const endRaw = match[2].trim().replace(' ', 'T');
@@ -352,7 +340,7 @@ function createRentalService(options) {
           : [];
     const list = deviceCodes.map((item) => String(item || '').trim()).filter(Boolean);
     if (!list.length) {
-      throw new AppError('device_codes is required', { status: 400, code: 2001 });
+      throw new AppError('请选择预约设备。', { status: 400, code: 2001 });
     }
     return [...new Set(list)];
   }
@@ -370,7 +358,7 @@ function createRentalService(options) {
           : [];
     const slots = rawSlots.map(parseReservationTimeSlot);
     if (!slots.length) {
-      throw new AppError('time_slots is required', { status: 400, code: 2001 });
+      throw new AppError('请选择预约时间段。', { status: 400, code: 2001 });
     }
     assertNoOverlappingSlots(slots);
     return slots;
@@ -468,8 +456,9 @@ function createRentalService(options) {
   function effectiveRolePermissions(role = {}) {
     const roleKey = String(role.role_key || role.role || '').trim();
     const explicit = parsePermissions(role.permissions);
-    const defaults = ROLE_PERMISSIONS[roleKey] || [];
-    return [...new Set([...defaults, ...explicit])];
+    if (roleKey === 'super_admin' || explicit.includes('*')) return ['*'];
+    // 5.0 只认可管理员记录中的显式权限，角色模板仅用于授权时的初始选择。
+    return Object.prototype.hasOwnProperty.call(role, 'permissions') ? [...new Set(explicit)] : [];
   }
 
   function hasAnyPermission(role, allowedPermissions = []) {
@@ -485,7 +474,7 @@ function createRentalService(options) {
     if (user.role === 'super_admin') {
       return { role: { role_key: 'super_admin', permissions: ['*'] }, permissions: ['*'], canAnnounce: true, canKick: true };
     }
-    const role = await getAdminRoleForUser(user.id) || { role_key: user.role, permissions: [] };
+    const role = await getAdminRoleForUser(user.id) || { role_key: user.role };
     const permissions = effectiveRolePermissions(role);
     return {
       role,
@@ -542,23 +531,28 @@ function createRentalService(options) {
     return result.rows || [];
   }
 
+  function transactionClient(client) {
+    return {
+      query: (sql, params = []) => client.query(sql, params),
+      queryOne: async (sql, params = []) => {
+        const result = await client.query(sql, params);
+        const rows = Array.isArray(result) ? result : (result.rows || []);
+        return rows[0] || null;
+      }
+    };
+  }
+
   async function withTransaction(work) {
     if (typeof db.transaction === 'function') {
-      return db.transaction(work);
+      return db.transaction((client) => work(transactionClient(client)));
     }
     if (typeof db.pool?.connect !== 'function') {
-      throw new Error('Database transaction support is not available');
+      return work({ query, queryOne });
     }
     const client = await db.pool.connect();
     try {
       await client.query('begin');
-      const result = await work({
-        query: (sql, params = []) => client.query(sql, params),
-        queryOne: async (sql, params = []) => {
-          const rows = (await client.query(sql, params)).rows || [];
-          return rows[0] || null;
-        }
-      });
+      const result = await work(transactionClient(client));
       await client.query('commit');
       return result;
     } catch (error) {
@@ -589,8 +583,10 @@ function createRentalService(options) {
 
   async function getReservationItemById(id) {
     const text = assertText(id, 'reservation_item_id', 60);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(text)) return null;
     return queryOne(`
       select ri.*, d.device_code, d.name as device_name, d.status as device_status, d.allow_reservation,
+        d.return_mode, d.return_require_note,
         b.purpose as batch_purpose, b.status as batch_status
       from reservation_items ri
       join devices d on d.id = ri.device_id
@@ -611,13 +607,49 @@ function createRentalService(options) {
     return mapped;
   }
 
+  let operationLogColumnsCache = null;
+
+  async function getOperationLogColumns(runQuery = query) {
+    if (operationLogColumnsCache) return operationLogColumnsCache;
+    try {
+      const rows = await rowsFrom(runQuery, `
+        select column_name
+        from information_schema.columns
+        where table_schema = 'public' and table_name = 'operation_logs'
+      `);
+      const names = new Set((rows || []).map((row) => row.column_name));
+      operationLogColumnsCache = names.size ? names : new Set([
+        'id', 'action', 'detail', 'device_id', 'record_id', 'operator_id', 'operator_name', 'created_at'
+      ]);
+    } catch (_) {
+      operationLogColumnsCache = new Set([
+        'id', 'action', 'detail', 'device_id', 'record_id', 'operator_id', 'operator_name', 'created_at'
+      ]);
+    }
+    return operationLogColumnsCache;
+  }
+
   async function log(action, detail, operator = {}, deviceId = null, recordId = null, runQuery = query) {
     const detailPayload = typeof detail === 'object' && detail !== null ? detail : { message: String(detail || '') };
     const operatorId = operator.user_id || operator.id || null;
     const operatorName = operator.name || operator.role || 'system';
-    await runQuery('insert into operation_logs (id, action, detail, device_id, record_id, target_type, target_id, operator_id, operator_name, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', [
-      uuid(), action, JSON.stringify(detailPayload), deviceId, recordId, recordId ? 'record' : (deviceId ? 'device' : null), recordId || deviceId || null, operatorId, operatorName, nowIso()
-    ]);
+    const availableColumns = await getOperationLogColumns(runQuery);
+    const valuesByColumn = {
+      id: uuid(),
+      action,
+      detail: JSON.stringify(detailPayload),
+      device_id: deviceId,
+      record_id: recordId,
+      target_type: recordId ? 'record' : (deviceId ? 'device' : null),
+      target_id: recordId || deviceId || null,
+      operator_id: operatorId,
+      operator_name: operatorName,
+      created_at: nowIso()
+    };
+    const columns = Object.keys(valuesByColumn).filter((name) => availableColumns.has(name));
+    if (!columns.length) return;
+    const placeholders = columns.map((_, index) => `$${index + 1}`).join(',');
+    await runQuery(`insert into operation_logs (${columns.join(', ')}) values (${placeholders})`, columns.map((name) => valuesByColumn[name]));
   }
 
   async function rowsFrom(runQuery, sql, params = []) {
@@ -649,7 +681,7 @@ function createRentalService(options) {
       ]);
       return true;
     } catch (error) {
-      console.warn('Failed to write user notification:', error.message || error);
+      console.warn('写入用户通知失败：', error.message || error);
       return false;
     }
   }
@@ -676,12 +708,14 @@ function createRentalService(options) {
         content: String(payload.content || '')
           .replace(/\{device_code\}/g, row.device_code || '')
           .replace(/\{device_name\}/g, row.device_name || '')
+          .replace(/\{time_range\}/g, compactDateTimeRangeForTimezone(row.start_time, row.end_time))
           .replace(/\{start_time\}/g, formatDateTimeForTimezone(row.start_time))
           .replace(/\{end_time\}/g, formatDateTimeForTimezone(row.end_time)),
-        related_type: payload.related_type || null,
-        related_id: payload.related_id || null,
+        related_type: payload.related_type || (row.reservation_id ? 'reservation' : 'reservation_item'),
+        related_id: payload.related_id || row.reservation_id || row.reservation_item_id,
         device_id: deviceId,
-        reservation_id: row.reservation_id || row.reservation_item_id
+        // reservation_id has a foreign key to reservations(id), never reservation_items(id).
+        reservation_id: row.reservation_id || null
       }, runQuery);
       if (okWritten) sent += 1;
     }
@@ -689,8 +723,11 @@ function createRentalService(options) {
   }
 
   async function createReservationStatusNotification(row = {}, status, adminNote = '', runQuery = query) {
-    const reservationId = row.id || row.reservation_id || null;
-    if (!row.user_id || !reservationId) return false;
+    // Review operations are performed on reservation items. Keep the item as the
+    // related record, while writing reservation_id only when a parent reservation exists.
+    const reservationId = row.reservation_id || null;
+    const relatedId = reservationId || row.id || row.reservation_item_id || null;
+    if (!row.user_id || !relatedId) return false;
     const approved = status === 'approved';
     const title = approved ? '预约审核已通过' : '预约审核未通过';
     const statusLine = approved ? '管理员已同意你的设备预约。' : '管理员已拒绝你的设备预约。';
@@ -699,9 +736,9 @@ function createRentalService(options) {
       user_id: row.user_id,
       type: 'reservation_review',
       title,
-      content: `${statusLine}设备：${deviceLabel}；预约时间：${formatDateTimeForTimezone(row.start_time)} - ${formatDateTimeForTimezone(row.end_time)}。${adminNote ? ` 管理员备注：${adminNote}` : ''}`,
-      related_type: 'reservation',
-      related_id: reservationId,
+      content: `${statusLine}设备：${deviceLabel}；预约时间：${compactDateTimeRangeForTimezone(row.start_time, row.end_time)}。${adminNote ? ` 管理员备注：${adminNote}` : ''}`,
+      related_type: reservationId ? 'reservation' : 'reservation_item',
+      related_id: relatedId,
       device_id: row.device_id || null,
       reservation_id: reservationId
     }, runQuery);
@@ -742,7 +779,7 @@ function createRentalService(options) {
         uuid(), payload.user_id || null, String(payload.event_type || 'unknown').slice(0, 50), String(payload.user_name || '').slice(0, 80), String(payload.phone || '').slice(0, 30), String(payload.wechat_openid || '').slice(0, 150), String(payload.device_type || '').slice(0, 40), String(payload.client_key || '').slice(0, 200), String(payload.ip_address || '').slice(0, 80), String(payload.remark || '').slice(0, 500), nowIso()
       ]);
     } catch (error) {
-      console.warn('Failed to write user_activity_logs:', error.message || error);
+      console.warn('写入用户活动日志失败：', error.message || error);
     }
   }
 
@@ -800,8 +837,7 @@ function createRentalService(options) {
     return {
       admin_password_hash: String(config.admin_password_hash || ''),
       admin_password_salt: String(config.admin_password_salt || ''),
-      has_custom_admin_password: Boolean(config.admin_password_hash && config.admin_password_salt),
-      default_admin_password_seed: String(config.admin_default_password_seed || DEFAULT_ADMIN_PASSWORD)
+      has_custom_admin_password: Boolean(config.admin_password_hash && config.admin_password_salt)
     };
   }
 
@@ -828,14 +864,31 @@ function createRentalService(options) {
     ]);
   }
 
+  function resolveServiceAuth(auth) {
+    if (auth && typeof auth === 'object' && typeof auth.sub === 'string') {
+      const role = String(auth.role || 'user');
+      return {
+        scope: auth.scope || (role === 'user' ? 'user' : 'admin'),
+        role,
+        user_id: auth.sub,
+        id: auth.sub,
+        admin_role_key: role === 'super_admin' ? 'super_admin' : undefined,
+        permissions: Array.isArray(auth.perms) ? auth.perms : [],
+        name: auth.name || ''
+      };
+    }
+    const v5Auth = typeof auth === 'string' ? verifyJwt(auth, { type: 'access' }) : null;
+    return v5Auth ? resolveServiceAuth(v5Auth) : null;
+  }
+
   async function requireAdmin(token) {
-    const payload = verifyToken(token);
-    if (!payload) throw new AppError('Authentication required', { status: 401, code: 1001 });
+    const payload = resolveServiceAuth(token);
+    if (!payload) throw new AppError('未登录或登录已过期。', { status: 401, code: 1001 });
     if (payload.scope !== 'admin') {
-      throw new AppError('Admin permission required', { status: 403, code: 1003 });
+      throw new AppError('没有访问权限。', { status: 403, code: 1003 });
     }
     if (!['admin', 'super_admin'].includes(payload.role) && !payload.admin_role_key) {
-      throw new AppError('Admin permission required', { status: 403, code: 1003 });
+      throw new AppError('没有访问权限。', { status: 403, code: 1003 });
     }
     return payload;
   }
@@ -853,12 +906,10 @@ function createRentalService(options) {
     const role = (admin.user_id || admin.id)
       ? await getAdminRoleForUser(admin.user_id || admin.id)
       : { role_key: admin.admin_role_key || admin.role, permissions: admin.permissions || [] };
-    if (!role) throw new AppError('Admin permission required', { status: 403, code: 1003 });
-    const roleKey = String(role.role_key || '').trim();
-    const roleAllowed = allowedRoleKeys.length ? allowedRoleKeys.includes(roleKey) : false;
+    if (!role) throw new AppError('没有访问权限。', { status: 403, code: 1003 });
     const permissionAllowed = hasAnyPermission(role, allowedPermissions);
-    if ((allowedRoleKeys.length || allowedPermissions.length) && !roleAllowed && !permissionAllowed) {
-      throw new AppError('Admin permission required', { status: 403, code: 1003 });
+    if ((allowedRoleKeys.length || allowedPermissions.length) && !permissionAllowed) {
+      throw new AppError('没有访问权限。', { status: 403, code: 1003 });
     }
     return { admin, role };
   }
@@ -867,15 +918,16 @@ function createRentalService(options) {
     if (!user) return '请先登录后再操作。';
     if (user.is_banned) return '账号已被封禁，请联系管理员处理。';
     if (user.status === 'pending') return '账号正在等待管理员审核，审核通过后才可以预约设备。';
+    if (user.status === 'rejected') return `账号审核未通过${user.disabled_reason ? `：${user.disabled_reason}` : '，请联系管理员处理。'}`;
     if (user.status === 'disabled') return '账号已停用，请联系管理员处理。';
     if (user.status !== 'active') return `账号状态为 ${user.status}，暂时无法预约设备。`;
     return '';
   }
 
   async function requireUser(token) {
-    const payload = verifyToken(token);
+    const payload = resolveServiceAuth(token);
     if (!payload || !payload.user_id) {
-      throw new AppError('Authentication required', { status: 401, code: 1001 });
+      throw new AppError('未登录或登录已过期。', { status: 401, code: 1001 });
     }
 
     const user = await getById('users', payload.user_id);
@@ -885,15 +937,28 @@ function createRentalService(options) {
     return user;
   }
 
-  async function checkConflict(deviceId, startTime, endTime, excludeReservationId = null) {
+  async function checkConflictWithQuery(runQuery, deviceId, startTime, endTime, excludeReservationId = null) {
     const params = [deviceId, startTime, endTime];
-    let sql = 'select * from reservation_items where device_id = $1 and status = any($4) and start_time < $3 and end_time > $2';
+    let reservationSql = `select id, start_time, end_time, status, 'reservation' as conflict_type from reservation_items where device_id = $1 and status = any($4) and start_time < $3 and end_time > $2`;
     params.push(activeReservationStatus);
     if (excludeReservationId) {
-      sql += ' and coalesce(reservation_id, id) <> $5';
+      reservationSql += ' and id <> $5 and coalesce(reservation_id, id) <> $5';
       params.push(excludeReservationId);
     }
-    return query(sql, params);
+    const maintenanceSql = `select id, start_time, end_time, status, 'maintenance' as conflict_type from device_maintenance_windows where device_id = $1 and status in ('scheduled','active') and start_time < $3 and end_time > $2`;
+    return rowsFrom(runQuery, reservationSql + ' union all ' + maintenanceSql, params);
+  }
+
+  async function checkConflict(deviceId, startTime, endTime, excludeReservationId = null) {
+    return checkConflictWithQuery(query, deviceId, startTime, endTime, excludeReservationId);
+  }
+
+  async function lockDeviceSchedule(client, deviceId) {
+    await client.query("select pg_advisory_xact_lock(hashtext('idbs-device-schedule'), hashtext($1))", [String(deviceId)]);
+  }
+
+  async function checkConflictInTransaction(client, deviceId, startTime, endTime, excludeReservationId = null) {
+    return checkConflictWithQuery((sql, params) => client.query(sql, params), deviceId, startTime, endTime, excludeReservationId);
   }
 
   function safeUser(user) {
@@ -924,14 +989,23 @@ function createRentalService(options) {
   async function addNamesToBorrowRows(rows) {
     const users = await mapById('users');
     const devices = await mapById('devices');
-    return rows.map((row) => ({
-      ...row,
-      user_name: users[row.user_id]?.name || '',
-      user_phone: users[row.user_id]?.phone || '',
-      user_student_no: users[row.user_id]?.student_no || '',
-      device_code: devices[row.device_id]?.device_code || '',
-      device_name: devices[row.device_id]?.name || ''
-    }));
+    const config = await getSecurityConfig();
+    const labelMap = { confirm_only: '确认归还', image_optional: '图片选传', image_required: '图片必传' };
+    return rows.map((row) => {
+      const mode = devices[row.device_id]?.return_mode || (config.require_return_photo ? 'image_required' : 'image_optional');
+      return {
+        ...row,
+        user_name: users[row.user_id]?.name || '',
+        user_phone: users[row.user_id]?.phone || '',
+        user_student_no: users[row.user_id]?.student_no || '',
+        device_code: devices[row.device_id]?.device_code || '',
+        device_name: devices[row.device_id]?.name || '',
+        return_mode: mode,
+        return_require_note: Boolean(devices[row.device_id]?.return_require_note),
+        return_photo_required: mode === 'image_required' || Boolean(config.require_return_photo && mode !== 'confirm_only'),
+        return_rule_label: labelMap[mode] || '图片选传'
+      };
+    });
   }
 
   async function getReservationVisibilityConfig() {
@@ -991,7 +1065,7 @@ function createRentalService(options) {
         uuid(), record.id, record.reservation_id || null, record.reservation_item_id || null, device?.id || record.device_id || null, user?.id || record.user_id || null, String(action || '').slice(0, 20), String(device?.device_code || '').slice(0, 80), String(device?.name || '').slice(0, 120), String(user?.name || '').slice(0, 80), String(user?.phone || '').slice(0, 30), String(user?.student_no || '').slice(0, 50), record.borrow_time || null, record.expected_return_time || null, record.return_time || null, Number(record.duration_minutes) || null, String(record.status || '').slice(0, 40), String(record.return_condition || '').slice(0, 50), String(record.return_note || '').slice(0, 500), String(extra.operator_name || user?.name || '').slice(0, 80), nowIso()
       ]);
     } catch (error) {
-      console.warn('Failed to write usage_log:', error.message || error);
+      console.warn('写入使用日志失败：', error.message || error);
     }
   }
 
@@ -999,7 +1073,8 @@ function createRentalService(options) {
     await query('update users set last_login_at = $1, updated_at = $1 where id = $2', [nowIso(), user.id]);
     const adminRole = await getAdminRoleForUser(user.id);
     const adminRoleKey = adminRole ? String(adminRole.role_key || 'admin') : '';
-    const tokenRole = adminRole ? 'admin' : user.role;
+    // The account role is the authority source. Do not flatten the unique super_admin into an ordinary admin during login.
+    const tokenRole = user.role === 'super_admin' ? 'super_admin' : (adminRole ? 'admin' : user.role);
     const token = makeToken({
       scope: 'user',
       user_id: user.id,
@@ -1061,11 +1136,27 @@ function createRentalService(options) {
   }
 
   const analyticsService = createAnalyticsService({ addNamesToBorrowRows, ok, query, requireAdminRole });
-  const { adminAnalyticsDeviceUsage, adminAnalyticsFaults, adminAnalyticsOverview, adminAnalyticsTimeHeatmap, usageStats } = analyticsService;
+  const { adminAnalyticsDeviceUsage, adminAnalyticsFaults, adminAnalyticsIntelligence, adminAnalyticsOverview, adminAnalyticsTimeHeatmap, adminListIntelligenceActionLogs, adminUpdateIntelligenceAction, usageStats } = analyticsService;
 
   async function adminExportData(payload = {}, token) {
-    const { admin } = await requireAdminRole(token, ['super_admin', 'admin', 'ops', 'auditor'], ['stats.view', 'stats.export']);
+    const { admin, role } = await requireAdminRole(token, ['super_admin'], ['stats.export']);
     const type = String(payload.type || 'usage').trim();
+    const exportPermissionRules = {
+      usage: { all: ['stats.export'] },
+      returns: { all: ['stats.export'], any: ['return.export', 'return.view', 'return.confirm', 'return.image_review'] },
+      reservations: { all: ['stats.export'], any: ['reservation.view', 'reservation.approve', 'reservation.change_plan'] },
+      faults: { all: ['stats.export'], any: ['device.view', 'fault.manage', 'return.view', 'return.confirm', 'return.image_review'] },
+      user_activity: { all: ['stats.export', 'user.manage'] },
+      device_summary: { all: ['stats.export'], any: ['device.view', 'device.manage'] },
+      audit_logs: { all: ['stats.export', 'audit.view'] }
+    };
+    const exportRule = exportPermissionRules[type];
+    if (!exportRule) return fail('不支持的导出类型。', 400, 2001);
+    const permissions = effectiveRolePermissions(role || {});
+    const hasExportAccess = admin.role === 'super_admin' || permissions.includes('*')
+      || ((exportRule.all || []).every((permission) => permissions.includes(permission))
+        && (!(exportRule.any || []).length || exportRule.any.some((permission) => permissions.includes(permission))));
+    if (!hasExportAccess) return fail('当前账号没有该导出类型所需权限。', 403, 1003);
     const { user_id: userId, device_id: deviceId, start_date: startDate, end_date: endDate } = payload;
     const params = [];
     const clauses = [];
@@ -1078,6 +1169,22 @@ function createRentalService(options) {
     if (type === 'usage') {
       const result = await usageStats(payload, token);
       return ok({ type, rows: result.rows || [], summary: result.summary || {} });
+    }
+    if (type === 'returns') {
+      if (userId) { params.push(userId); clauses.push(`b.user_id = $${params.length}`); }
+      if (deviceId) { params.push(deviceId); clauses.push(`b.device_id = $${params.length}`); }
+      addRange('coalesce(b.return_time, b.actual_end_time, b.borrow_time, b.created_at)');
+      const rows = await query(`
+        select b.*, d.device_code, d.name as device_name,
+          u.name as user_name, u.phone as user_phone, u.student_no as user_student_no
+        from borrow_records b
+        left join devices d on d.id = b.device_id
+        left join users u on u.id = b.user_id
+        ${whereSql()}
+        order by coalesce(b.return_time, b.actual_end_time, b.borrow_time, b.created_at) desc
+        limit 5000
+      `, params);
+      return ok({ type, rows: rows || [] });
     }
     if (type === 'reservations') {
       if (userId) { params.push(userId); clauses.push(`ri.user_id = $${params.length}`); }
@@ -1123,6 +1230,19 @@ function createRentalService(options) {
       const rows = await adminAnalyticsDeviceUsage({ metric: 'borrow_count' }, token);
       return ok({ type, rows: rows.rows || [] });
     }
+    if (type === 'audit_logs') {
+      if (deviceId) { params.push(deviceId); clauses.push(`device_id = $${params.length}`); }
+      addRange('created_at');
+      const rows = await query(`
+        select id, operator_id, operator_name, action, target_type, target_id, device_id, record_id,
+          detail::text as detail, ip_address, created_at
+        from operation_logs
+        ${whereSql()}
+        order by created_at desc
+        limit 5000
+      `, params);
+      return ok({ type, rows: rows || [] });
+    }
     return fail('不支持的导出类型。', 400, 2001);
   }
 
@@ -1150,6 +1270,7 @@ function createRentalService(options) {
   const deviceAdminService = createDeviceAdminService({
     addNamesToBorrowRows,
     assertText,
+    effectiveRolePermissions,
     fail,
     getById,
     isSafeUrl,
@@ -1168,19 +1289,18 @@ function createRentalService(options) {
   });
   const { adminCreateDevice, adminGetDeviceDetail, adminSetDeviceAvailable, adminUpdateDevice } = deviceAdminService;
 
-  const exportService = createExportService({ adminExportData, fail, log, nowIso, ok, query, queryOne, requireAdminRole, safeFilename, uploadDir, uuid, withTransaction });
-  const { adminCreateExportJob, adminListExportJobs, adminRunNextExportJob } = exportService;
+  const exportService = createExportService({ adminExportData, effectiveRolePermissions, fail, log, nowIso, ok, query, queryOne, requireAdminRole, safeFilename, uploadDir, uuid, withTransaction });
+  const { adminCreateExportJob, adminGetExportJobDownload, adminListExportJobs, adminRunNextExportJob } = exportService;
 
   const dashboardService = createDashboardService({ currentReservationDateCondition, ok, query, queryOne, requireAdminRole });
   const { adminDashboard } = dashboardService;
 
-  const authService = createAuthService({ adminPassword, assertPassword, assertPhone, assertText, fail, finalizeUserLogin, getAdminAuthConfig, hashPassword, makeToken, ok, queryOne, userAccessMessage });
+  const authService = createAuthService({ adminPassword, assertPassword, assertPhone, assertText, fail, finalizeUserLogin, getAdminAuthConfig, hashPassword, makeToken, needsPasswordRehash, ok, query, queryOne, verifyPassword, verifySecret, userAccessMessage });
   const { adminLogin, loginUser, registerUser } = authService;
 
   const adminSystemService = createAdminSystemService({
     assertText,
     crypto,
-    DEFAULT_ADMIN_PASSWORD,
     DEFAULT_SECURITY_CONFIG,
     fail,
     getAdminAuthConfig,
@@ -1195,12 +1315,15 @@ function createRentalService(options) {
     nowIso,
     ok,
     parseBoolean,
+    PERMISSION_KEYS,
     PERMISSION_OPTIONS,
     query,
     requireAdminRole,
     ROLE_PERMISSIONS,
+    permissionModules,
     saveSystemConfig,
-    uuid
+    uuid,
+    withTransaction
   });
   const { adminGetSecurityConfig, adminListRoles, adminOperationLogs, adminOptions, adminPermissions, adminRevokeRole, adminUpdateSecurityConfig, adminUpsertRole, adminUserRoles } = adminSystemService;
 
@@ -1217,13 +1340,14 @@ function createRentalService(options) {
     parseBoolean,
     query,
     queryOne,
+    realtimePublisher,
     requireUser,
     rowsFrom,
     uuid,
-    verifyToken,
+    resolveServiceAuth,
     withTransaction
   });
-  const { addChatParticipants, addUserToManagementGroup, bootstrapSystem, createChatConversation, dissolveChatConversation, leaveChatConversation, listChatConversations, listChatMessages, listChatUsers, markChatConversationRead, removeChatParticipant, removeUserFromManagementGroup, sendChatMessage, streamChatEvents } = chatService;
+  const { addChatParticipants, addUserToManagementGroup, bootstrapSystem, canSubscribeChatChannel, createChatConversation, dissolveChatConversation, leaveChatConversation, listChatConversations, listChatMessages, listChatUsers, markChatConversationRead, removeChatParticipant, removeUserFromManagementGroup, resolveRealtimePrincipal, sendChatMessage, streamChatEvents } = chatService;
 
   const wechatService = createWechatService({
     assertPhone,
@@ -1270,6 +1394,7 @@ function createRentalService(options) {
     addNamesToBorrowRows,
     addUserToManagementGroup,
     assertText,
+    createUserNotification,
     db,
     fail,
     getById,
@@ -1293,6 +1418,7 @@ function createRentalService(options) {
     fail,
     getById,
     getDeviceByCode,
+    lockDeviceSchedule,
     log,
     markDeviceFaultReportsResolved,
     notifyReservationUsersForDevice,
@@ -1305,7 +1431,12 @@ function createRentalService(options) {
     uuid,
     withTransaction
   });
-  const { adminListFaultReports, adminListUserRequests, adminResolveFaultReport, adminReviewUserRequest, cancelUserRequest, createUserRequest, listMyUserRequests, reportDeviceFault, requestUserRequestChange, updateUserRequest } = faultRequestService;
+  const { adminListFaultReports, adminListUserRequests, adminResolveFaultReport, adminReviewUserRequest, cancelUserRequest, createUserRequest, listMyFaultReports, listMyUserRequests, reportDeviceFault, requestUserRequestChange, updateUserRequest } = faultRequestService;
+
+  const maintenanceService = createMaintenanceService({
+    assertText, checkConflictInTransaction, createUserNotification, fail, getById, lockDeviceSchedule, log, nowIso, ok, parseBoolean, query, requireAdminRole, uuid, withTransaction
+  });
+  const { adminCreateMaintenancePlan, adminCreateMaintenanceWorkOrder, adminListMaintenancePlans, adminListMaintenanceWorkOrders, adminMaintenanceOverview, adminUpdateMaintenancePlan, adminUpdateMaintenanceWorkOrder, runMaintenanceWindowLifecycle } = maintenanceService;
 
   const reservationReadService = createReservationReadService({
     activeReservationStatus,
@@ -1333,12 +1464,14 @@ function createRentalService(options) {
     assertText,
     canCancelReservation,
     checkConflict,
+    checkConflictInTransaction,
     createReservationStatusNotification,
     detectSlotKey,
     fail,
     getById,
     getDeviceByCode,
     getReservationItemById,
+    lockDeviceSchedule,
     log,
     minimumReservationDateText,
     nowIso,
@@ -1356,7 +1489,7 @@ function createRentalService(options) {
     uuid,
     withTransaction
   });
-  const { adminApproveReservation, adminApproveReservationBatch, cancelReservation, cancelReservationItem, createReservation, precheckReservation } = reservationActionService;
+  const { adminApproveReservation, adminApproveReservationBatch, adminBulkApproveReservations, adminChangeReservationPlan, adminMarkReservationNoShow, adminReviewReservationCancellation, cancelReservation, cancelReservationItem, createReservation, precheckReservation } = reservationActionService;
 
   const borrowReturnService = createBorrowReturnService({
     appendUsageLog,
@@ -1370,13 +1503,26 @@ function createRentalService(options) {
     notifyReservationUsersForDevice,
     nowIso,
     ok,
+    query,
+    requireAdminRole,
     requireUser,
+    safeFilename,
+    uploadDir,
     uuid,
     withTransaction
   });
-  const { startUse, submitReturn } = borrowReturnService;
+  const { adminListReturnTasks, adminReviewReturn, extendBorrow, startUse, submitReturn } = borrowReturnService;
 
-  return { adminAnalyticsDeviceUsage, adminAnalyticsFaults, adminAnalyticsOverview, adminAnalyticsTimeHeatmap, adminApproveReservation, adminApproveReservationBatch, adminCreateDevice, adminCreateExportJob, adminDashboard, adminDeleteUser, adminExportData, adminGetActivitySummary, adminGetDeviceDetail, adminGetReservationBatch, adminGetSecurityConfig, adminGetUserDetail, adminListDevices, adminListExportJobs, adminListReservationBatches, adminListReservations, adminListRoles, adminListUsers, adminLogin, adminOperationLogs, adminOptions, adminPermissions, adminPreviewDailyUsageReport, adminRunNextExportJob, adminSendDailyUsageReport, adminRevokeRole, adminSetDeviceAvailable, adminSetUserBan, adminSetUserStatus, adminUnbindWechat, adminUpdateDevice, adminUpdateSecurityConfig, adminUpsertRole, adminUserRoles, adminListFaultReports, adminResolveFaultReport, adminListUserRequests, adminReviewUserRequest, addChatParticipants, authTokenFromReq, bindWechatAccount, bootstrapSystem, buildWechatReply, cancelReservation, cancelReservationItem, cancelUserRequest, createChatConversation, createLoginChallenge, createReservation, createUserRequest, dissolveChatConversation, leaveChatConversation, getCalendarDay, getCalendarEvents, getReportConfig, getDeviceDetail, getDeviceTimeSlots, getLoginChallengeStatus, getProfile, getReservationBatch, getReservationSlotOptions, getSystemNotice, getStaffContacts, handleWechatMessage, listChatConversations, listChatMessages, listChatUsers, listDevices, listMyNotifications, listMyUserRequests, listReservationBatches, loginUser, markChatConversationRead, markMyNotificationsRead, myRecords, precheckReservation, registerUser, removeChatParticipant, reportDeviceFault, requestUserRequestChange, safeFilename, sendChatMessage, sendWechatCustomMessage, shouldBlockIpAccess, startUse, streamChatEvents, submitReturn, pushDailyUsageReport, updateUserRequest, usageStats, verifyWechatHandshake };
+  const reservationReminderService = createReservationReminderService({ createUserNotification, nowIso, query, uuid });
+  const { runReservationReminderLifecycle } = reservationReminderService;
+
+  // v5 桥接：把 JWT payload 转 2.x makeToken，供 v5 路由复用 2.x service 方法。
+  // auth: { sub, scope, role, perms, name }
+
+
+  return { runReservationReminderLifecycle, adminAnalyticsDeviceUsage, adminListReturnTasks, adminReviewReturn, adminCreateMaintenancePlan, adminCreateMaintenanceWorkOrder, adminListMaintenancePlans, adminListMaintenanceWorkOrders, adminMaintenanceOverview, adminUpdateMaintenancePlan, adminUpdateMaintenanceWorkOrder, adminAnalyticsFaults, adminAnalyticsIntelligence, adminAnalyticsOverview, adminAnalyticsTimeHeatmap, adminListIntelligenceActionLogs, adminUpdateIntelligenceAction, adminApproveReservation, adminApproveReservationBatch, adminBulkApproveReservations, adminChangeReservationPlan, adminMarkReservationNoShow, adminReviewReservationCancellation, adminCreateDevice, adminCreateExportJob, adminGetExportJobDownload, adminDashboard, adminDeleteUser, adminExportData, adminGetActivitySummary, adminGetDeviceDetail, adminGetReservationBatch, adminGetSecurityConfig, adminGetUserDetail, adminListDevices, adminListExportJobs, adminListReservationBatches, adminListReservations, adminListRoles, adminListUsers, adminLogin, adminOperationLogs, adminOptions, adminPermissions, adminPreviewDailyUsageReport, adminRunNextExportJob, adminSendDailyUsageReport, adminRevokeRole, adminSetDeviceAvailable, adminSetUserBan, adminSetUserStatus, adminUnbindWechat, adminUpdateDevice, adminUpdateSecurityConfig, adminUpsertRole, adminUserRoles, adminListFaultReports, adminResolveFaultReport, adminListUserRequests, adminReviewUserRequest, addChatParticipants, authTokenFromReq, bindWechatAccount, bootstrapSystem, buildWechatReply, canSubscribeChatChannel, cancelReservation, cancelReservationItem, cancelUserRequest, createChatConversation, createLoginChallenge, createReservation, createUserRequest, dissolveChatConversation, leaveChatConversation, getCalendarDay, getCalendarEvents, getReportConfig, getDeviceDetail, getDeviceTimeSlots, getLoginChallengeStatus, getProfile, getReservationBatch, getReservationSlotOptions, getSystemNotice, getStaffContacts, handleWechatMessage, listChatConversations, listChatMessages, listChatUsers, listDevices, listMyNotifications, listMyFaultReports, listMyUserRequests, listReservationBatches, loginUser, markChatConversationRead, markMyNotificationsRead, myRecords, precheckReservation, registerUser, removeChatParticipant, reportDeviceFault, requestUserRequestChange, resolveRealtimePrincipal, safeFilename, sendChatMessage, sendWechatCustomMessage, shouldBlockIpAccess, extendBorrow, startUse, streamChatEvents, submitReturn, pushDailyUsageReport, runMaintenanceWindowLifecycle, updateUserRequest, usageStats, verifyWechatHandshake };
 }
 
 module.exports = { createRentalService };
+
+

@@ -1,6 +1,12 @@
 node_modules/
 functions/*/node_modules/
+web/node_modules/
+.kilo/node_modules/
+web/dist/
+*.tsbuildinfo
+public/v5/
 uploads/
+backups/
 .env
 .env.*
 !.env.example
@@ -9,6 +15,7 @@ uploads/
 *.log
 npm-debug.log*
 test-results/
+.idbs-runtime/
 ERR
 $null
 Thumbs.db

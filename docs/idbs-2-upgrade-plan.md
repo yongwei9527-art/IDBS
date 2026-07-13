@@ -1,5 +1,7 @@
 # IDBS 2.0 大升级方案
 
+> **Historical record.** Current IDBS 5.0 release material is [v5-release.md](./v5-release.md) and [v5-api-contract.md](./v5-api-contract.md).
+
 更新时间：2026-07-03
 
 ## 总目标

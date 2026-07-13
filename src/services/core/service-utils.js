@@ -17,7 +17,15 @@ function nowIso() {
 }
 
 function safeFilename(name) {
-  return String(name || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const text = String(name || 'file')
+    .normalize('NFKC')
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/[^\p{L}\p{N}._-]/gu, '_')
+    .replace(/_+/g, '_')
+    .replace(/^[._-]+|[._-]+$/g, '')
+    .slice(0, 120);
+  return text || 'file';
 }
 
 function isSafeUrl(url) {

@@ -1,5 +1,7 @@
 # Rental System 大升级完整计划
 
+> **Historical record.** Current IDBS 5.0 release material is [v5-release.md](./v5-release.md) and [v5-api-contract.md](./v5-api-contract.md).
+
 本文档用于指导项目从当前可用版本升级为可长期维护的设备预约与管理系统。升级范围覆盖登录入口、用户端、后台管理端、超级管理员数据分析、数据库模型、接口、权限、安全、部署和验收。
 
 ## 1. 升级目标

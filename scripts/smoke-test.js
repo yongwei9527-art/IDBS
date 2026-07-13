@@ -1,7 +1,8 @@
 require('dotenv').config();
 
 const baseUrl = ((process.argv[2] || process.env.SMOKE_BASE_URL || 'http://127.0.0.1:3000').replace(/\/$/, ''));
-const adminPassword = process.env.SMOKE_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD || '';
+const adminPhone = process.env.SMOKE_ADMIN_PHONE || '';
+const adminPassword = process.env.SMOKE_ADMIN_PASSWORD || ''; 
 
 async function request(path, options = {}) {
   const response = await fetch(`${baseUrl}${path}`, options);
@@ -30,17 +31,17 @@ async function check(name, path, expectedStatuses = [200], options = {}) {
 }
 
 async function checkAdminEndpoints() {
-  if (!adminPassword) {
-    console.log('SKIP admin endpoints -> SMOKE_ADMIN_PASSWORD/ADMIN_PASSWORD is not set');
+  if (!adminPhone || !adminPassword) {
+    console.log('SKIP admin endpoints -> SMOKE_ADMIN_PHONE and SMOKE_ADMIN_PASSWORD are required');
     return;
   }
 
-  const login = await check('admin login', '/api/admin/auth/login', [200], {
+  const login = await check('admin login', '/api/v5/auth/login', [200], {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password: adminPassword })
+    body: JSON.stringify({ phone: adminPhone, password: adminPassword })
   });
-  const token = login.json?.data?.token;
+  const token = login.json?.data?.access_token;
   if (!token) {
     console.log('FAIL admin login token -> missing token in response');
     process.exitCode = 1;
@@ -48,26 +49,26 @@ async function checkAdminEndpoints() {
   }
 
   const auth = { Authorization: `Bearer ${token}` };
-  await check('admin dashboard', '/api/admin/dashboard', [200], { headers: auth });
-  await check('admin analytics overview', '/api/admin/analytics/overview?range=7d', [200], { headers: auth });
-  await check('admin analytics device usage', '/api/admin/analytics/device-usage', [200], { headers: auth });
-  await check('admin analytics time heatmap', '/api/admin/analytics/time-heatmap?range=7d', [200], { headers: auth });
-  await check('admin analytics faults', '/api/admin/analytics/faults?range=7d', [200], { headers: auth });
-  await check('admin operation logs', '/api/admin/operation-logs?limit=5', [200], { headers: auth });
-  const users = await check('admin users', '/api/admin/users', [200], { headers: auth });
+  await check('admin dashboard', '/api/v5/admin/dashboard', [200], { headers: auth });
+  await check('admin analytics overview', '/api/v5/admin/analytics/overview?range=7d', [200], { headers: auth });
+  await check('admin analytics device usage', '/api/v5/admin/analytics/device-usage', [200], { headers: auth });
+  await check('admin analytics time heatmap', '/api/v5/admin/analytics/time-heatmap?range=7d', [200], { headers: auth });
+  await check('admin analytics faults', '/api/v5/admin/analytics/faults?range=7d', [200], { headers: auth });
+  await check('admin operation logs', '/api/v5/admin/audit/operation-logs?limit=5', [200], { headers: auth });
+  const users = await check('admin users', '/api/v5/admin/users', [200], { headers: auth });
   const firstUser = users.json?.data?.users?.[0];
   if (firstUser?.id) {
-    await check('admin user detail', `/api/admin/users/${encodeURIComponent(firstUser.id)}/detail`, [200], { headers: auth });
+    await check('admin user detail', `/api/v5/admin/users/${encodeURIComponent(firstUser.id)}`, [200], { headers: auth });
   }
-  const devices = await check('admin devices', '/api/admin/devices', [200], { headers: auth });
+  const devices = await check('admin devices', '/api/v5/admin/devices', [200], { headers: auth });
   const firstDevice = devices.json?.data?.devices?.[0];
   if (firstDevice?.id) {
-    await check('admin device detail', `/api/admin/devices/${encodeURIComponent(firstDevice.id)}/detail`, [200], { headers: auth });
+    await check('admin device detail', `/api/v5/admin/devices/${encodeURIComponent(firstDevice.id)}`, [200], { headers: auth });
   }
-  await check('admin export usage', '/api/admin/exports/usage', [200], { headers: auth });
-  await check('admin export device summary', '/api/admin/exports/device_summary', [200], { headers: auth });
-  await check('chat users', '/api/chat/users', [200], { headers: auth });
-  await check('chat conversations', '/api/chat/conversations', [200], { headers: auth });
+  await check('admin export usage', '/api/v5/admin/exports/usage', [200], { headers: auth });
+  await check('admin export device summary', '/api/v5/admin/exports/device_summary', [200], { headers: auth });
+  await check('chat users', '/api/v5/chat/users', [200], { headers: auth });
+  await check('chat conversations', '/api/v5/chat/conversations', [200], { headers: auth });
   await checkChatEvents(token);
 }
 
@@ -75,7 +76,7 @@ async function checkChatEvents(token) {
   const ctrl = new AbortController();
   let timer = null;
   try {
-    const response = await fetch(`${baseUrl}/api/chat/events?token=${encodeURIComponent(token)}`, { signal: ctrl.signal });
+    const response = await fetch(`${baseUrl}/api/v5/chat/events?token=${encodeURIComponent(token)}`, { signal: ctrl.signal });
     const contentType = response.headers.get('content-type') || '';
     const ok = response.status === 200 && contentType.includes('text/event-stream');
     console.log(`${ok ? 'PASS' : 'FAIL'} chat events -> ${response.status}`);
@@ -106,9 +107,9 @@ async function main() {
   console.log(`Smoke testing ${baseUrl}`);
   await check('health', '/health', [200]);
   await check('ready', '/ready', [200, 503]);
-  await check('device list', '/api/devices', [200]);
-  await check('notifications require auth', '/api/notifications', [401]);
-  await check('reservation precheck requires auth', '/api/reservation-batches/precheck', [401], {
+  await check('device list', '/api/v5/devices', [200]);
+  await check('notifications require auth', '/api/v5/notifications', [401]);
+  await check('reservation precheck requires auth', '/api/v5/reservation-batches/precheck', [401], {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({})

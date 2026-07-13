@@ -1,0 +1,863 @@
+﻿@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* 借鉴 2.x 设计 token — 墨绿主色 + 暖米背景 + 米色强调 */
+    --background: 40 33% 95%;          /* #f7f4ef 暖米白 */
+    --background-gradient: radial-gradient(circle at top left, hsl(156 15% 43% / 0.12), transparent 26%),
+                          radial-gradient(circle at top right, hsl(30 43% 73% / 0.16), transparent 24%),
+                          linear-gradient(180deg, #fcfaf7 0%, hsl(40 33% 95%) 100%);
+    --foreground: 205 30% 19%;        /* #22313f 墨蓝 */
+    --card: 40 36% 97%;                /* 半透明白杯色，由 .rounded-... 添加 backdrop blur */
+    --card-foreground: 205 30% 19%;
+    --popover: 40 36% 98%;
+    --popover-foreground: 205 30% 19%;
+    --primary: 156 15% 43%;            /* #5d7f73 主色 */
+    --primary-foreground: 40 44% 96%;
+    --secondary: 156 26% 90%;         /* primary-soft 浅绿 */
+    --secondary-foreground: 155 16% 34%;
+    --muted: 40 30% 94%;
+    --muted-foreground: 214 12% 48%;   /* #6e7a88 */
+    --accent: 30 43% 73%;              /* #d8b89b 米色 */
+    --accent-foreground: 205 30% 19%;
+    --destructive: 4 44% 59%;          /* #c66b63 */
+    --destructive-foreground: 40 44% 96%;
+    --success: 138 21% 47%;            /* #5f8f73 */
+    --success-foreground: 40 44% 96%;
+    --warning: 33 50% 56%;             /* #c59157 */
+    --warning-foreground: 40 44% 96%;
+    --info: 195 35% 52%;
+    --info-foreground: 40 44% 96%;
+    --border: 156 14% 78%;             /* rgba(169,183,173,0.28) 近似 */
+    --input: 40 30% 96%;
+    --ring: 156 15% 43%;
+    --radius: 0.875rem;                /* 接近 2.x 14px 按钮 / 18px 卡片 */
+    --radius-lg: 1.375rem;              /* 22px 卡片大圆角 */
+
+    --shadow-card: 0 20px 45px hsl(215 18% 30% / 0.08);
+    --shadow-soft: 0 10px 22px hsl(210 16% 43% / 0.07);
+  }
+
+  [data-theme="dark"] {
+    --background: 205 30% 11%;
+    --background-gradient: radial-gradient(circle at top left, hsl(156 15% 43% / 0.18), transparent 26%),
+                          radial-gradient(circle at top right, hsl(30 43% 73% / 0.12), transparent 24%),
+                          linear-gradient(180deg, hsl(205 30% 13%) 0%, hsl(205 30% 11%) 100%);
+    --foreground: 40 36% 92%;
+    --card: 205 30% 14%;
+    --card-foreground: 40 36% 92%;
+    --popover: 205 30% 15%;
+    --popover-foreground: 40 36% 92%;
+    --primary: 156 18% 52%;
+    --primary-foreground: 205 30% 11%;
+    --secondary: 205 24% 20%;
+    --secondary-foreground: 40 36% 92%;
+    --muted: 205 24% 18%;
+    --muted-foreground: 210 14% 65%;
+    --accent: 30 35% 55%;
+    --accent-foreground: 40 36% 92%;
+    --destructive: 4 50% 55%;
+    --destructive-foreground: 40 44% 96%;
+    --success: 138 25% 52%;
+    --success-foreground: 40 44% 96%;
+    --warning: 33 55% 60%;
+    --warning-foreground: 40 44% 96%;
+    --info: 195 40% 58%;
+    --info-foreground: 40 44% 96%;
+    --border: 205 24% 22%;
+    --input: 205 24% 20%;
+    --ring: 156 18% 52%;
+    --shadow-card: 0 20px 45px hsl(20 30% 5% / 0.4);
+    --shadow-soft: 0 10px 22px hsl(20 30% 5% / 0.3);
+  }
+
+  /* 5.0 统一页面骨架：所有业务页共用同一留白、标题层级和承载卡片。 */
+  .ops-main {
+    width: 100%;
+  }
+  .ops-main > * {
+    animation: ops-page-enter 180ms ease-out both;
+  }
+  .ops-page-stack {
+    width: 100%;
+    max-width: 80rem;
+    margin-inline: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+  .ops-card,
+  .ops-surface {
+    border-radius: var(--radius-lg);
+  }
+  .ops-card > :first-child {
+    border-top-left-radius: inherit;
+    border-top-right-radius: inherit;
+  }
+  .ops-card > :last-child {
+    border-bottom-left-radius: inherit;
+    border-bottom-right-radius: inherit;
+  }
+  .ops-list-item {
+    border: 1px solid hsl(var(--border) / 0.72);
+    border-radius: 1rem;
+    background: hsl(var(--card) / 0.76);
+    transition: border-color .18s ease, background .18s ease, transform .18s ease, box-shadow .18s ease;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .ops-list-item:hover {
+      transform: translateY(-1px);
+      border-color: hsl(var(--primary) / .28);
+      background: hsl(var(--card) / .94);
+      box-shadow: var(--shadow-soft);
+    }
+  }
+  @keyframes ops-page-enter {
+    from { opacity: 0; transform: translateY(3px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border) / 0.6);
+  }
+  html, body {
+    min-height: 100%;
+  }
+  body {
+    background: var(--background-gradient);
+    color: hsl(var(--foreground));
+    font-family: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    font-feature-settings: "tnum";
+    -webkit-font-smoothing: antialiased;
+  }
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  /* 玻璃拟态卡片 — 借鉴 2.x .card */
+  .glass-card {
+    background: hsl(var(--card) / 0.9);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid hsl(0 0% 100% / 0.65);
+    box-shadow: var(--shadow-card);
+    border-radius: var(--radius-lg);
+  }
+
+  /* KPI 状态卡 — 借鉴 2.x .stat-card success/info/warn */
+  .kpi-card {
+    @apply rounded-[var(--radius-lg)] p-5 border;
+    background: hsl(var(--card) / 0.9);
+    backdrop-filter: blur(10px);
+    border-color: hsl(0 0% 100% / 0.65);
+    box-shadow: var(--shadow-card);
+    transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .kpi-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 24px 48px hsl(215 18% 30% / 0.1);
+      border-color: hsl(156 15% 43% / 0.18);
+    }
+  }
+  .kpi-card.success {
+    border-color: hsl(138 21% 47% / 0.22);
+    background: linear-gradient(145deg, hsl(138 30% 95% / 0.9), hsl(var(--card) / 0.9));
+  }
+  .kpi-card.info {
+    border-color: hsl(195 35% 52% / 0.22);
+    background: linear-gradient(145deg, hsl(195 40% 95% / 0.9), hsl(var(--card) / 0.9));
+  }
+  .kpi-card.warn {
+    border-color: hsl(33 50% 56% / 0.24);
+    background: linear-gradient(145deg, hsl(33 60% 95% / 0.9), hsl(var(--card) / 0.9));
+  }
+  .kpi-card.danger {
+    border-color: hsl(4 44% 59% / 0.24);
+    background: linear-gradient(145deg, hsl(4 50% 95% / 0.9), hsl(var(--card) / 0.9));
+  }
+
+  /* 状态徽章 — 借鉴 2.x .badge */
+  .badge-pill {
+    @apply inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border;
+  }
+  .badge-success { background: hsl(138 35% 90%); color: hsl(138 25% 33%); border-color: hsl(138 25% 70% / 0.4); }
+  .badge-info { background: hsl(195 30% 90%); color: hsl(195 30% 33%); border-color: hsl(195 30% 70% / 0.4); }
+  .badge-warn { background: hsl(33 50% 92%); color: hsl(33 40% 38%); border-color: hsl(33 50% 70% / 0.4); }
+  .badge-danger { background: hsl(4 50% 93%); color: hsl(4 40% 40%); border-color: hsl(4 50% 70% / 0.4); }
+  .badge-muted { background: hsl(var(--muted)); color: hsl(var(--muted-foreground)); border-color: hsl(var(--border)); }
+
+  /* Hero 区域 — 借鉴 2.x .hero 渐变光斑 */
+  .page-hero {
+    position: relative;
+    overflow: hidden;
+    border-radius: var(--radius-lg);
+    padding: 1.75rem;
+    background:
+      linear-gradient(135deg, hsl(40 50% 97% / 0.88), hsl(156 30% 95% / 0.9)),
+      linear-gradient(135deg, hsl(156 15% 43% / 0.12), hsl(30 43% 73% / 0.14));
+    border: 1px solid hsl(0 0% 100% / 0.55);
+    box-shadow: var(--shadow-card);
+  }
+  .page-hero::before,
+  .page-hero::after {
+    content: '';
+    position: absolute;
+    border-radius: 999px;
+    pointer-events: none;
+  }
+  .page-hero::after {
+    inset: auto -40px -40px auto;
+    width: 180px; height: 180px;
+    background: hsl(156 15% 43% / 0.08);
+  }
+  .page-hero::before {
+    inset: -60px auto auto -50px;
+    width: 160px; height: 160px;
+    background: hsl(30 43% 73% / 0.12);
+  }
+
+  /* 表格行 hover — 借鉴 2.x tr:hover td */
+  table tbody tr {
+    transition: background .15s ease;
+  }
+  table tbody tr:hover td {
+    background: hsl(156 30% 96% / 0.5);
+  }
+
+  /* IDBS 5.0 智能运营版：统一页面密度、驾驶舱卡片和图表质感 */
+  .ops-layout-shell {
+    background:
+      radial-gradient(circle at 8% 0%, hsl(156 42% 62% / 0.16), transparent 30%),
+      radial-gradient(circle at 86% 6%, hsl(214 82% 70% / 0.12), transparent 28%),
+      radial-gradient(circle at 58% 100%, hsl(30 72% 70% / 0.13), transparent 34%),
+      var(--background-gradient);
+  }
+  .ops-main {
+    width: 100%;
+    max-width: 1680px;
+    margin: 0 auto;
+  }
+  .ops-hero {
+    position: relative;
+    overflow: hidden;
+    border-radius: 28px;
+    border: 1px solid hsl(0 0% 100% / 0.62);
+    background:
+      linear-gradient(135deg, hsl(205 30% 13% / 0.94), hsl(156 22% 23% / 0.92)),
+      radial-gradient(circle at 82% 12%, hsl(156 80% 76% / 0.24), transparent 30%);
+    color: white;
+    box-shadow: 0 28px 72px hsl(205 38% 18% / 0.2);
+  }
+  .ops-hero::before,
+  .ops-hero::after {
+    content: '';
+    position: absolute;
+    border-radius: 999px;
+    pointer-events: none;
+  }
+  .ops-hero::before {
+    width: 360px;
+    height: 360px;
+    right: -120px;
+    top: -160px;
+    background: hsl(156 80% 74% / 0.16);
+    filter: blur(4px);
+  }
+  .ops-hero::after {
+    width: 220px;
+    height: 220px;
+    left: -80px;
+    bottom: -120px;
+    background: hsl(30 80% 72% / 0.15);
+  }
+  .ops-hero-v5 {
+    background:
+      radial-gradient(circle at 84% 8%, hsl(170 90% 74% / 0.18), transparent 28%),
+      radial-gradient(circle at 8% 92%, hsl(32 90% 70% / 0.14), transparent 30%),
+      linear-gradient(135deg, hsl(214 40% 12% / 0.96), hsl(156 28% 21% / 0.94));
+  }
+  .ops-hero-v5 h1 {
+    text-wrap: balance;
+  }
+  .ops-card {
+    border-radius: 24px;
+    border: 1px solid hsl(0 0% 100% / 0.62);
+    background:
+      linear-gradient(180deg, hsl(var(--card) / 0.94), hsl(var(--card) / 0.82)),
+      radial-gradient(circle at top right, hsl(var(--primary) / 0.08), transparent 34%);
+    box-shadow: var(--shadow-card);
+    backdrop-filter: blur(12px);
+  }
+  .ops-stat-card {
+    position: relative;
+    overflow: hidden;
+    border-radius: 24px;
+    border: 1px solid hsl(var(--border) / 0.72);
+    background:
+      linear-gradient(145deg, hsl(var(--card) / 0.96), hsl(var(--card) / 0.78)),
+      radial-gradient(circle at 100% 0%, hsl(var(--primary) / 0.14), transparent 34%);
+    box-shadow: var(--shadow-soft);
+  }
+  .ops-stat-card::after {
+    content: '';
+    position: absolute;
+    inset: auto -30px -42px auto;
+    width: 120px;
+    height: 120px;
+    border-radius: 999px;
+    background: hsl(var(--primary) / 0.08);
+  }
+  .ops-chart-panel {
+    border-radius: 22px;
+    border: 1px solid hsl(var(--border) / 0.72);
+    background: linear-gradient(180deg, hsl(var(--card) / 0.92), hsl(var(--background) / 0.82));
+    box-shadow: var(--shadow-soft);
+  }
+  .ops-section-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: .75rem;
+  }
+  .ops-section-title h2 {
+    font-size: 1rem;
+    font-weight: 900;
+    letter-spacing: -0.01em;
+  }
+  .ops-section-title p {
+    font-size: .75rem;
+    color: hsl(var(--muted-foreground));
+  }
+  .ops-progress-track {
+    height: .5rem;
+    overflow: hidden;
+    border-radius: 999px;
+    background: hsl(var(--muted));
+  }
+  .ops-progress-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, hsl(var(--primary)), hsl(180 60% 52%));
+    box-shadow: 0 0 18px hsl(var(--primary) / 0.34);
+  }
+  .ops-permission-note,
+  .ops-security-note {
+    border-radius: 18px;
+    border: 1px dashed hsl(33 50% 56% / 0.5);
+    background: hsl(33 70% 94% / 0.66);
+    color: hsl(33 48% 32%);
+    padding: .75rem 1rem;
+    font-size: .8rem;
+    line-height: 1.6;
+  }
+  .ops-security-note {
+    border-color: hsl(156 35% 46% / 0.38);
+    background: hsl(156 45% 94% / 0.68);
+    color: hsl(156 28% 30%);
+  }
+
+  .ops-data-toolbar {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    border-radius: 24px;
+    border: 1px solid hsl(var(--border) / 0.72);
+    background:
+      linear-gradient(180deg, hsl(var(--card) / 0.94), hsl(var(--card) / 0.78)),
+      radial-gradient(circle at 96% 0%, hsl(var(--primary) / 0.1), transparent 32%);
+    box-shadow: var(--shadow-soft);
+    padding: 1rem;
+    backdrop-filter: blur(12px);
+  }
+  @media (max-width: 640px) {
+    .ops-data-toolbar {
+      flex-direction: column;
+    }
+  }
+  .ops-time-block {
+    --ops-time-color: hsl(var(--primary));
+    display: inline-flex;
+    max-width: 100%;
+    align-items: center;
+    gap: .35rem;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--ops-time-color) 28%, transparent);
+    background: color-mix(in srgb, var(--ops-time-color) 11%, hsl(var(--card)));
+    color: color-mix(in srgb, var(--ops-time-color) 72%, hsl(var(--foreground)));
+    padding: .28rem .55rem;
+    font-size: .72rem;
+    line-height: 1;
+    box-shadow: inset 3px 0 0 var(--ops-time-color);
+  }
+  .ops-time-block-compact {
+    max-width: 5.75rem;
+    padding-inline: .45rem;
+  }
+
+  .ops-nav-active {
+    background: linear-gradient(135deg, hsl(var(--primary) / 0.13), hsl(var(--accent) / 0.13));
+    color: hsl(var(--foreground));
+    box-shadow: inset 3px 0 0 hsl(var(--primary));
+  }
+  .device-hero-v4 {
+    position: relative;
+    overflow: hidden;
+    border-radius: 28px;
+    border: 1px solid hsl(0 0% 100% / 0.66);
+    background:
+      radial-gradient(circle at 88% 0%, hsl(156 64% 62% / 0.17), transparent 30%),
+      linear-gradient(135deg, hsl(var(--card) / 0.96), hsl(var(--card) / 0.78));
+    box-shadow: var(--shadow-card);
+    padding: 1.25rem;
+    backdrop-filter: blur(14px);
+  }
+  .device-hero-v4::after {
+    content: '';
+    position: absolute;
+    right: -4.5rem;
+    top: -5rem;
+    width: 15rem;
+    height: 15rem;
+    border-radius: 999px;
+    background: hsl(var(--primary) / 0.08);
+    pointer-events: none;
+  }
+  .device-card-v4 {
+    border-radius: 24px;
+    border: 1px solid hsl(0 0% 100% / 0.62);
+    background:
+      linear-gradient(180deg, hsl(var(--card) / 0.97), hsl(var(--card) / 0.86)),
+      radial-gradient(circle at top right, hsl(var(--primary) / 0.08), transparent 30%);
+    box-shadow: var(--shadow-soft);
+    transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+  }
+  .device-card-v4:hover {
+    transform: translateY(-2px);
+    border-color: hsl(var(--primary) / 0.25);
+    box-shadow: 0 18px 46px hsl(205 34% 18% / 0.12);
+  }
+}
+
+/* IDBS 5.0 editorial refinement: quiet material surfaces, deliberate spacing, no decorative gradients. */
+@layer components {
+  :root {
+    --background: 42 24% 96%;
+    --background-gradient: #f5f2eb;
+    --foreground: 158 30% 14%;
+    --card: 42 36% 98%;
+    --card-foreground: 158 30% 14%;
+    --popover: 42 36% 98%;
+    --popover-foreground: 158 30% 14%;
+    --primary: 160 38% 24%;
+    --primary-foreground: 42 40% 97%;
+    --secondary: 145 18% 91%;
+    --secondary-foreground: 160 24% 24%;
+    --muted: 42 18% 91%;
+    --muted-foreground: 158 12% 34%;
+    --accent: 27 39% 72%;
+    --accent-foreground: 158 27% 16%;
+    --border: 145 14% 78%;
+    --input: 42 36% 98%;
+    --ring: 160 38% 24%;
+    --radius: .75rem;
+    --radius-lg: 1rem;
+    --shadow-card: 0 14px 32px hsl(154 17% 20% / .06);
+    --shadow-soft: 0 6px 18px hsl(154 17% 20% / .045);
+  }
+
+  body { background: hsl(var(--background)); }
+  .ops-layout-shell { background: hsl(var(--background)); }
+  .ops-page-stack { max-width: 88rem; gap: 1.5rem; }
+  .ops-card,
+  .ops-surface,
+  .glass-card,
+  .ops-chart-panel {
+    border: 1px solid hsl(var(--border) / .72);
+    border-radius: var(--radius-lg);
+    background: hsl(var(--card));
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+  .ops-card { background: hsl(var(--card)); }
+  .ops-data-toolbar {
+    border: 0;
+    border-bottom: 1px solid hsl(var(--border) / .8);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    padding: 0 0 1rem;
+    backdrop-filter: none;
+  }
+  .ops-data-toolbar > div:first-child > div:first-child > span:first-child {
+    height: 2.25rem;
+    width: 2.25rem;
+    border-radius: .7rem;
+    background: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+  }
+  .ops-stat-card,
+  .kpi-card {
+    border: 1px solid hsl(var(--border) / .72);
+    border-radius: var(--radius-lg);
+    background: hsl(var(--card));
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+  .ops-stat-card::after { display: none; }
+  .kpi-card.success, .kpi-card.info, .kpi-card.warn, .kpi-card.danger { background: hsl(var(--card)); }
+  .ops-time-block {
+    border-radius: .5rem;
+    box-shadow: inset 2px 0 0 var(--ops-time-color);
+  }
+  .badge-pill {
+    border-radius: .5rem;
+    padding: .24rem .5rem;
+    font-size: .7rem;
+    letter-spacing: .01em;
+  }
+  .device-card-v4 {
+    border: 1px solid hsl(var(--border) / .74);
+    border-radius: var(--radius-lg);
+    background: hsl(var(--card));
+    box-shadow: none;
+  }
+  .device-card-v4:hover {
+    transform: translateY(-2px);
+    border-color: hsl(var(--primary) / .45);
+    box-shadow: var(--shadow-card);
+  }
+  .device-card-v4 > div:first-child { height: 10.5rem; }
+  .device-card-v4 > div:first-child::after {
+    content: '';
+    position: absolute;
+    inset: auto 0 0;
+    height: 36%;
+    background: linear-gradient(to top, hsl(158 27% 16% / .5), transparent);
+  }
+  .device-card-v4 .rounded-2xl {
+    border-radius: .75rem;
+    background: hsl(42 24% 96% / .72);
+  }
+  .ops-progress-fill { background: hsl(var(--primary)); box-shadow: none; }
+  table thead { background: hsl(145 18% 93%) !important; }
+  table tbody tr:hover td { background: hsl(145 20% 95% / .72); }
+  select {
+    border-color: hsl(var(--border) / .9) !important;
+    border-radius: .75rem !important;
+    background-color: hsl(var(--card)) !important;
+  }
+  @media (max-width: 640px) {
+    .ops-page-stack { gap: 1.25rem; }
+    .device-card-v4 > div:first-child { height: 9.5rem; }
+  }
+}
+
+@layer components {
+  .ops-page-header {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 2rem;
+    border-bottom: 1px solid hsl(var(--border) / .85);
+    padding: .25rem 0 1.5rem;
+  }
+  .ops-page-header-eyebrow {
+    color: hsl(var(--primary));
+    font-size: .66rem;
+    font-weight: 800;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+  }
+  .ops-page-header-title {
+    color: hsl(var(--foreground));
+    font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: clamp(1.65rem, 2.25vw, 2.35rem);
+    font-weight: 800;
+    letter-spacing: -.035em;
+    line-height: 1.18;
+  }
+  .ops-page-header-description {
+    max-width: 44rem;
+    margin-top: .65rem;
+    color: hsl(var(--muted-foreground));
+    font-size: .9375rem;
+    line-height: 1.65;
+  }
+  .ops-page-header-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+    margin-top: 1.35rem;
+  }
+  .ops-page-header-aside {
+    flex: 0 0 auto;
+    min-width: min(100%, 20rem);
+    border-left: 2px solid hsl(var(--accent));
+    padding: .5rem 0 .5rem 1rem;
+  }
+  .ops-hero,
+  .ops-hero-v5 {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    color: hsl(var(--foreground));
+  }
+  .ops-hero::before,
+  .ops-hero::after { display: none; }
+  .ops-hero h1 { color: hsl(var(--foreground)); }
+  @media (max-width: 640px) {
+    .ops-page-header { align-items: flex-start; flex-direction: column; gap: 1rem; padding-bottom: 1.25rem; }
+    .ops-page-header-title { font-size: 2rem; }
+    .ops-page-header-aside { width: 100%; min-width: 0; }
+  }
+}
+
+/* Accessibility refinement: higher contrast, calmer surfaces, and predictable focus. */
+@layer base {
+  body { line-height: 1.5; }
+  ::selection { background: hsl(var(--primary) / .18); color: hsl(var(--foreground)); }
+  :focus-visible { outline: 3px solid hsl(var(--ring) / .42); outline-offset: 2px; }
+}
+@layer components {
+  .ops-main { max-width: 88rem; margin-inline: auto; }
+  .ops-card, .ops-surface, .glass-card, .ops-chart-panel { box-shadow: 0 8px 20px hsl(154 17% 20% / .035); }
+  .ops-card:hover, .ops-chart-panel:hover { box-shadow: 0 12px 26px hsl(154 17% 20% / .07); }
+  .ops-page-header-description, .text-muted-foreground { color: hsl(var(--muted-foreground)); }
+  .ops-page-header-aside { border-left-color: hsl(var(--primary) / .42); }
+  .ops-data-toolbar { gap: 1rem; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
+  }
+  @media (max-width: 640px) {
+    .ops-page-stack { gap: 1rem; }
+    .ops-page-header-title { font-size: 1.65rem; }
+    .ops-page-header-description { font-size: .875rem; line-height: 1.6; }
+  }
+}
+
+
+/* V5 laboratory console: unified cyan, blue, and violet visual system. */
+@layer components {
+  :root,
+  [data-theme="dark"] {
+    --background: 222 38% 9%;
+    --background-gradient:
+      radial-gradient(circle at 6% 4%, hsl(194 74% 54% / .10), transparent 23rem),
+      radial-gradient(circle at 94% 2%, hsl(260 64% 66% / .07), transparent 26rem),
+      radial-gradient(ellipse at 50% 112%, hsl(220 56% 34% / .15), transparent 48rem),
+      linear-gradient(150deg, hsl(224 37% 10%) 0%, hsl(220 36% 8%) 48%, hsl(231 32% 10%) 100%);
+    --foreground: 210 40% 96%;
+    --card: 221 31% 13%;
+    --card-foreground: 210 40% 96%;
+    --popover: 221 31% 14%;
+    --popover-foreground: 210 40% 96%;
+    --primary: 192 72% 56%;
+    --primary-foreground: 222 47% 8%;
+    --secondary: 220 26% 18%;
+    --secondary-foreground: 200 80% 92%;
+    --muted: 221 24% 17%;
+    --muted-foreground: 215 22% 70%;
+    --accent: 258 56% 68%;
+    --accent-foreground: 230 60% 96%;
+    --destructive: 0 85% 66%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 159 83% 50%;
+    --success-foreground: 222 47% 8%;
+    --warning: 39 96% 62%;
+    --warning-foreground: 222 47% 8%;
+    --info: 204 100% 64%;
+    --info-foreground: 222 47% 8%;
+    --border: 205 28% 31%;
+    --input: 221 26% 15%;
+    --ring: 188 96% 57%;
+    --radius: .875rem;
+    --radius-lg: 1.25rem;
+    --shadow-card: 0 20px 54px hsl(220 70% 3% / .55), 0 0 0 1px hsl(190 100% 65% / .035);
+    --shadow-soft: 0 12px 30px hsl(220 70% 3% / .38);
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    background-image: var(--background-gradient);
+    background-attachment: fixed;
+  }
+  .ops-layout-shell {
+    background-image:
+      linear-gradient(hsl(194 70% 68% / .022) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(194 70% 68% / .022) 1px, transparent 1px),
+      var(--background-gradient);
+    background-size: 36px 36px, 36px 36px, auto;
+  }
+  .ops-main { position: relative; }
+  .ops-main::before {
+    content: '';
+    position: fixed;
+    z-index: -1;
+    left: 50%;
+    bottom: -26rem;
+    width: 76rem;
+    height: 34rem;
+    transform: translateX(-50%);
+    border: 1px solid hsl(194 70% 66% / .055);
+    border-radius: 50%;
+    background: radial-gradient(ellipse, hsl(208 66% 54% / .065), transparent 66%);
+    box-shadow: 0 0 120px hsl(198 66% 52% / .055);
+    pointer-events: none;
+  }
+  .ops-card, .ops-surface, .glass-card, .ops-chart-panel, .device-card-v4, .ops-stat-card, .kpi-card {
+    border: 1px solid hsl(194 42% 62% / .13);
+    background:
+      linear-gradient(145deg, hsl(222 30% 15% / .95), hsl(224 31% 11% / .92)),
+      radial-gradient(circle at 100% 0%, hsl(194 70% 60% / .055), transparent 34%);
+    box-shadow: var(--shadow-card);
+    backdrop-filter: blur(16px);
+  }
+  .ops-card:hover, .ops-chart-panel:hover, .device-card-v4:hover {
+    border-color: hsl(194 66% 67% / .26);
+    box-shadow: 0 20px 48px hsl(220 70% 3% / .56), 0 0 26px hsl(194 70% 56% / .055);
+  }
+  .ops-stat-card::after {
+    display: block;
+    background: radial-gradient(circle, hsl(194 68% 64% / .075), transparent 68%);
+  }
+  .ops-data-toolbar {
+    border: 1px solid hsl(194 42% 62% / .13);
+    border-radius: var(--radius-lg);
+    background: hsl(222 42% 12% / .72);
+    box-shadow: var(--shadow-soft);
+    padding: 1rem;
+    backdrop-filter: blur(14px);
+  }
+  .ops-page-header {
+    border-bottom-color: hsl(190 72% 62% / .22);
+    background: linear-gradient(90deg, hsl(194 70% 65% / .035), transparent 42%);
+    padding: .8rem 1rem 1.5rem;
+  }
+  .ops-page-header-eyebrow {
+    color: hsl(194 72% 68%);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+  .ops-page-header-title {
+    color: hsl(205 65% 95%);
+    text-shadow: 0 0 28px hsl(194 70% 65% / .09);
+  }
+  .ops-page-header-aside { border-left-color: hsl(194 70% 62%); }
+  .ops-list-item {
+    border-color: hsl(190 72% 62% / .14);
+    background: hsl(222 28% 14% / .82);
+  }
+  .ops-list-item:hover {
+    border-color: hsl(194 66% 67% / .24);
+    background: hsl(221 30% 16% / .94);
+  }
+  .ops-nav-active {
+    background: linear-gradient(90deg, hsl(194 70% 58% / .15), hsl(258 52% 67% / .09));
+    color: hsl(198 58% 94%);
+    box-shadow: inset 3px 0 0 hsl(194 68% 63%), 0 0 20px hsl(194 68% 55% / .045);
+  }
+  .ops-progress-track { background: hsl(221 24% 19%); }
+  .ops-progress-fill { background: linear-gradient(90deg, hsl(192 72% 56%), hsl(214 70% 63%), hsl(258 56% 68%)); box-shadow: 0 0 18px hsl(194 68% 60% / .22); }
+  .badge-pill { border-color: hsl(194 62% 66% / .16); background: hsl(194 70% 56% / .055); color: hsl(194 52% 88%); }
+  table thead { background: hsl(221 26% 17%) !important; }
+  table tbody tr:hover td { background: hsl(194 68% 58% / .04); }
+  select { border-color: hsl(194 42% 62% / .18) !important; background-color: hsl(221 26% 15%) !important; color: hsl(var(--foreground)); }
+  .device-hero-v4 {
+    border-color: hsl(194 42% 62% / .15);
+    background: linear-gradient(130deg, hsl(221 31% 16% / .97), hsl(228 31% 12% / .94));
+    box-shadow: var(--shadow-card);
+  }
+  .device-card-v4 > div:first-child::after { background: linear-gradient(to top, hsl(222 37% 9% / .88), transparent); }
+}
+
+
+/* Precision interface revision: restrained technical hierarchy and WCAG-oriented contrast. */
+@layer base {
+  :root,
+  [data-theme="dark"] {
+    --background: 219 45% 8%;
+    --background-gradient:
+      radial-gradient(ellipse at 12% -8%, hsl(197 78% 52% / .08), transparent 34rem),
+      radial-gradient(ellipse at 100% 0%, hsl(218 72% 57% / .055), transparent 30rem),
+      linear-gradient(155deg, hsl(220 46% 10%), hsl(218 44% 7%) 56%, hsl(223 40% 9%));
+    --foreground: 213 43% 94%;
+    --card: 217 38% 13%;
+    --card-foreground: 213 43% 94%;
+    --popover: 217 38% 14%;
+    --popover-foreground: 213 43% 94%;
+    --primary: 194 78% 61%;
+    --primary-foreground: 218 48% 8%;
+    --secondary: 216 28% 18%;
+    --secondary-foreground: 213 38% 91%;
+    --muted: 216 26% 17%;
+    --muted-foreground: 214 20% 72%;
+    --accent: 214 72% 63%;
+    --accent-foreground: 216 48% 8%;
+    --border: 211 28% 28%;
+    --input: 216 29% 15%;
+    --ring: 194 78% 61%;
+    --shadow-card: 0 18px 42px hsl(220 60% 3% / .36), 0 1px 0 hsl(210 90% 80% / .035) inset;
+    --shadow-soft: 0 10px 26px hsl(220 60% 3% / .28);
+    --font-ui: Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --font-display: Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  body, button, input, select, textarea { font-family: var(--font-ui); }
+  body { letter-spacing: .005em; }
+  h1, h2, h3, h4, h5, h6 { font-family: var(--font-display); letter-spacing: -.018em; }
+}
+
+@layer components {
+  .ops-layout-shell {
+    background-image:
+      linear-gradient(hsl(204 85% 70% / .018) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(204 85% 70% / .018) 1px, transparent 1px),
+      var(--background-gradient);
+    background-size: 48px 48px, 48px 48px, auto;
+  }
+  .ops-layout-shell::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent 0 49.9%, hsl(194 80% 66% / .025) 50%, transparent 50.1%);
+    background-size: 12rem 100%;
+    mask-image: linear-gradient(to bottom, black, transparent 72%);
+  }
+  .ops-card, .ops-surface, .glass-card, .ops-chart-panel, .device-card-v4, .ops-stat-card, .kpi-card {
+    border-color: hsl(207 33% 62% / .13);
+    background: linear-gradient(150deg, hsl(216 36% 15% / .96), hsl(219 38% 11% / .96));
+    box-shadow: var(--shadow-card);
+  }
+  .ops-card:hover, .ops-chart-panel:hover, .device-card-v4:hover {
+    border-color: hsl(194 72% 68% / .22);
+    box-shadow: 0 20px 44px hsl(220 60% 3% / .40), 0 0 0 1px hsl(194 74% 64% / .035);
+  }
+  .ops-page-header { background: none; border-bottom-color: hsl(208 30% 60% / .15); }
+  .ops-page-header-eyebrow {
+    color: hsl(194 70% 67%);
+    font-family: var(--font-ui);
+    font-size: .68rem;
+    font-weight: 700;
+    letter-spacing: .12em;
+  }
+  .ops-page-header-title { color: hsl(213 43% 94%); text-shadow: none; }
+  .ops-page-header-description { color: hsl(214 20% 72%); }
+  .ops-page-header-aside { border-left-color: hsl(194 66% 60% / .55); }
+  .ops-nav-active { background: linear-gradient(90deg, hsl(195 74% 57% / .14), hsl(214 70% 64% / .055)); box-shadow: inset 2px 0 0 hsl(194 78% 67%); }
+  .ops-progress-fill { background: linear-gradient(90deg, hsl(194 78% 58%), hsl(213 76% 64%)); box-shadow: none; }
+  .badge-pill { background: hsl(195 70% 55% / .08); border-color: hsl(195 62% 68% / .16); color: hsl(198 44% 87%); }
+  .ops-main .text-white { color: hsl(213 43% 94%) !important; }
+  .ops-main .text-white\/82, .ops-main .text-white\/80, .ops-main .text-white\/76, .ops-main .text-white\/72, .ops-main .text-white\/70 { color: hsl(213 31% 84%) !important; }
+  .ops-main .text-white\/65, .ops-main .text-white\/62, .ops-main .text-white\/60, .ops-main .text-white\/55, .ops-main .text-white\/50 { color: hsl(214 20% 72%) !important; }
+  .ops-main .font-mono { font-family: var(--font-ui); letter-spacing: .02em; }
+}

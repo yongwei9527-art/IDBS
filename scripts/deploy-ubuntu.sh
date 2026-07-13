@@ -16,6 +16,7 @@ BACKUP_SERVICE_FILE="/etc/systemd/system/${APP_NAME}-backup.service"
 BACKUP_TIMER_FILE="/etc/systemd/system/${APP_NAME}-backup.timer"
 NGINX_FILE="/etc/nginx/sites-available/${APP_NAME}.conf"
 NGINX_LINK="/etc/nginx/sites-enabled/${APP_NAME}.conf"
+ADMIN_RESET_COMMAND="/usr/local/bin/${APP_NAME}-reset-admin-password"
 PORT="${PORT:-3000}"
 DOMAIN_NAME="${DOMAIN_NAME:-_}"
 ENV_CREATED=0
@@ -71,6 +72,7 @@ ensure_env() {
     ADMIN_PASSWORD="$(printf 'IDBS_%s' "$(openssl rand -hex 6)")"
     DEFAULT_ORIGIN="${CORS_ORIGIN:-$(detect_default_origin)}"
     cat > "$ENV_FILE" <<EOF
+NODE_ENV=production
 PORT=$PORT
 ADMIN_PASSWORD=${ADMIN_PASSWORD}
 TOKEN_SECRET=$(openssl rand -hex 32)
@@ -81,7 +83,13 @@ WECHAT_ADMIN_OPENIDS=
 UPLOAD_DIR=$APP_UPLOADS
 DATABASE_URL=postgresql://idbs_user:${DB_PASSWORD}@127.0.0.1:5432/idbs
 PGSSL=false
+PGSSL_REJECT_UNAUTHORIZED=true
 CORS_ORIGIN=${DEFAULT_ORIGIN}
+TRUST_PROXY=true
+AUTH_RATE_LIMIT_MAX=10
+AUTH_RATE_LIMIT_WINDOW_MS=600000
+API_RATE_LIMIT_MAX=120
+API_RATE_LIMIT_WINDOW_MS=60000
 EOF
     ENV_CREATED=1
   fi
@@ -101,11 +109,13 @@ set_env_value() {
 }
 
 repair_env_placeholders() {
-  local current_admin current_secret current_cors current_db
+  local current_admin current_secret current_cors current_db current_node_env current_trust_proxy
   current_admin="$(get_env_value ADMIN_PASSWORD || true)"
   current_secret="$(get_env_value TOKEN_SECRET || true)"
   current_cors="$(get_env_value CORS_ORIGIN || true)"
   current_db="$(get_env_value DATABASE_URL || true)"
+  current_node_env="$(get_env_value NODE_ENV || true)"
+  current_trust_proxy="$(get_env_value TRUST_PROXY || true)"
 
   if [ -z "$current_admin" ] || [ "$current_admin" = "change-me" ] || [ "$current_admin" = "your-admin-password" ]; then
     set_env_value ADMIN_PASSWORD "IDBS_$(openssl rand -hex 6)"
@@ -123,6 +133,22 @@ repair_env_placeholders() {
   if [ -z "$current_db" ] || printf '%s' "$current_db" | grep -q 'your-password'; then
     set_env_value DATABASE_URL "postgresql://idbs_user:$(openssl rand -hex 16)@127.0.0.1:5432/idbs"
   fi
+
+  if [ -z "$current_node_env" ]; then
+    set_env_value NODE_ENV production
+  fi
+
+  if [ -z "$current_trust_proxy" ]; then
+    set_env_value TRUST_PROXY true
+  fi
+
+  if ! grep -qE '^API_RATE_LIMIT_MAX=' "$ENV_FILE"; then
+    set_env_value API_RATE_LIMIT_MAX 120
+  fi
+
+  if ! grep -qE '^API_RATE_LIMIT_WINDOW_MS=' "$ENV_FILE"; then
+    set_env_value API_RATE_LIMIT_WINDOW_MS 60000
+  fi
 }
 
 detect_default_origin() {
@@ -137,7 +163,7 @@ detect_default_origin() {
   if [ -n "$public_ip" ]; then
     printf 'http://%s' "$public_ip"
   else
-    printf '*'
+    printf 'http://127.0.0.1:%s' "$PORT"
   fi
 }
 
@@ -173,24 +199,54 @@ ensure_local_database() {
     sudo -u postgres createdb -O idbs_user idbs
   fi
 
-  sudo -u postgres psql -d idbs -c "GRANT ALL PRIVILEGES ON DATABASE idbs TO idbs_user;"
-  sudo -u postgres psql -d idbs -f "$APP_CURRENT/sql/schema.sql"
+  sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON DATABASE idbs TO idbs_user;"
+  sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 -f "$APP_CURRENT/sql/schema.sql"
   if [ -d "$APP_CURRENT/sql/migrations" ]; then
-    sudo -u postgres psql -d idbs -c "CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now());"
+    sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now());"
     for migration in "$APP_CURRENT"/sql/migrations/*.sql; do
       [ -e "$migration" ] || continue
-      version="$(basename "$migration" .sql)"
+      migration_name="$(basename "$migration")"
+      case "${migration_name,,}" in
+        *rollback*) continue ;;
+      esac
+      version="${migration_name%.sql}"
       if ! sudo -u postgres psql -d idbs -tAc "SELECT 1 FROM schema_migrations WHERE version='${version}'" | grep -q 1; then
-        sudo -u postgres psql -d idbs -f "$migration"
-        sudo -u postgres psql -d idbs -c "INSERT INTO schema_migrations (version) VALUES ('${version}')"
+        sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 --single-transaction -f "$migration" -c "INSERT INTO schema_migrations (version) VALUES ('${version}') ON CONFLICT DO NOTHING;"
       fi
     done
   fi
-  sudo -u postgres psql -d idbs -c "GRANT ALL ON SCHEMA public TO idbs_user;"
-  sudo -u postgres psql -d idbs -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO idbs_user;"
-  sudo -u postgres psql -d idbs -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO idbs_user;"
-  sudo -u postgres psql -d idbs -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO idbs_user;"
-  sudo -u postgres psql -d idbs -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO idbs_user;"
+
+  sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 -c "ALTER SCHEMA public OWNER TO idbs_user;"
+  sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 <<'SQL'
+DO $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename FROM pg_tables WHERE schemaname = 'public' LOOP
+    EXECUTE format('ALTER TABLE %I.%I OWNER TO idbs_user', r.schemaname, r.tablename);
+  END LOOP;
+  FOR r IN SELECT schemaname, viewname FROM pg_views WHERE schemaname = 'public' LOOP
+    EXECUTE format('ALTER VIEW %I.%I OWNER TO idbs_user', r.schemaname, r.viewname);
+  END LOOP;
+  FOR r IN SELECT sequence_schema, sequence_name FROM information_schema.sequences WHERE sequence_schema = 'public' LOOP
+    EXECUTE format('ALTER SEQUENCE %I.%I OWNER TO idbs_user', r.sequence_schema, r.sequence_name);
+  END LOOP;
+END $$;
+SQL
+  sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 -c "GRANT ALL ON SCHEMA public TO idbs_user;"
+  sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO idbs_user;"
+  sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO idbs_user;"
+  sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES FOR ROLE idbs_user IN SCHEMA public GRANT ALL ON TABLES TO idbs_user;"
+  sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES FOR ROLE idbs_user IN SCHEMA public GRANT ALL ON SEQUENCES TO idbs_user;"
+}
+
+run_doctor_check() {
+  log "Running deployment doctor check..."
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+  NODE_ENV=production npm --prefix "$APP_CURRENT" run doctor
 }
 
 install_service() {
@@ -250,6 +306,67 @@ EOF
   systemctl enable --now "${APP_NAME}-backup.timer"
 }
 
+install_admin_reset_command() {
+  cat > "$ADMIN_RESET_COMMAND" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_CURRENT="${APP_CURRENT:-/var/www/idbs/current}"
+ENV_FILE="${ENV_FILE:-/var/www/idbs/shared/.env}"
+
+if [ ! -f "$ENV_FILE" ]; then
+  echo "IDBS environment file not found: $ENV_FILE" >&2
+  exit 1
+fi
+
+if [ ! -f "$APP_CURRENT/scripts/reset-admin-password.js" ]; then
+  echo "IDBS reset script not found: $APP_CURRENT/scripts/reset-admin-password.js" >&2
+  exit 1
+fi
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  cat <<HELP
+Reset IDBS admin console password.
+
+Usage:
+  sudo idbs-reset-admin-password
+  sudo idbs-reset-admin-password 'NewStrongPassword123'
+  sudo ADMIN_NEW_PASSWORD='NewStrongPassword123' idbs-reset-admin-password
+
+When no password is passed, the command asks for it without echoing input.
+HELP
+  exit 0
+fi
+
+NEW_PASSWORD="${ADMIN_NEW_PASSWORD:-${1:-}}"
+if [ -z "$NEW_PASSWORD" ]; then
+  read -r -s -p "New admin password (at least 12 chars): " NEW_PASSWORD
+  echo
+  read -r -s -p "Confirm new admin password: " CONFIRM_PASSWORD
+  echo
+  if [ "$NEW_PASSWORD" != "$CONFIRM_PASSWORD" ]; then
+    echo "Passwords do not match." >&2
+    exit 1
+  fi
+fi
+
+if [ "${#NEW_PASSWORD}" -lt 12 ]; then
+  echo "Password must be at least 12 characters." >&2
+  exit 1
+fi
+
+set -a
+# shellcheck disable=SC1090
+. "$ENV_FILE"
+set +a
+
+cd "$APP_CURRENT"
+ADMIN_NEW_PASSWORD="$NEW_PASSWORD" node scripts/reset-admin-password.js
+echo "Done. Please log in to the admin console with the new password."
+EOF
+  chmod 755 "$ADMIN_RESET_COMMAND"
+}
+
 install_nginx() {
   rm -f /etc/nginx/sites-enabled/default
   rm -f /etc/nginx/conf.d/default.conf
@@ -265,6 +382,18 @@ server {
     alias $APP_UPLOADS/;
     expires 7d;
     add_header Cache-Control "public, immutable";
+  }
+
+  location = /api/v5/ws {
+    proxy_pass http://127.0.0.1:$PORT;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 75s;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
   }
 
   location / {
@@ -285,6 +414,18 @@ EOF
   systemctl reload nginx
 }
 
+build_v3_frontend() {
+  if [ ! -f "$APP_CURRENT/web/package.json" ]; then
+    log "IDBS 5.0 React frontend package not found; skip compatible /v5 build."
+    return
+  fi
+
+  log "Building IDBS 5.0 React frontend into public/v5..."
+  npm --prefix "$APP_CURRENT/web" install
+  npm --prefix "$APP_CURRENT/web" run build
+  npm --prefix "$APP_CURRENT/web" prune --omit=dev
+}
+
 main() {
   require_root
   install_packages
@@ -293,10 +434,13 @@ main() {
   sync_app
   ensure_env
   npm --prefix "$APP_CURRENT" install --omit=dev
+  build_v3_frontend
   chown -R "$APP_USER:$APP_GROUP" "$APP_CURRENT"
   ensure_local_database
+  run_doctor_check
   install_service
   install_backup_timer
+  install_admin_reset_command
   install_nginx
   systemctl restart "$APP_NAME"
   if [ "$ENV_CREATED" = "1" ] || [ "$ADMIN_PASSWORD_ROTATED" = "1" ]; then
@@ -305,7 +449,10 @@ main() {
   else
     log "Existing environment file kept: $ENV_FILE"
   fi
+  log "Reset admin password command: sudo ${APP_NAME}-reset-admin-password"
   log "Deployment finished. Open http://SERVER_IP/ or your bound domain."
 }
 
 main "$@"
+
+

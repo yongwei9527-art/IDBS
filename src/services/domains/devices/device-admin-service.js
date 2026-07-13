@@ -3,6 +3,7 @@ function createDeviceAdminService(context = {}) {
     addNamesToBorrowRows,
     assertText,
     fail,
+    effectiveRolePermissions,
     getById,
     isSafeUrl,
     log,
@@ -32,13 +33,34 @@ function createDeviceAdminService(context = {}) {
     'cover_photo',
     'instruction_photos',
     'reservation_slot_keys',
-    'last_return_photo',
-    'last_return_user',
-    'last_return_time',
-    'last_condition'
+    'return_mode',
+    'return_require_note'
   ]);
 
   const allowedDeviceStatuses = ['available', 'reserved', 'in_use', 'maintenance', 'disabled', 'abnormal_pending'];
+  const allowedReturnModes = ['confirm_only', 'image_optional', 'image_required'];
+
+  function normalizeReturnMode(value) {
+    const mode = String(value || 'image_required').trim();
+    return allowedReturnModes.includes(mode) ? mode : 'image_required';
+  }
+
+  function canViewReturnArchive(role = {}) {
+    const permissions = typeof effectiveRolePermissions === 'function'
+      ? effectiveRolePermissions(role)
+      : (Array.isArray(role.permissions) ? role.permissions : []);
+    return permissions.includes('*') || ['return.view', 'return.confirm', 'return.image_review', 'return.export'].some((permission) => permissions.includes(permission));
+  }
+
+  function hideReturnArchiveFields(row = {}) {
+    return {
+      ...row,
+      return_photos: [],
+      return_archive_photos: [],
+      return_archive_folder: '',
+      return_archive_restricted: true
+    };
+  }
 
   async function syncDeviceTimeSlots(deviceId, slotOptions = [], queryFn = query) {
     const normalizedSlots = normalizeReservationSlotOptions(slotOptions, []);
@@ -60,7 +82,7 @@ function createDeviceAdminService(context = {}) {
   }
 
   async function adminCreateDevice(payload, token) {
-    const { admin } = await requireAdminRole(token, ['super_admin', 'admin', 'ops'], ['device.manage']);
+    const { admin } = await requireAdminRole(token, ['super_admin', 'admin'], ['device.manage']);
     const deviceCode = assertText(payload.device_code, 'device_code', 50);
     const name = assertText(payload.name, 'name', 100);
     const row = {
@@ -77,20 +99,22 @@ function createDeviceAdminService(context = {}) {
       cover_photo: isSafeUrl(payload.cover_photo) ? String(payload.cover_photo).trim().slice(0, 500) : '',
       instruction_photos: Array.isArray(payload.instruction_photos) ? payload.instruction_photos.slice(0, 10).map((value) => (isSafeUrl(value) ? String(value).slice(0, 500) : '')).filter(Boolean) : [],
       reservation_slot_keys: normalizeReservationSlotOptions(payload.reservation_slot_keys || payload.reservationSlotKeys),
+      return_mode: normalizeReturnMode(payload.return_mode),
+      return_require_note: payload.return_require_note === true,
       created_at: nowIso(),
       updated_at: nowIso()
     };
     await withTransaction(async (client) => {
       const txQuery = (sql, params = []) => client.query(sql, params);
-      await client.query('insert into devices (id, device_code, name, category, location, manager, status, allow_reservation, description, usage_notice, cover_photo, instruction_photos, reservation_slot_keys, created_at, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)', [row.id, row.device_code, row.name, row.category, row.location, row.manager, row.status, row.allow_reservation, row.description, row.usage_notice, row.cover_photo, JSON.stringify(row.instruction_photos), JSON.stringify(row.reservation_slot_keys), row.created_at, row.updated_at]);
+      await client.query('insert into devices (id, device_code, name, category, location, manager, status, allow_reservation, description, usage_notice, cover_photo, instruction_photos, reservation_slot_keys, return_mode, return_require_note, created_at, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)', [row.id, row.device_code, row.name, row.category, row.location, row.manager, row.status, row.allow_reservation, row.description, row.usage_notice, row.cover_photo, JSON.stringify(row.instruction_photos), JSON.stringify(row.reservation_slot_keys), row.return_mode, row.return_require_note, row.created_at, row.updated_at]);
       await syncDeviceTimeSlots(row.id, row.reservation_slot_keys, txQuery);
       await log('create_device', `Created device ${deviceCode} ${name}`, admin, row.id, null, txQuery);
     });
-    return ok({ message: 'Device created', device: withReservationSlotOptions(row) });
+    return ok({ message: '设备已创建。', device: withReservationSlotOptions(row) });
   }
 
   async function adminUpdateDevice(payload, token) {
-    const { admin } = await requireAdminRole(token, ['super_admin', 'admin', 'ops'], ['device.manage']);
+    const { admin } = await requireAdminRole(token, ['super_admin', 'admin'], ['device.manage']);
     const id = assertText(payload.id, 'id', 60);
     const values = { updated_at: nowIso() };
     for (const [key, value] of Object.entries(payload || {})) {
@@ -108,8 +132,10 @@ function createDeviceAdminService(context = {}) {
     if ('description' in values) values.description = String(values.description || '').trim().slice(0, 1000);
     if ('usage_notice' in values) values.usage_notice = String(values.usage_notice || '').trim().slice(0, 1000);
     if ('status' in values && !allowedDeviceStatuses.includes(values.status)) {
-      return fail('Invalid device status', 400, 2001);
+      return fail('设备状态不正确。', 400, 2001);
     }
+    if ('return_mode' in values) values.return_mode = normalizeReturnMode(values.return_mode);
+    if ('return_require_note' in values) values.return_require_note = values.return_require_note === true;
     const keys = Object.keys(values);
     const sets = keys.map((key, index) => `${key} = $${index + 1}`);
     await withTransaction(async (client) => {
@@ -118,11 +144,11 @@ function createDeviceAdminService(context = {}) {
       if ('reservation_slot_keys' in values) await syncDeviceTimeSlots(id, values.reservation_slot_keys, txQuery);
       await log('update_device', `Updated device ${id}`, admin, id, null, txQuery);
     });
-    return ok({ message: 'Device updated' });
+    return ok({ message: '设备已更新。' });
   }
 
   async function adminGetDeviceDetail(params = {}, token) {
-    await requireAdminRole(token, ['super_admin', 'admin', 'ops', 'auditor'], ['device.manage', 'device.view', 'reservation.view', 'stats.view']);
+    const { role } = await requireAdminRole(token, ['super_admin', 'admin', 'auditor'], ['device.manage', 'device.view', 'reservation.view', 'stats.view', 'return.view', 'return.confirm', 'return.image_review', 'return.export']);
     const id = assertText(params.device_id || params.id, 'device_id', 60);
     const device = await getById('devices', id);
     if (!device) return fail('设备不存在。', 404, 3004);
@@ -137,7 +163,9 @@ function createDeviceAdminService(context = {}) {
       order by ri.start_time desc
       limit 80
     `, [id]);
-    const borrows = await addNamesToBorrowRows(await query('select * from borrow_records where device_id = $1 order by borrow_time desc limit 80', [id]));
+    const canViewArchive = canViewReturnArchive(role);
+    const borrowRows = await addNamesToBorrowRows(await query('select * from borrow_records where device_id = $1 order by borrow_time desc limit 80', [id]));
+    const borrows = canViewArchive ? borrowRows : borrowRows.map(hideReturnArchiveFields);
     const faultReports = await query(`
       select f.*, u.name as user_name, u.phone as user_phone
       from device_fault_reports f
@@ -146,11 +174,11 @@ function createDeviceAdminService(context = {}) {
       order by f.created_at desc
       limit 50
     `, [id]);
-    return ok({ device: withReservationSlotOptions(device), reservations, borrows, fault_reports: faultReports || [] });
+    return ok({ device: withReservationSlotOptions(device), reservations, borrows, fault_reports: faultReports || [], can_view_return_archive: canViewArchive });
   }
 
   async function adminSetDeviceAvailable(payload, token) {
-    const { admin } = await requireAdminRole(token, ['super_admin', 'admin', 'ops'], ['device.manage']);
+    const { admin } = await requireAdminRole(token, ['super_admin', 'admin'], ['device.manage']);
     const deviceId = assertText(payload.device_id, 'device_id', 60);
     await withTransaction(async (client) => {
       const txQuery = (sql, params = []) => client.query(sql, params);
@@ -159,12 +187,12 @@ function createDeviceAdminService(context = {}) {
       await notifyReservationUsersForDevice(deviceId, {
         type: 'device_recovered',
         title: '预约设备已恢复可用',
-        content: '你预约的设备 {device_code} {device_name} 已恢复为可预约状态。你的原预约仍然有效，请按原预约时间使用：{start_time} - {end_time}',
+        content: '你预约的设备 {device_code} {device_name} 已恢复为可预约状态。你的原预约仍然有效，请按原预约时间使用：{time_range}',
         related_type: 'device'
       }, txQuery);
       await log('set_device_available', 'Set device available', admin, deviceId, null, txQuery);
     });
-    return ok({ message: 'Device is available again' });
+    return ok({ message: '设备已恢复可用。' });
   }
 
   return {
@@ -176,3 +204,6 @@ function createDeviceAdminService(context = {}) {
 }
 
 module.exports = { createDeviceAdminService };
+
+
+

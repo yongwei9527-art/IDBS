@@ -1,11 +1,23 @@
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
-require('dotenv').config();
+const { postgresSslOptions } = require('../src/lib/postgres-ssl');
+require('dotenv').config({ quiet: true });
 
 const root = path.resolve(__dirname, '..');
 const migrationsDir = path.join(root, 'sql', 'migrations');
 const connectionString = process.env.DATABASE_URL || '';
+
+function isForwardMigrationFile(file) {
+  return String(file || '').toLowerCase().endsWith('.sql')
+    && !/(?:^|[._-])rollback(?:[._-]|$)/i.test(String(file || ''));
+}
+
+function discoverMigrationFiles(directory) {
+  return fs.readdirSync(directory)
+    .filter(isForwardMigrationFile)
+    .sort();
+}
 
 async function main() {
   if (!connectionString) {
@@ -17,9 +29,7 @@ async function main() {
     return;
   }
 
-  const files = fs.readdirSync(migrationsDir)
-    .filter((file) => file.endsWith('.sql'))
-    .sort();
+  const files = discoverMigrationFiles(migrationsDir);
 
   if (!files.length) {
     console.log('No migration files found.');
@@ -28,7 +38,7 @@ async function main() {
 
   const pool = new Pool({
     connectionString,
-    ssl: String(process.env.PGSSL || '').toLowerCase() === 'true' ? { rejectUnauthorized: false } : undefined,
+    ssl: postgresSslOptions(),
     connectionTimeoutMillis: 5000
   });
 
@@ -49,7 +59,7 @@ async function main() {
         continue;
       }
 
-      const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
+      const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8').replace(/^\uFEFF/, '');
       console.log(`APPLY ${file}`);
       await client.query('begin');
       try {
@@ -68,7 +78,11 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error.message || error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error.message || error);
+    process.exit(1);
+  });
+}
+
+module.exports = { discoverMigrationFiles, isForwardMigrationFile };

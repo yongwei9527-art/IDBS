@@ -5,6 +5,7 @@ const path = require('path');
 const multer = require('multer');
 const { AppError } = require('../lib/app-error');
 const { sendError, success } = require('../lib/http');
+const { requireAuth } = require('../lib/auth');
 
 function createUploadRouter({ service, uploadDir }) {
   const router = express.Router();
@@ -19,19 +20,19 @@ function createUploadRouter({ service, uploadDir }) {
     limits: { fileSize: 10 * 1024 * 1024, files: 1 },
     fileFilter(req, file, cb) {
       if (!imageTypes[file.mimetype]) {
-        return cb(new AppError('Only image uploads are allowed', { status: 400, code: 2001 }));
+        return cb(new AppError('仅支持上传图片文件', { status: 400, code: 2001 }));
       }
       cb(null, true);
     }
   });
 
-  router.post('/upload', upload.single('file'), async (req, res) => {
+  router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({
           ok: false,
           code: 2001,
-          message: 'file is required',
+          message: '请选择需要上传的文件',
           data: null
         });
       }
@@ -40,7 +41,7 @@ function createUploadRouter({ service, uploadDir }) {
       const detected = imageTypes[req.file.mimetype];
       if (!detected.signatures.some((matches) => matches(buffer))) {
         await fs.promises.unlink(req.file.path).catch(() => {});
-        throw new AppError('Uploaded file content does not match an allowed image type', { status: 400, code: 2001 });
+        throw new AppError('上传文件内容与图片类型不匹配', { status: 400, code: 2001 });
       }
 
       const filename = `${Date.now()}-${crypto.randomUUID()}${detected.ext}`;

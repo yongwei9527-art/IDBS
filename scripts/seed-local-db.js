@@ -1,11 +1,17 @@
 const crypto = require('crypto');
 const { Pool } = require('pg');
+const { postgresSslOptions } = require('../src/lib/postgres-ssl');
 require('dotenv').config();
 
 const connectionString = process.env.DATABASE_URL || 'postgresql://idbs_user:generated-by-installer@127.0.0.1:5432/idbs';
 
 function hashPassword(password, salt) {
-  return crypto.createHash('sha256').update(`${salt}:${password}`).digest('hex');
+  return crypto.scryptSync(String(password), String(salt), 64, {
+    N: 16384,
+    r: 8,
+    p: 1,
+    maxmem: 64 * 1024 * 1024
+  }).toString('hex');
 }
 
 function assertLocalDatabase(urlText) {
@@ -94,7 +100,7 @@ async function main() {
 
   const pool = new Pool({
     connectionString,
-    ssl: process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : undefined
+    ssl: postgresSslOptions()
   });
 
   const client = await pool.connect();

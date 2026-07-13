@@ -81,7 +81,23 @@
 - 微信推送失败：不阻塞主系统上线，但必须记录配置和失败日志。
 - 导出任务失败：不阻塞预约主流程，可查看 `export_jobs.error_message`，也可降级使用同步 CSV/Excel 导出。
 
-## 7. 上线后观察
+## 7. VPS 管理员密码重置
+
+一键安装/更新脚本会在 VPS 写入以下运维命令：
+
+```bash
+sudo idbs-reset-admin-password
+```
+
+该命令会读取 `/var/www/idbs/shared/.env` 中的生产数据库连接，交互式输入两次新后台管理员密码，并更新数据库里的 `admin_password_salt` 与 `admin_password_hash`。输入密码时终端不会回显。
+
+非交互自动化场景可使用：
+
+```bash
+sudo ADMIN_NEW_PASSWORD='新的强密码至少8位' idbs-reset-admin-password
+```
+
+## 8. 上线后观察
 
 上线后至少观察 24 小时：
 
@@ -92,3 +108,56 @@
 - 聊天 SSE 是否频繁断线。
 - 微信推送失败日志。
 - 导出任务数量、状态和 `/uploads/exports/` 文件增长情况。
+
+## 9. IDBS 3.0 扩展部署
+
+IDBS 3.0 与 2.x 并行运行，2.x 页面仍走 `/`，3.0 前端构建产物位于 `public/v5/`，API 统一挂到 `/api/v5`。升级为增量迁移，2.x 数据库结构保留并加新增表与字段。
+
+### 9.1 3.0 迁移
+
+1. 应用迁移 SQL（PostgreSQL 超级用户或表 owner 执行）：
+   ```bash
+   psql "$DATABASE_URL" -f sql/migrations/2026-07-04_v5_foundation.sql
+   ```
+2. 若从已有 2.x 数据迁移到独立测试库：
+   ```bash
+   npm run migrate-2-to-3 -- --check      # 仅检查
+   npm run migrate-2-to-3 -- --export     # 导出
+   npm run migrate-2-to-3 -- --import     # 导入
+   ```
+3. 重新运行校验：
+   ```bash
+   npm run doctor    # 若 v5 项仍_warn_，说明迁移未执行成功
+   npm run check
+   node scripts/v5-selftest.js   # v5 路由自测
+   ```
+
+### 9.2 前端构建
+
+```bash
+cd web
+npm install
+npm run build      # 产物输出到 ../public/v5/
+```
+
+- Vite `base: '/v5/'`，访问入口 `https://your-host/v5/`。
+- 开发：`npm run dev`（Vite 代理 `/api`、`/wechat`、`/uploads` 到端口 3000）。
+
+### 9.3 鉴权与兼容
+
+- 3.0 使用自实现 HS256 JWT（`src/lib/auth.js`），`TOKEN_SECRET` 与 2.x 共享。
+- 2.x 业务服务通过 `bridgeLegacyToken` 将 v5 JWT 转成 2.x HMAC token，迁移期间受限重用旧服务，最后分阶段替换。
+
+### 9.4 验收（3.0 专属）
+
+- `/api/v5/auth/login` 返回 access/refresh token。
+- 401 自动 refresh 多一次成功，且 localStorage 中 `idbs.access_token` 被刷新。
+- `/v5/` 后台总览、设备、用户、故障、预约、统计、导出、系统、审计页面正常加载与操作。
+- WebSocket 连接 `/api/v5/ws` 握手成功，聊天实时推送。
+- 2.x 页面 `/` 不受影响。
+
+### 9.5 回滚（3.0 专属）
+
+- 仅停止 3.0 前端服务并删除 `public/v5/`。
+- v5 数据库迁移为添加项（无破坏性列修改），无需回滚 SQL；如需彻底清理，反向执行 `sql/migrations/2026-07-04_v5_foundation.sql` 同目录下的 rollback SQL。
+- 2.x 服务与页面立即恢复。

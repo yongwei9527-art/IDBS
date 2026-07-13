@@ -9,25 +9,42 @@ function createAuthService(context = {}) {
     getAdminAuthConfig,
     hashPassword,
     makeToken,
+    needsPasswordRehash,
     ok,
+    query,
     queryOne,
+    verifyPassword,
+    verifySecret,
     userAccessMessage
   } = context;
+
+  async function upgradeStoredPassword(table, idColumn, id, password, salt) {
+    const upgradedHash = hashPassword(password, salt);
+    await query(`update ${table} set password_hash = $1 where ${idColumn} = $2`, [upgradedHash, id]);
+  }
+
+  async function upgradeAdminPassword(password, salt) {
+    const upgradedHash = hashPassword(password, salt);
+    await query(`
+      insert into system_configs (config_key, config_value, description, updated_at)
+      values ('admin_password_hash', $1, 'Admin password hash', now())
+      on conflict (config_key) do update set config_value = excluded.config_value, updated_at = now()
+    `, [upgradedHash]);
+  }
 
   async function adminLogin(payload) {
     const password = assertText(payload.password, 'password', 100);
     const adminAuth = await getAdminAuthConfig();
-    if (!adminAuth.has_custom_admin_password && password === adminAuth.default_admin_password_seed) {
-      const token = makeToken({ scope: 'admin', role: 'super_admin', name: 'admin' }, 7);
-      return ok({ token, seeded: true });
-    }
     if (adminAuth.has_custom_admin_password) {
-      if (hashPassword(password, adminAuth.admin_password_salt) !== adminAuth.admin_password_hash) {
-        return fail('Invalid admin password', 401, 1001);
+      if (!verifyPassword(password, adminAuth.admin_password_salt, adminAuth.admin_password_hash)) {
+        return fail('管理员密码不正确。', 401, 1001);
+      }
+      if (needsPasswordRehash(adminAuth.admin_password_hash)) {
+        await upgradeAdminPassword(password, adminAuth.admin_password_salt);
       }
     } else {
-      if (!adminPassword) return fail('ADMIN_PASSWORD is not configured', 500, 5000);
-      if (password !== adminPassword) return fail('Invalid admin password', 401, 1001);
+      if (!adminPassword) return fail('管理员入口密码未配置。', 500, 5000);
+      if (!verifySecret(password, adminPassword)) return fail('管理员密码不正确。', 401, 1001);
     }
     const token = makeToken({ scope: 'admin', role: 'super_admin', name: 'admin' }, 7);
     return ok({ token });
@@ -41,14 +58,17 @@ function createAuthService(context = {}) {
     const phone = assertPhone(payload.phone);
     const password = assertPassword(payload.password);
     const user = await queryOne('select * from users where phone = $1 limit 1', [phone]);
-    if (!user || user.password_hash !== hashPassword(password, user.password_salt)) {
-      return fail('Invalid phone or password', 401, 1001);
+    if (!user || !verifyPassword(password, user.password_salt, user.password_hash)) {
+      return fail('手机号或密码不正确。', 401, 1001);
     }
     if (user.is_banned) {
       return fail(userAccessMessage(user), 403, 1003);
     }
     if (user.status !== 'active') {
       return fail(userAccessMessage(user), 403, 1003);
+    }
+    if (needsPasswordRehash(user.password_hash)) {
+      await upgradeStoredPassword('users', 'id', user.id, password, user.password_salt);
     }
     return finalizeUserLogin(user, { ...context, remark: 'password_login' });
   }

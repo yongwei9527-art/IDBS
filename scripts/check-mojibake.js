@@ -2,16 +2,19 @@ const fs = require('fs');
 const path = require('path');
 
 const root = path.resolve(__dirname, '..');
-const scanRoots = ['public', 'src', 'docs', 'scripts', 'sql'];
-const textExtensions = new Set(['.css', '.html', '.js', '.json', '.md', '.ps1', '.sh', '.sql', '.txt']);
+const scanRoots = ['public', 'src', 'web/src', 'docs', 'scripts', 'sql'];
+const rootFiles = ['README.md', 'DISCLAIMER.md', 'package.json'];
+const textExtensions = new Set(['.css', '.html', '.js', '.jsx', '.json', '.md', '.ps1', '.sh', '.sql', '.ts', '.tsx', '.txt']);
 const ignoredDirectories = new Set(['.git', 'node_modules', 'uploads', 'dist', 'build']);
 
 const hardPatterns = [
   { name: 'replacement character', regex: /\uFFFD/u },
+  { name: 'classic mojibake marker', regex: /(\u951F\u65A4\u62F7|[\u00C2\u00C3\u00E2])/u },
   { name: 'broken closing tag', regex: /\?\/(?:h[1-6]|p|a|button|option|div)>/u }
 ];
 
-const mojibakeChars = /[\u951B\u7ECB\u7EEF\u9427\u7039\u7481\u6FB6\u9359\u93CC\u5BF0\u93B4\u8930\u9209\u9354\u4FD9\u9239\u946B\u59DD\u9365]/gu;
+const cjkMojibakeChars = /[\u93C1\u6434\u951B\u9359\u95C7\u93C8\u93B5\u7035\u7EFE\u9286\u9428\u6769\u6DC7\u5BB8]/gu;
+const whitelistFiles = new Set([path.normalize('scripts/check-mojibake.js')]);
 
 function walk(directory, files = []) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -21,28 +24,26 @@ function walk(directory, files = []) {
       walk(fullPath, files);
       continue;
     }
-    if (textExtensions.has(path.extname(entry.name).toLowerCase())) {
-      files.push(fullPath);
-    }
+    if (textExtensions.has(path.extname(entry.name).toLowerCase())) files.push(fullPath);
   }
   return files;
 }
 
 function inspectFile(filePath) {
+  const relative = path.normalize(path.relative(root, filePath));
   const text = fs.readFileSync(filePath, 'utf8');
   const findings = [];
   const lines = text.split(/\r?\n/);
+
   lines.forEach((line, index) => {
+    if (whitelistFiles.has(relative) && line.includes('mojibake')) return;
+
     for (const pattern of hardPatterns) {
-      if (pattern.regex.test(line)) {
-        findings.push({ line: index + 1, reason: pattern.name, text: line.trim().slice(0, 160) });
-      }
+      if (pattern.regex.test(line)) findings.push({ line: index + 1, reason: pattern.name, text: line.trim().slice(0, 160) });
     }
 
-    const suspiciousCount = (line.match(mojibakeChars) || []).length;
-    if (suspiciousCount >= 2) {
-      findings.push({ line: index + 1, reason: 'common mojibake characters', text: line.trim().slice(0, 160) });
-    }
+    const suspiciousCount = (line.match(cjkMojibakeChars) || []).length;
+    if (suspiciousCount >= 2) findings.push({ line: index + 1, reason: 'common CJK mojibake sequence', text: line.trim().slice(0, 160) });
   });
   return findings;
 }
@@ -52,21 +53,19 @@ for (const relativeRoot of scanRoots) {
   const absoluteRoot = path.join(root, relativeRoot);
   if (!fs.existsSync(absoluteRoot)) continue;
   for (const filePath of walk(absoluteRoot)) {
-    const findings = inspectFile(filePath);
-    for (const finding of findings) {
-      allFindings.push({
-        file: path.relative(root, filePath),
-        ...finding
-      });
-    }
+    for (const finding of inspectFile(filePath)) allFindings.push({ file: path.relative(root, filePath), ...finding });
   }
+}
+
+for (const relativeFile of rootFiles) {
+  const filePath = path.join(root, relativeFile);
+  if (!fs.existsSync(filePath)) continue;
+  for (const finding of inspectFile(filePath)) allFindings.push({ file: path.relative(root, filePath), ...finding });
 }
 
 if (allFindings.length) {
   console.error('Possible mojibake text found:');
-  for (const finding of allFindings) {
-    console.error(`${finding.file}:${finding.line} ${finding.reason}: ${finding.text}`);
-  }
+  for (const finding of allFindings) console.error(`${finding.file}:${finding.line} ${finding.reason}: ${finding.text}`);
   process.exit(1);
 }
 

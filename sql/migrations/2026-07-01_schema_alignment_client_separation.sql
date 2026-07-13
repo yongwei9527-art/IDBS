@@ -16,6 +16,9 @@ ALTER TABLE reservation_batches
   ADD COLUMN IF NOT EXISTS submit_note TEXT,
   ADD COLUMN IF NOT EXISTS admin_note TEXT;
 
+ALTER TABLE reservations
+  ADD COLUMN IF NOT EXISTS batch_id UUID REFERENCES reservation_batches(id) ON DELETE SET NULL;
+
 CREATE TABLE IF NOT EXISTS device_time_slots (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,

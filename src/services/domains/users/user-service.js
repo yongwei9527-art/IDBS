@@ -1,8 +1,9 @@
-function createUserService(context = {}) {
+﻿function createUserService(context = {}) {
   const {
     addNamesToBorrowRows,
     addUserToManagementGroup,
     assertText,
+    createUserNotification,
     db,
     fail,
     getById,
@@ -54,10 +55,10 @@ function createUserService(context = {}) {
   }
 
   async function adminGetUserDetail(params = {}, token) {
-    await requireAdminRole(token, ['super_admin', 'admin', 'ops', 'auditor'], ['user.manage', 'reservation.view', 'stats.view']);
+    await requireAdminRole(token, ['super_admin', 'admin', 'auditor'], ['user.manage', 'user.approve', 'reservation.view', 'stats.view']);
     const userId = assertText(params.user_id || params.id, 'user_id', 60);
     const user = await getById('users', userId);
-    if (!user) return fail('User not found', 404, 3004);
+    if (!user) return fail('用户不存在。', 404, 3004);
     const reservations = await query(`
       select ri.*, ri.id as item_id, coalesce(ri.reservation_id, ri.id) as id,
         b.purpose, b.status as batch_status,
@@ -98,12 +99,35 @@ function createUserService(context = {}) {
     return ok({ users: (data || []).map(safeUser) });
   }
 
+  function isSuperAdminOperator(admin = {}) {
+    return admin.role === 'super_admin' || admin.admin_role_key === 'super_admin';
+  }
+
+  function isSelfTarget(admin, user) {
+    const adminUserId = String(admin?.user_id || admin?.id || '');
+    return Boolean(adminUserId && user?.id && String(user.id) === adminUserId);
+  }
+
+  function ensureCanModifyUser(admin, user) {
+    if (!user) return null;
+    if (isSelfTarget(admin, user)) {
+      return fail('不能操作自己的管理员账号，请由其他最高权限管理员处理。', 403, 1003);
+    }
+    if (isSuperAdminOperator(admin)) return null;
+    if (user.role === 'admin' || user.role === 'super_admin') {
+      return fail('只有最高权限管理员可以维护管理员账号。', 403, 1003);
+    }
+    return null;
+  }
+
   async function adminDeleteUser(payload, token) {
     const { admin } = await requireAdminRole(token, ['super_admin', 'admin'], ['user.manage']);
     const userId = assertText(payload.user_id, 'user_id', 60);
     const user = await getById('users', userId);
-    if (!user) return fail('User not found', 404, 3004);
-    if (user.role === 'super_admin') return fail('Cannot delete super admin', 403, 1003);
+    if (!user) return fail('用户不存在。', 404, 3004);
+    if (user.role === 'super_admin') return fail('不能删除最高权限管理员。', 403, 1003);
+    const denied = ensureCanModifyUser(admin, user);
+    if (denied) return denied;
     const linkedChecks = [
       ['reservations', 'user_id'],
       ['borrow_records', 'user_id'],
@@ -142,45 +166,84 @@ function createUserService(context = {}) {
       await client.query('delete from users where id = $1', [userId]);
       await log('delete_user', `Deleted user ${user.name || user.phone || userId}`, admin, null, userId, txQuery);
     });
-    return ok({ message: linkedCount > 0 ? 'User disabled because linked records exist' : 'User deleted', soft_deleted: linkedCount > 0, linked_count: linkedCount });
+    return ok({ message: linkedCount > 0 ? '用户存在关联记录，已改为停用。' : '用户已删除。', soft_deleted: linkedCount > 0, linked_count: linkedCount });
   }
 
   async function adminSetUserStatus(payload, token) {
-    const { admin } = await requireAdminRole(token, ['super_admin', 'admin'], ['user.manage', 'user.approve']);
+    const { admin, role } = await requireAdminRole(token, ['super_admin', 'admin'], ['user.manage', 'user.approve']);
     const userId = assertText(payload.user_id, 'user_id', 60);
     const status = assertText(payload.status, 'status', 20);
-    if (!['active', 'disabled', 'pending'].includes(status)) return fail('Invalid status', 400, 2001);
+    const reason = String(payload.reason ?? payload.admin_note ?? payload.disabled_reason ?? '').trim().slice(0, 500);
+    if (!['active', 'disabled', 'pending', 'rejected'].includes(status)) return fail('用户状态不正确。', 400, 2001);
+    if (status === 'rejected' && !reason) return fail('请填写驳回原因。', 400, 2001);
+    const user = await getById('users', userId);
+    if (!user) return fail('用户不存在。', 404, 3004);
+    const denied = ensureCanModifyUser(admin, user);
+    if (denied) return denied;
+    const granted = Array.isArray(role?.permissions) ? role.permissions : [];
+    const canManageUsers = admin.role === 'super_admin' || admin.admin_role_key === 'super_admin' || granted.includes('*') || granted.includes('user.manage');
+    if (!canManageUsers && (!['pending', 'rejected'].includes(user.status) || !['active', 'rejected'].includes(status))) {
+      return fail('\u7528\u6237\u5ba1\u6838\u6743\u9650\u4ec5\u53ef\u901a\u8fc7\u6216\u9a73\u56de\u5f85\u5ba1\u6838\u8d26\u53f7\u3002', 403, 1003);
+    }
     await withTransaction(async (client) => {
       const txQuery = (sql, params = []) => client.query(sql, params);
+      const changedAt = nowIso();
       if (status === 'active') {
-        await client.query('update users set status = $1, approved_by = $2, approved_at = $3, updated_at = $3 where id = $4', [
-          status, admin.user_id || admin.id || null, nowIso(), userId
+        await client.query('update users set status = $1, disabled_reason = null, approved_by = $2, approved_at = $3, updated_at = $3 where id = $4', [
+          status, admin.user_id || admin.id || null, changedAt, userId
         ]);
         await addUserToManagementGroup(userId, txQuery);
+        if (typeof createUserNotification === 'function') {
+          await createUserNotification({
+            user_id: userId,
+            type: 'account_review',
+            title: '账号审核已通过',
+            content: '你的账号已通过管理员审核，现在可以预约和使用设备。'
+          }, txQuery);
+        }
       } else {
-        await client.query('update users set status = $1, approved_by = null, approved_at = null, updated_at = $2 where id = $3', [status, nowIso(), userId]);
+        const disabledReason = status === 'pending' ? null : (reason || null);
+        await client.query('update users set status = $1, disabled_reason = $2, approved_by = null, approved_at = null, updated_at = $3 where id = $4', [
+          status, disabledReason, changedAt, userId
+        ]);
         await removeUserFromManagementGroup(userId, txQuery);
+        if (typeof createUserNotification === 'function' && status === 'rejected') {
+          await createUserNotification({
+            user_id: userId,
+            type: 'account_review',
+            title: '账号审核未通过',
+            content: `你的账号审核未通过。原因：${reason}`
+          }, txQuery);
+        }
       }
-      await log('set_user_status', `Changed user status to ${status}`, admin, null, userId, txQuery);
+      await log('set_user_status', { message: `用户状态已更新为 ${status}`, status, reason: reason || null }, admin, null, userId, txQuery);
     });
-    return ok({ message: 'User status updated' });
+    return ok({ message: '用户状态已更新。' });
   }
 
   async function adminSetUserBan(payload, token) {
     const { admin } = await requireAdminRole(token, ['super_admin', 'admin'], ['user.manage']);
     const userId = assertText(payload.user_id, 'user_id', 60);
     const banned = parseBoolean(payload.is_banned ?? payload.banned);
+    const user = await getById('users', userId);
+    if (!user) return fail('用户不存在。', 404, 3004);
+    const denied = ensureCanModifyUser(admin, user);
+    if (denied) return denied;
     await query('update users set is_banned = $1, updated_at = $2 where id = $3', [banned, nowIso(), userId]);
     await log('set_user_ban', banned ? 'Banned user account' : 'Unbanned user account', admin, null, userId);
-    return ok({ message: banned ? 'User banned' : 'User unbanned' });
+    return ok({ message: banned ? '用户已禁用。' : '用户已解除禁用。' });
   }
 
   async function adminUnbindWechat(payload, token) {
     const { admin } = await requireAdminRole(token, ['super_admin', 'admin'], ['user.manage']);
     const userId = assertText(payload.user_id, 'user_id', 60);
+    const user = await getById('users', userId);
+    if (!user) return fail('用户不存在。', 404, 3004);
+    const denied = ensureCanModifyUser(admin, user);
+    if (denied) return denied;
     await query('update users set wechat_openid = null, wechat_nickname = null, updated_at = $1 where id = $2', [nowIso(), userId]);
     await log('unbind_wechat', 'Removed WeChat binding', admin, null, userId);
-    return ok({ message: 'WeChat binding removed' });
+    return ok({ message: '微信绑定已解除。' });
   }
 
   return {
@@ -197,3 +260,4 @@ function createUserService(context = {}) {
 }
 
 module.exports = { createUserService };
+
