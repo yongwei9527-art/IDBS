@@ -14,7 +14,9 @@ import {
   GalleryVerticalEnd,
   LogOut,
   MessageSquare,
+  Moon,
   MonitorSmartphone,
+  Sun,
   UserRound,
   Wrench
 } from 'lucide-react';
@@ -122,6 +124,13 @@ function Breadcrumb({ pathname }: { pathname: string }) {
 export function AppLayout() {
   const [collapsed, setCollapsed] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
   const [notice, setNotice] = useState<SystemNotice | null>(null);
+  const [ambient, setAmbient] = useState<'day' | 'night'>(() => {
+    if (typeof window === 'undefined') return 'night';
+    const saved = window.localStorage.getItem('IDBS_AMBIENT');
+    if (saved === 'day' || saved === 'night') return saved;
+    const hour = new Date().getHours();
+    return hour >= 7 && hour < 19 ? 'day' : 'night';
+  });
   const location = useLocation();
   const auth = useAuth();
   const capability = useCapability();
@@ -144,6 +153,11 @@ export function AppLayout() {
     : navGroups;
   const roleLabel = capability.isSuperAdmin ? '系统管理员' : capability.isAdminLike ? '运营权限已启用' : '服务账号';
   const noticeVersion = String(notice?.version || '1');
+
+  useEffect(() => {
+    document.documentElement.dataset.ambient = ambient;
+    window.localStorage.setItem('IDBS_AMBIENT', ambient);
+  }, [ambient]);
 
   useEffect(() => {
     if (!auth.isLoggedIn) {
@@ -265,6 +279,15 @@ export function AppLayout() {
           </Button>
           <Breadcrumb pathname={location.pathname} />
           <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setAmbient((value) => value === 'night' ? 'day' : 'night')}
+              aria-label={ambient === 'night' ? '\u5207\u6362\u4e3a\u767d\u5929\u80cc\u666f' : '\u5207\u6362\u4e3a\u591c\u95f4\u80cc\u666f'}
+              title={ambient === 'night' ? '\u5207\u6362\u4e3a\u767d\u5929\u80cc\u666f' : '\u5207\u6362\u4e3a\u591c\u95f4\u80cc\u666f'}
+            >
+              {ambient === 'night' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </Button>
             <Link to={'/notifications' as any} aria-label="通知" className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-cyan-300/[0.07] hover:text-cyan-100">
               <Bell className="h-4 w-4" />
             </Link>

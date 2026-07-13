@@ -861,3 +861,117 @@
   .ops-main .text-white\/65, .ops-main .text-white\/62, .ops-main .text-white\/60, .ops-main .text-white\/55, .ops-main .text-white\/50 { color: hsl(214 20% 72%) !important; }
   .ops-main .font-mono { font-family: var(--font-ui); letter-spacing: .02em; }
 }
+
+
+/* Day mode keeps the same instrumentation language, with a bright laboratory canvas. */
+@layer base {
+  :root[data-ambient="day"] {
+    --background: 210 38% 96%;
+    --background-gradient:
+      radial-gradient(ellipse at 8% -8%, hsl(194 86% 60% / .16), transparent 32rem),
+      radial-gradient(ellipse at 98% 0%, hsl(214 78% 66% / .10), transparent 30rem),
+      linear-gradient(155deg, hsl(208 48% 98%), hsl(211 36% 95%) 58%, hsl(215 34% 94%));
+    --foreground: 218 42% 18%;
+    --card: 0 0% 100%;
+    --card-foreground: 218 42% 18%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 218 42% 18%;
+    --secondary: 207 38% 92%;
+    --secondary-foreground: 216 37% 22%;
+    --muted: 211 32% 93%;
+    --muted-foreground: 215 18% 43%;
+    --border: 210 25% 80%;
+    --input: 0 0% 100%;
+    --shadow-card: 0 14px 34px hsl(216 38% 28% / .09), 0 1px 0 hsl(0 0% 100% / .9) inset;
+    --shadow-soft: 0 8px 22px hsl(216 30% 30% / .075);
+  }
+  :root[data-ambient="day"] body { background-color: hsl(var(--background)); }
+}
+@layer components {
+  :root[data-ambient="day"] .ops-layout-shell {
+    background-image:
+      linear-gradient(hsl(205 58% 42% / .045) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(205 58% 42% / .045) 1px, transparent 1px),
+      var(--background-gradient);
+  }
+  :root[data-ambient="day"] .ops-layout-shell > aside {
+    border-color: hsl(207 38% 74% / .72) !important;
+    background: linear-gradient(180deg, hsl(212 45% 98% / .97), hsl(214 37% 94% / .98)) !important;
+    color: hsl(218 42% 18%) !important;
+    box-shadow: 10px 0 34px hsl(216 35% 28% / .10) !important;
+  }
+  :root[data-ambient="day"] .ops-layout-shell > aside > div:first-child,
+  :root[data-ambient="day"] .ops-layout-shell > aside > div:last-child { border-color: hsl(208 28% 76% / .7) !important; }
+  :root[data-ambient="day"] .ops-layout-shell > aside [class*="text-slate-50"],
+  :root[data-ambient="day"] .ops-layout-shell > aside [class*="text-slate-100"] { color: hsl(218 42% 18%) !important; }
+  :root[data-ambient="day"] .ops-layout-shell > aside [class*="text-slate-300"],
+  :root[data-ambient="day"] .ops-layout-shell > aside [class*="text-slate-400"] { color: hsl(215 20% 40%) !important; }
+  :root[data-ambient="day"] .ops-layout-shell > aside a:hover { background-color: hsl(195 74% 54% / .09) !important; color: hsl(210 48% 22%) !important; }
+  :root[data-ambient="day"] .ops-layout-shell > aside a[class*="from-cyan"] { background: linear-gradient(90deg, hsl(195 76% 57% / .14), hsl(214 72% 62% / .07)) !important; color: hsl(211 48% 18%) !important; }
+  :root[data-ambient="day"] header { border-color: hsl(208 28% 76% / .7) !important; background: hsl(210 42% 98% / .78) !important; }
+  :root[data-ambient="day"] .ops-card,
+  :root[data-ambient="day"] .ops-surface,
+  :root[data-ambient="day"] .glass-card,
+  :root[data-ambient="day"] .ops-chart-panel,
+  :root[data-ambient="day"] .device-card-v4,
+  :root[data-ambient="day"] .ops-stat-card,
+  :root[data-ambient="day"] .kpi-card { background: linear-gradient(150deg, hsl(0 0% 100% / .96), hsl(210 34% 97% / .96)); border-color: hsl(208 25% 78% / .8); }
+  :root[data-ambient="day"] .ops-page-header-title { color: hsl(218 42% 18%); }
+  :root[data-ambient="day"] .ops-page-header-description { color: hsl(215 18% 43%); }
+  :root[data-ambient="day"] .ops-main .text-white { color: hsl(218 42% 18%) !important; }
+  :root[data-ambient="day"] .ops-main .text-white\/82,
+  :root[data-ambient="day"] .ops-main .text-white\/80,
+  :root[data-ambient="day"] .ops-main .text-white\/76,
+  :root[data-ambient="day"] .ops-main .text-white\/72,
+  :root[data-ambient="day"] .ops-main .text-white\/70 { color: hsl(215 24% 31%) !important; }
+  :root[data-ambient="day"] .ops-main .text-white\/65,
+  :root[data-ambient="day"] .ops-main .text-white\/62,
+  :root[data-ambient="day"] .ops-main .text-white\/60,
+  :root[data-ambient="day"] .ops-main .text-white\/55,
+  :root[data-ambient="day"] .ops-main .text-white\/50 { color: hsl(215 18% 43%) !important; }
+}
+
+
+/* Day-mode data surfaces: shared by the user device catalogue and the administrator console. */
+@layer components {
+  :root[data-ambient="day"] select,
+  :root[data-ambient="day"] input,
+  :root[data-ambient="day"] textarea {
+    background-color: hsl(0 0% 100%) !important;
+    color: hsl(218 42% 18%) !important;
+    border-color: hsl(209 26% 74% / .88) !important;
+  }
+  :root[data-ambient="day"] select:focus,
+  :root[data-ambient="day"] input:focus,
+  :root[data-ambient="day"] textarea:focus {
+    border-color: hsl(194 70% 54% / .8) !important;
+    box-shadow: 0 0 0 3px hsl(194 74% 58% / .12);
+  }
+  :root[data-ambient="day"] table thead {
+    background: hsl(209 36% 92%) !important;
+    color: hsl(215 30% 31%) !important;
+  }
+  :root[data-ambient="day"] table tbody tr { background: hsl(0 0% 100% / .72); }
+  :root[data-ambient="day"] table tbody tr:hover td { background: hsl(196 70% 56% / .065) !important; }
+  :root[data-ambient="day"] .ops-data-toolbar,
+  :root[data-ambient="day"] .ops-list-item { background: hsl(0 0% 100% / .82); border-color: hsl(209 25% 78% / .8); }
+  :root[data-ambient="day"] .ops-list-item:hover { background: hsl(207 56% 97%); border-color: hsl(195 62% 59% / .35); }
+  :root[data-ambient="day"] .device-card-v4 > div:first-child::after { background: linear-gradient(to top, hsl(215 35% 18% / .38), transparent 58%); }
+  :root[data-ambient="day"] .device-card-v4 .bg-background\/70 {
+    background: hsl(210 38% 96% / .92) !important;
+    border-color: hsl(209 25% 79% / .88) !important;
+  }
+  :root[data-ambient="day"] .device-card-v4 .text-muted-foreground { color: hsl(215 17% 40%) !important; }
+  :root[data-ambient="day"] .device-card-v4 h2 { color: hsl(218 42% 16%); }
+  :root[data-ambient="day"] .device-card-v4 .badge-pill {
+    background: hsl(0 0% 100% / .91);
+    border-color: hsl(209 24% 72% / .86);
+    color: hsl(215 29% 27%);
+    box-shadow: 0 2px 8px hsl(216 26% 28% / .10);
+  }
+  :root[data-ambient="day"] .device-card-v4 .badge-success { color: hsl(154 48% 26%); border-color: hsl(154 45% 47% / .34); background: hsl(154 65% 94%); }
+  :root[data-ambient="day"] .device-card-v4 .badge-info { color: hsl(206 62% 31%); border-color: hsl(206 60% 48% / .32); background: hsl(204 70% 95%); }
+  :root[data-ambient="day"] .device-card-v4 .badge-warn { color: hsl(34 66% 30%); border-color: hsl(35 64% 47% / .34); background: hsl(42 88% 94%); }
+  :root[data-ambient="day"] .device-card-v4 .badge-danger { color: hsl(3 58% 34%); border-color: hsl(4 60% 52% / .34); background: hsl(3 78% 95%); }
+  :root[data-ambient="day"] .device-card-v4 .badge-muted { color: hsl(215 16% 38%); background: hsl(215 24% 93%); }
+}
