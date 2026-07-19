@@ -117,13 +117,30 @@ function createApp({ config, db, service, refreshSessions, runtimeDiagnostics, s
   app.use(createHealthRouter(config, db));
 
   app.get('/', (_req, res) => res.redirect(302, '/v5/'));
-  app.use('/v5', express.static(v5PublicDir, { index: false, maxAge: '7d', immutable: true }));
+  app.use('/v5', express.static(v5PublicDir, {
+    index: false,
+    maxAge: '7d',
+    immutable: true,
+    setHeaders(res, filePath) {
+      const base = path.basename(filePath).toLowerCase();
+      if (base === 'index.html' || base.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-cache');
+        return;
+      }
+      if (/\.[a-f0-9]{8,}\.(js|css|woff2?|png|jpg|jpeg|webp|svg|gif|ico)$/i.test(base)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        return;
+      }
+      res.setHeader('Cache-Control', 'public, max-age=300, must-revalidate');
+    }
+  }));
   app.use('/api', (req, res) => res.status(404).json({
     ok: false, code: 3004, message: 'The API endpoint does not exist or is no longer available.',
     data: null, status: 404, request_id: req.requestId || '', server_time: new Date().toISOString()
   }));
   app.use((req, res, next) => {
     if ((req.method === 'GET' || req.method === 'HEAD') && (req.path === '/v5' || req.path.startsWith('/v5/'))) {
+      res.setHeader('Cache-Control', 'no-cache');
       return res.sendFile(path.join(v5PublicDir, 'index.html'));
     }
     return next();

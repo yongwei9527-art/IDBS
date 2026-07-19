@@ -1,6 +1,7 @@
 import { Navigate } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 import { useAuth } from './use-auth';
+import { APP_PATHS } from '@/lib/app-paths';
 
 export const PERMISSIONS = {
   STATS_VIEW: 'stats.view',
@@ -43,7 +44,7 @@ export const BACKEND_ENTRY_PERMISSIONS = [
 export const PERMISSION_LABELS: Record<string, string> = {
   super_admin: '最高权限管理员',
   '*': '全部权限',
-  [PERMISSIONS.STATS_VIEW]: '查看统计与智能运营',
+  [PERMISSIONS.STATS_VIEW]: '查看运营统计',
   [PERMISSIONS.STATS_EXPORT]: '导出统计文档',
   [PERMISSIONS.USER_APPROVE]: '审核用户注册',
   [PERMISSIONS.USER_MANAGE]: '用户审核与账号维护',
@@ -75,13 +76,13 @@ export function hasPermission(role: string | null | undefined, permissions: stri
 
 export function getAdminLandingPath(role: string | null | undefined, permissions: string[] = []) {
   if (isSuperAdminLike(role, permissions) || permissions.includes(PERMISSIONS.STATS_VIEW)) return '/admin/dashboard';
-  if (permissions.includes(PERMISSIONS.DEVICE_VIEW) || permissions.includes(PERMISSIONS.DEVICE_MANAGE)) return '/admin/devices';
+  if (permissions.includes(PERMISSIONS.DEVICE_VIEW) || permissions.includes(PERMISSIONS.DEVICE_MANAGE)) return APP_PATHS.adminDevices;
   if (permissions.some((permission) => permission === PERMISSIONS.RESERVATION_VIEW || permission === PERMISSIONS.RESERVATION_APPROVE || permission === PERMISSIONS.RESERVATION_CHANGE_PLAN)) return '/admin/reservations';
   if (permissions.some((permission) => permission === PERMISSIONS.USER_APPROVE || permission === PERMISSIONS.USER_MANAGE)) return '/admin/users';
   if (permissions.some((permission) => permission === PERMISSIONS.DEVICE_MANAGE || permission === PERMISSIONS.FAULT_MANAGE || permission === PERMISSIONS.RETURN_VIEW || permission === PERMISSIONS.RETURN_CONFIRM || permission === PERMISSIONS.RETURN_IMAGE_REVIEW)) return '/admin/faults';
   if (permissions.includes(PERMISSIONS.STATS_EXPORT)) return '/admin/export';
   if (permissions.includes(PERMISSIONS.AUDIT_VIEW)) return '/admin/audit';
-  return '/devices';
+  return APP_PATHS.devices;
 }
 
 export function useCapability() {
@@ -141,7 +142,7 @@ export function RequirePermission({
   const passAny = !any?.length || capability.canAny(any);
   const passAll = !all?.length || capability.canAll(all);
   if (!capability.isLoggedIn) return null;
-  if (!capability.isAdminLike) return <Navigate to={'/devices' as any} replace />;
+  if (!capability.isAdminLike) return <Navigate to={APP_PATHS.devices as any} replace />;
   if (passAny && passAll) return <>{children}</>;
   return <Navigate to={unavailableDestination(capability.adminLandingPath) as any} replace />;
 }
@@ -155,7 +156,7 @@ export function RequireSuperAdmin({
 }) {
   const capability = useCapability();
   if (!capability.isLoggedIn) return null;
-  if (!capability.isAdminLike) return <Navigate to={'/devices' as any} replace />;
+  if (!capability.isAdminLike) return <Navigate to={APP_PATHS.devices as any} replace />;
   if (capability.isSuperAdmin) return <>{children}</>;
   return <Navigate to={unavailableDestination(capability.adminLandingPath) as any} replace />;
 }

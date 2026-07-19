@@ -15,15 +15,25 @@ const documented = new Set(
 );
 
 const implemented = new Set();
+const serviceMethods = new Set();
 for (const sourcePath of sources) {
   const source = fs.readFileSync(sourcePath, 'utf8');
   for (const [, method, endpoint] of source.matchAll(/\brouter\.(get|post|put|patch|delete)\(\s*['"]([^'"]+)/g)) {
     implemented.add(`${method.toUpperCase()} /api/v5${endpoint}`);
   }
+  for (const [, method] of source.matchAll(/\bservice\.([A-Za-z][A-Za-z0-9_]*)\s*\(/g)) {
+    serviceMethods.add(method);
+  }
 }
 
 const missing = [...implemented].filter((endpoint) => !documented.has(endpoint));
 assert.equal(missing.length, 0, `Missing IDBS 5.0 API documentation:\n${missing.join('\n')}`);
+const serviceSource = fs.readFileSync(path.join(root, 'src', 'services', 'create-rental-service.js'), 'utf8');
+const finalReturn = serviceSource.match(/return \{ runReservationReminderLifecycle,([^}]+)\};/);
+assert.ok(finalReturn, 'Unable to inspect the rental-service public method map.');
+const publicMethods = new Set(['runReservationReminderLifecycle', ...finalReturn[1].split(',').map((value) => value.trim()).filter(Boolean)]);
+const missingServiceMethods = [...serviceMethods].filter((method) => !publicMethods.has(method));
+assert.equal(missingServiceMethods.length, 0, `V5 routes reference methods not exported by createRentalService:\n${missingServiceMethods.join('\n')}`);
 assert.match(contract, /WS `?\/api\/v5\/ws`?/);
 assert.match(contract, /GET `?\/health`?/);
 assert.match(contract, /GET `?\/ready`?/);

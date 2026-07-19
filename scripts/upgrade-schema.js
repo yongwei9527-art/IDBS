@@ -379,6 +379,11 @@ const REQUIRED_INDEXES = [
     sql: "create index if not exists idx_borrow_records_active_due on borrow_records(expected_return_time) where status = 'in_use'"
   },
   {
+    table: 'borrow_records',
+    label: 'idx_borrow_records_material_deadline',
+    sql: 'create index if not exists idx_borrow_records_material_deadline on borrow_records(return_material_deadline) where return_material_required = true and return_supplemented_at is null'
+  },
+  {
     table: 'users',
     label: 'idx_users_pending_active',
     sql: "create index if not exists idx_users_pending_active on users(created_at desc) where status = 'pending' and coalesce(is_banned, false) = false"
@@ -505,6 +510,12 @@ const REQUIRED_COLUMNS = [
   { table: 'borrow_records', column: 'actual_end_time', definition: 'timestamptz' },
   { table: 'borrow_records', column: 'return_archive_folder', definition: 'text' },
   { table: 'borrow_records', column: 'return_archive_photos', definition: "jsonb not null default '[]'::jsonb" },
+  { table: 'borrow_records', column: 'return_material_required', definition: 'boolean not null default false' },
+  { table: 'borrow_records', column: 'return_material_deadline', definition: 'timestamptz' },
+  { table: 'borrow_records', column: 'return_supplement_note', definition: 'text' },
+  { table: 'borrow_records', column: 'return_supplement_photos', definition: "jsonb not null default '[]'::jsonb" },
+  { table: 'borrow_records', column: 'return_supplemented_at', definition: 'timestamptz' },
+  { table: 'borrow_records', column: 'return_material_late', definition: 'boolean not null default false' },
   { table: 'devices', column: 'return_mode', definition: "text not null default 'image_required'" },
   { table: 'devices', column: 'return_require_note', definition: 'boolean not null default false' },
   { table: 'reservation_batches', column: 'submit_note', definition: 'text' },
@@ -542,11 +553,11 @@ const REQUIRED_STATEMENTS = [
       select d.id, slot.slot_key, slot.label, slot.start_time::time, slot.end_time::time, slot.crosses_day, slot.sort_order
       from devices d
       cross join (values
-        ('morning', '涓婂崍 8:00-12:00', '08:00', '12:00', false, 10),
-        ('afternoon', '涓嬪崍 12:00-17:00', '12:00', '17:00', false, 20),
-        ('evening', '鍌嶆櫄 17:00-22:00', '17:00', '22:00', false, 30),
-        ('night', '澶滈棿 22:00-娆℃棩 8:00', '22:00', '08:00', true, 40),
-        ('daytime', '鐧藉ぉ 8:00-22:00', '08:00', '22:00', false, 50)
+        ('morning', '上午 8:00-12:00', '08:00', '12:00', false, 10),
+        ('afternoon', '下午 12:00-17:00', '12:00', '17:00', false, 20),
+        ('evening', '傍晚 17:00-22:00', '17:00', '22:00', false, 30),
+        ('night', '夜间 22:00-次日 8:00', '22:00', '08:00', true, 40),
+        ('daytime', '白天 8:00-22:00', '08:00', '22:00', false, 50)
       ) as slot(slot_key, label, start_time, end_time, crosses_day, sort_order)
       on conflict (device_id, slot_key) do nothing`
   },
@@ -557,7 +568,7 @@ const REQUIRED_STATEMENTS = [
   {
     label: 'seed management chat group',
     sql: `insert into chat_conversations (type, title, system_key, is_system, retention_days, created_at, updated_at)
-      values ('group', '瀹為獙瀹ょ鐞嗙兢', 'lab_management', true, 90, now(), now())
+      values ('group', '实验室管理群', 'lab_management', true, 90, now(), now())
       on conflict (system_key) where system_key is not null do update set
         title = excluded.title,
         is_system = true,
@@ -741,7 +752,7 @@ async function columnInfo(client, table, column) {
 async function tryStatement(client, label, sql) {
   try {
     await client.query(sql);
-    console.log(`瀹屾垚 ${label}`);
+    console.log(`完成 ${label}`);
     return { ok: true };
   } catch (error) {
     if (error.code === '42701') {
@@ -752,7 +763,7 @@ async function tryStatement(client, label, sql) {
       console.warn(`鎻愮ず ${label} -> ${error.message}`);
       return { ok: false, permission: true, error };
     }
-    console.error(`澶辫触 ${label} -> ${error.message}`);
+    console.error(`失败 ${label} -> ${error.message}`);
     return { ok: false, error };
   }
 }

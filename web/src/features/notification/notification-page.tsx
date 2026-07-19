@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { toFriendlyError } from '@/lib/friendly-error';
 import { briefDateTime } from '@/lib/time-format';
-import { OpsPageHeader } from '@/components/ops/design-system';
+import { OpsBadge, OpsPageHeader } from '@/components/ops/design-system';
 
 function levelClasses(level?: string) {
   if (level === 'success') return 'border-emerald-200 bg-emerald-50/70 dark:border-emerald-400/30 dark:bg-emerald-400/10';
@@ -30,7 +30,7 @@ function NotificationItem({ n }: { n: Notification }) {
             {!n.is_read ? <span className="badge-pill badge-info">未读</span> : <span className="badge-pill badge-muted">已读</span>}
             <time className="text-xs text-muted-foreground">{briefDateTime(n.created_at)}</time>
           </div>
-          <h2 className="mt-2 truncate text-sm font-black text-foreground">{n.title}</h2>
+          <h2 className="mt-2 truncate text-sm font-semibold text-foreground">{n.title}</h2>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">{n.content}</p>
           {canOpenAction ? (
             <a className="mt-3 inline-flex items-center gap-1 text-xs font-bold text-primary hover:underline" href={n.action_url}>
@@ -56,21 +56,10 @@ export function NotificationPage() {
 
   return (
     <div className="ops-page-stack max-w-4xl">
-      <OpsPageHeader
-        title="通知中心"
-        aside={(
-          <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-2xl border border-white/15 bg-white/10 p-3 backdrop-blur">
-              <p className="text-xs text-white/65">全部</p>
-              <strong className="mt-1 block text-2xl tabular-nums text-white">{data.length}</strong>
-            </div>
-            <div className="rounded-2xl border border-white/15 bg-white/10 p-3 backdrop-blur">
-              <p className="text-xs text-white/65">未读</p>
-              <strong className="mt-1 block text-2xl tabular-nums text-amber-100">{unread.length}</strong>
-            </div>
-          </div>
-        )}
-      />
+      <OpsPageHeader title="通知中心" className="ops-page-header--compact">
+        <OpsBadge tone="muted">全部 {data.length}</OpsBadge>
+        <OpsBadge tone={unread.length ? 'warning' : 'success'}>未读 {unread.length}</OpsBadge>
+      </OpsPageHeader>
 
       {unread.length > 0 ? (
         <Button variant="outline" size="sm" className="w-fit" onClick={() => markAll.mutate(allIds)} disabled={markAll.isPending}>

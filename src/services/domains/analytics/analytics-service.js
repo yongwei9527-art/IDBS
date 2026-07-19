@@ -179,15 +179,19 @@ function createAnalyticsService(context = {}) {
     const { start, end } = analyticsRange(params);
     const trend = await query(`
       with days as (
-        select generate_series($1::timestamptz, $2::timestamptz, interval '1 day') as day
+        select generate_series(
+          date_trunc('day', $1::timestamptz at time zone 'Asia/Shanghai'),
+          date_trunc('day', $2::timestamptz at time zone 'Asia/Shanghai'),
+          interval '1 day'
+        ) as day
       ), reservations_by_day as (
-        select date_trunc('day', created_at) as day, count(*)::int as count from reservation_items where created_at between $1 and $2 group by 1
+        select date_trunc('day', created_at at time zone 'Asia/Shanghai') as day, count(*)::int as count from reservation_items where created_at between $1 and $2 group by 1
       ), borrows_by_day as (
-        select date_trunc('day', borrow_time) as day, count(*)::int as count, count(return_time)::int as return_count from borrow_records where borrow_time between $1 and $2 group by 1
+        select date_trunc('day', borrow_time at time zone 'Asia/Shanghai') as day, count(*)::int as count, count(return_time)::int as return_count from borrow_records where borrow_time between $1 and $2 group by 1
       ), faults_by_day as (
-        select date_trunc('day', created_at) as day, count(*)::int as count from device_fault_reports where created_at between $1 and $2 group by 1
+        select date_trunc('day', created_at at time zone 'Asia/Shanghai') as day, count(*)::int as count from device_fault_reports where created_at between $1 and $2 group by 1
       )
-      select days.day::date,
+      select to_char(days.day, 'YYYY-MM-DD') as day,
         coalesce(reservations_by_day.count, 0)::int as reservation_count,
         coalesce(borrows_by_day.count, 0)::int as borrow_count,
         coalesce(borrows_by_day.return_count, 0)::int as return_count,
@@ -234,7 +238,7 @@ function createAnalyticsService(context = {}) {
   async function adminAnalyticsFaults(params = {}, token) {
     await requireAdminRole(token, ['super_admin', 'admin', 'auditor'], ['stats.view', 'fault.manage']);
     const { start, end } = analyticsRange(params);
-    const trend = await query("select date_trunc('day', created_at)::date as day, count(*)::int as count from device_fault_reports where created_at between $1 and $2 group by day order by day", [start, end]);
+    const trend = await query("select to_char(date_trunc('day', created_at at time zone 'Asia/Shanghai'), 'YYYY-MM-DD') as day, count(*)::int as count from device_fault_reports where created_at between $1 and $2 group by 1 order by 1", [start, end]);
     const types = await query("select issue_type, count(*)::int as count from device_fault_reports where created_at between $1 and $2 group by issue_type order by count desc", [start, end]);
     const devices = await query("select d.device_code, d.name as device_name, count(f.id)::int as count from device_fault_reports f join devices d on d.id = f.device_id where f.created_at between $1 and $2 group by d.device_code, d.name order by count desc limit 20", [start, end]);
     return ok({ range: { start, end }, trend, types, devices });

@@ -1,17 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Download, FileSpreadsheet, FileText, Play, ShieldCheck } from 'lucide-react';
+import { Download, FileSpreadsheet, FileText, Play } from 'lucide-react';
 import { toast } from 'sonner';
 import { downloadExportJob, fetchAdminExportRows, useAdminExportJobs, useCreateExportJob, useRunNextExportJob, type ExportJob } from '@/features/platform/operations-api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { formatCompactId } from '@/components/ui/compact-id';
 import { PERMISSIONS, PERMISSION_LABELS, useCapability } from '@/features/auth/permissions';
-import { OpsDataToolbar, OpsEmptyState, OpsPermissionHint } from '@/components/ops/design-system';
+import { OpsBadge, OpsDataToolbar, OpsEmptyState, OpsPageHeader } from '@/components/ops/design-system';
 import { briefDateTime } from '@/lib/time-format';
 
-type ExportTypeKey = 'usage' | 'returns' | 'reservations' | 'faults' | 'user_activity' | 'device_summary' | 'audit_logs';
+type ExportTypeKey = 'usage' | 'successful_usage' | 'returns' | 'reservations' | 'faults' | 'user_activity' | 'device_summary' | 'audit_logs';
 
 const TYPES: Array<{
   key: ExportTypeKey;
@@ -19,68 +19,59 @@ const TYPES: Array<{
   short: string;
   perms: string[];
   anyPerms?: string[];
-  hint: string;
-  rows: string;
 }> = [
+  {
+    key: 'successful_usage',
+    label: '成功使用与归还',
+    short: '成功归还',
+    perms: [PERMISSIONS.STATS_EXPORT],
+    anyPerms: [PERMISSIONS.RETURN_EXPORT, PERMISSIONS.RETURN_VIEW, PERMISSIONS.RETURN_CONFIRM, PERMISSIONS.RETURN_IMAGE_REVIEW]
+  },
   {
     key: 'usage',
     label: '借还流水',
     short: '借还',
-    perms: [PERMISSIONS.STATS_EXPORT],
-    hint: '借出、归还、逾期和图片线索。',
-    rows: '借还记录 / 使用日志'
+    perms: [PERMISSIONS.STATS_EXPORT]
   },
   {
     key: 'returns',
     label: '归还归档',
     short: '归还',
     perms: [PERMISSIONS.STATS_EXPORT],
-    anyPerms: [PERMISSIONS.RETURN_EXPORT, PERMISSIONS.RETURN_VIEW, PERMISSIONS.RETURN_CONFIRM, PERMISSIONS.RETURN_IMAGE_REVIEW],
-    hint: '归还状态、归档文件夹和上传图片清单。',
-    rows: '归还闭环 / 图片归档'
+    anyPerms: [PERMISSIONS.RETURN_EXPORT, PERMISSIONS.RETURN_VIEW, PERMISSIONS.RETURN_CONFIRM, PERMISSIONS.RETURN_IMAGE_REVIEW]
   },
   {
     key: 'reservations',
     label: '预约计划',
     short: '预约',
     perms: [PERMISSIONS.STATS_EXPORT],
-    anyPerms: [PERMISSIONS.RESERVATION_VIEW, PERMISSIONS.RESERVATION_APPROVE, PERMISSIONS.RESERVATION_CHANGE_PLAN],
-    hint: '预约明细、批次和审批备注。',
-    rows: '预约批次 / 预约明细'
+    anyPerms: [PERMISSIONS.RESERVATION_VIEW, PERMISSIONS.RESERVATION_APPROVE, PERMISSIONS.RESERVATION_CHANGE_PLAN]
   },
   {
     key: 'faults',
     label: '故障与异常',
     short: '故障',
     perms: [PERMISSIONS.STATS_EXPORT],
-    anyPerms: [PERMISSIONS.DEVICE_VIEW, PERMISSIONS.DEVICE_MANAGE, PERMISSIONS.FAULT_MANAGE],
-    hint: '故障、异常归还和处理备注。',
-    rows: '设备故障记录'
+    anyPerms: [PERMISSIONS.DEVICE_VIEW, PERMISSIONS.DEVICE_MANAGE, PERMISSIONS.FAULT_MANAGE]
   },
   {
     key: 'user_activity',
     label: '用户活动',
     short: '用户',
-    perms: [PERMISSIONS.STATS_EXPORT, PERMISSIONS.USER_MANAGE],
-    hint: '注册、登录、绑定和审核。',
-    rows: '用户活动日志'
+    perms: [PERMISSIONS.STATS_EXPORT, PERMISSIONS.USER_MANAGE]
   },
   {
     key: 'device_summary',
     label: '设备汇总',
     short: '设备',
     perms: [PERMISSIONS.STATS_EXPORT],
-    anyPerms: [PERMISSIONS.DEVICE_VIEW, PERMISSIONS.DEVICE_MANAGE],
-    hint: '设备排行、预约、借用和故障。',
-    rows: '设备使用统计'
+    anyPerms: [PERMISSIONS.DEVICE_VIEW, PERMISSIONS.DEVICE_MANAGE]
   },
   {
     key: 'audit_logs',
     label: '审计日志',
     short: '审计',
-    perms: [PERMISSIONS.STATS_EXPORT, PERMISSIONS.AUDIT_VIEW],
-    hint: '审批、授权和故障处理留痕。',
-    rows: '操作审计日志'
+    perms: [PERMISSIONS.STATS_EXPORT, PERMISSIONS.AUDIT_VIEW]
   }
 ];
 
@@ -241,6 +232,24 @@ function normalizeExportRows(type: string, rows: Array<Record<string, unknown>>)
       归还说明: item.return_note || ''
     }));
   }
+  if (type === 'successful_usage') {
+    return rows.map((item) => ({
+      '\u8bb0\u5f55\u7f16\u53f7': item.id,
+      '\u8bbe\u5907\u7f16\u53f7': item.device_code,
+      '\u8bbe\u5907\u540d\u79f0': item.device_name,
+      '\u4f7f\u7528\u4eba': item.user_name,
+      '\u624b\u673a\u53f7': item.user_phone,
+      '\u5b66\u5de5\u53f7': item.user_student_no || '',
+      '\u501f\u51fa\u65f6\u95f4': formatTime(item.borrow_time || item.actual_start_time),
+      '\u5b9e\u9645\u5f52\u8fd8\u65f6\u95f4': formatTime(item.return_time || item.actual_end_time),
+      '\u4f7f\u7528\u5206\u949f': item.duration_minutes || 0,
+      '\u662f\u5426\u903e\u671f': item.is_overdue ? '\u662f' : '\u5426',
+      '\u5f52\u8fd8\u72b6\u6001': '\u6210\u529f\u5f52\u8fd8',
+      '\u5f52\u8fd8\u8bf4\u660e': item.return_note || '',
+      '\u5f52\u8fd8\u590d\u6838\u65f6\u95f4': formatTime(item.return_reviewed_at),
+      '\u5f52\u6863\u56fe\u7247\u6570\u91cf': photoCount(item.return_archive_photos || item.return_photos)
+    }));
+  }
   if (type === 'returns') {
     return rows.map((item) => {
       const archivePhotos = item.return_archive_photos || item.return_photos;
@@ -257,9 +266,13 @@ function normalizeExportRows(type: string, rows: Array<Record<string, unknown>>)
         是否逾期: item.is_overdue ? '是' : '否',
         归还状态: statusText(item.return_condition || item.status),
         归还说明: item.return_note || '',
+        补充说明: item.return_supplement_note || '',
+        补充时间: formatTime(item.return_supplemented_at),
+        是否超时补充: item.return_material_late ? '是' : '否',
         归档文件夹: item.return_archive_folder || '',
         图片数量: photoCount(archivePhotos),
-        图片路径: photoListText(archivePhotos)
+        图片路径: photoListText(archivePhotos),
+        补充图片: photoListText(item.return_supplement_photos)
       };
     });
   }
@@ -391,21 +404,21 @@ function humanParams(params: unknown) {
 
 function ExportJobRow({ job }: { job: ExportJob }) {
   return (
-    <div className="grid gap-3 rounded-2xl border bg-background/75 p-4 text-sm shadow-sm lg:grid-cols-[1.1fr_1fr_120px_150px_120px] lg:items-center">
+    <div className="grid gap-3 rounded-md border bg-background p-3 text-sm lg:grid-cols-[1.1fr_1fr_100px_140px_100px] lg:items-center">
       <div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-black">{exportTypeLabel(job.type)}</span>
+          <span className="font-semibold">{exportTypeLabel(job.type)}</span>
           <span className={`badge-pill ${statusTone(job.status)}`}>{STATUS_LABEL[job.status] ?? job.status}</span>
         </div>
         <p className="mt-1 text-xs text-muted-foreground">{humanParams(job.params)}</p>
       </div>
       <div className="text-xs text-muted-foreground">
         <p>创建人：{job.created_by_name ?? '—'}</p>
-        <p>创建时间：{job.created_at ? new Date(job.created_at).toLocaleString('zh-CN', { hour12: false }) : '—'}</p>
+        <p>创建时间：{job.created_at ? briefDateTime(job.created_at) : '—'}</p>
       </div>
       <div>
         <p className="text-xs text-muted-foreground">行数</p>
-        <p className="text-xl font-black tabular-nums">{job.row_count ?? '—'}</p>
+        <p className="text-lg font-semibold tabular-nums">{job.row_count ?? '—'}</p>
       </div>
       <div className="text-xs text-muted-foreground">
         {job.finished_at
@@ -443,8 +456,6 @@ export function AdminExportPage() {
   const create = useCreateExportJob();
   const run = useRunNextExportJob();
   const jobs = data?.jobs ?? [];
-
-  const selectedType = TYPES.find((item) => item.key === type) ?? visibleTypes[0] ?? TYPES[0];
   const pendingJobs = jobs.filter((job) => job.status === 'pending' || job.status === 'running').length;
   const finishedJobs = jobs.filter((job) => job.status === 'finished').length;
   const failedJobs = jobs.filter((job) => job.status === 'failed').length;
@@ -488,151 +499,90 @@ export function AdminExportPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <section className="ops-hero p-6 md:p-8">
-        <div className="relative grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px] xl:items-end">
-          <div>
-            <p className="text-xs font-black uppercase tracking-[0.24em] text-white/60">IDBS 5.0 · 文档中枢</p>
-            <h1 className="mt-2 text-3xl font-black tracking-tight text-white md:text-4xl">导出中心</h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-white/70">
-              按权限导出、按任务排队、按审计留痕，避免未授权数据出现在管理员页面。
-            </p>
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            {[
-              ['进行中', pendingJobs],
-              ['已完成', finishedJobs],
-              ['失败', failedJobs]
-            ].map(([label, value]) => (
-              <div key={String(label)} className="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur">
-                <p className="text-xs text-white/55">{label}</p>
-                <p className="mt-1 text-2xl font-black tabular-nums text-white">{value}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+    <div className="ops-page-stack export-page">
+      <OpsPageHeader title="导出中心" className="ops-page-header--compact">
+        <OpsBadge tone="warning">进行中 {pendingJobs}</OpsBadge>
+        <OpsBadge tone="success">已完成 {finishedJobs}</OpsBadge>
+        <OpsBadge tone="danger">失败 {failedJobs}</OpsBadge>
+      </OpsPageHeader>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <Card className="ops-card">
-          <CardHeader>
-            <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-              <div>
-                <CardTitle className="text-base">创建导出</CardTitle>
-                <p className="mt-1 text-sm text-muted-foreground">选择数据范围后可立即下载，也可创建异步任务进入队列。</p>
-              </div>
-              <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-bold text-primary">
-                当前可导出 {visibleTypes.length} 类
-              </span>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-              {visibleTypes.map((item) => {
-                return (
-                  <button
-                    key={item.key}
-                    type="button"
-                    onClick={() => setType(item.key)}
-                    className={`rounded-2xl border p-4 text-left transition ${
-                      type === item.key
-                        ? 'border-primary bg-primary/10 shadow-sm'
-                        : 'bg-background/80 hover:-translate-y-px hover:border-primary/40 hover:shadow-sm'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-black">{item.label}</span>
-                      <ShieldCheck className="h-4 w-4 text-emerald-600" />
-                    </div>
-                    <p className="mt-2 text-xs leading-5 text-muted-foreground">{item.hint}</p>
-                  </button>
-                );
-              })}
-            </div>
-
+      <Card className="ops-card">
+        <CardContent className="space-y-4 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold">导出类型</h2>
             {!visibleTypes.length && (
-              <OpsPermissionHint className="mt-4" title="暂无导出权限">当前账号未匹配任何导出类型，相关模板、队列操作和下载入口已隐藏。</OpsPermissionHint>
+              <span className="text-xs text-muted-foreground">当前账号无导出权限</span>
             )}
+          </div>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <label className="text-sm">
-                <span className="text-muted-foreground">用户编号</span>
-                <Input value={fields.user_id} onChange={(e) => setFields({ ...fields, user_id: e.target.value })} placeholder="可选" />
-              </label>
-              <label className="text-sm">
-                <span className="text-muted-foreground">设备编号</span>
-                <Input value={fields.device_id} onChange={(e) => setFields({ ...fields, device_id: e.target.value })} placeholder="可选" />
-              </label>
-              <label className="text-sm">
-                <span className="text-muted-foreground">开始日期</span>
-                <Input type="date" value={fields.start_date} onChange={(e) => setFields({ ...fields, start_date: e.target.value })} />
-              </label>
-              <label className="text-sm">
-                <span className="text-muted-foreground">结束日期</span>
-                <Input type="date" value={fields.end_date} onChange={(e) => setFields({ ...fields, end_date: e.target.value })} />
-              </label>
+          {visibleTypes.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {visibleTypes.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => setType(item.key)}
+                  className={`rounded-md border px-3 py-1.5 text-sm transition ${
+                    type === item.key
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'bg-background hover:border-primary/50'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
             </div>
+          )}
 
-            <div className="mt-5 flex flex-wrap gap-2">
-              <Button variant="secondary" disabled={!visibleTypes.length || syncExport.isPending} onClick={() => syncExport.mutate('csv')}>
-                <FileText className="h-4 w-4" /> 立即下载 CSV
-              </Button>
-              <Button variant="secondary" disabled={!visibleTypes.length || syncExport.isPending} onClick={() => syncExport.mutate('excel')}>
-                <FileSpreadsheet className="h-4 w-4" /> 立即下载 Excel
-              </Button>
-              <Button disabled={!visibleTypes.length || create.isPending} onClick={handleCreate}>
-                创建异步任务
-              </Button>
-              <Button variant="outline" disabled={!visibleTypes.length || run.isPending} onClick={handleRun}>
-                <Play className="h-4 w-4" /> 执行下一任务
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <label className="text-sm">
+              <span className="text-muted-foreground">用户编号</span>
+              <Input value={fields.user_id} onChange={(e) => setFields({ ...fields, user_id: e.target.value })} placeholder="可选" />
+            </label>
+            <label className="text-sm">
+              <span className="text-muted-foreground">设备编号</span>
+              <Input value={fields.device_id} onChange={(e) => setFields({ ...fields, device_id: e.target.value })} placeholder="可选" />
+            </label>
+            <label className="text-sm">
+              <span className="text-muted-foreground">开始日期</span>
+              <Input type="date" value={fields.start_date} onChange={(e) => setFields({ ...fields, start_date: e.target.value })} />
+            </label>
+            <label className="text-sm">
+              <span className="text-muted-foreground">结束日期</span>
+              <Input type="date" value={fields.end_date} onChange={(e) => setFields({ ...fields, end_date: e.target.value })} />
+            </label>
+          </div>
 
-        <Card className="ops-card h-fit xl:sticky xl:top-6">
-          <CardHeader>
-            <CardTitle className="text-base">权限匹配</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4 text-sm">
-            <OpsPermissionHint title="当前选择" permissions={selectedType.label}>
-              不具备权限的数据类型不会出现在列表中，后端接口也会继续执行权限校验。
-            </OpsPermissionHint>
-            <div className="rounded-2xl border bg-muted/30 p-4">
-              <p className="text-xs font-bold text-muted-foreground">数据来源</p>
-              <p className="mt-1 font-semibold">{selectedType.rows}</p>
-              <p className="mt-2 text-xs leading-5 text-muted-foreground">{selectedType.hint}</p>
-            </div>
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-800">
-              <p className="text-xs font-black uppercase tracking-wider">权限状态</p>
-              <p className="mt-1 font-semibold">当前账号已匹配该导出类型</p>
-              <p className="mt-2 text-xs leading-5 text-emerald-700">不可用的导出类型已自动隐藏，队列和模板只展示可执行内容。</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="secondary" disabled={!visibleTypes.length || syncExport.isPending} onClick={() => syncExport.mutate('csv')}>
+              <FileText className="h-4 w-4" /> CSV
+            </Button>
+            <Button size="sm" variant="secondary" disabled={!visibleTypes.length || syncExport.isPending} onClick={() => syncExport.mutate('excel')}>
+              <FileSpreadsheet className="h-4 w-4" /> Excel
+            </Button>
+            <Button size="sm" disabled={!visibleTypes.length || create.isPending} onClick={handleCreate}>
+              创建任务
+            </Button>
+            <Button size="sm" variant="outline" disabled={!visibleTypes.length || run.isPending} onClick={handleRun}>
+              <Play className="h-4 w-4" /> 执行下一任务
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card className="ops-card">
         <CardContent className="space-y-3 p-4">
           <OpsDataToolbar
-            title="导出任务队列"
-            description="查看任务生成、下载和失败原因；失败信息会转换为中文说明。"
-            meta={<>共 {jobs.length} 个任务</>}
+            title="导出任务"
+            meta={<>共 {jobs.length} 个</>}
             actions={<Button variant="outline" size="sm" onClick={() => refetch()}>刷新</Button>}
           />
-          {isLoading && <p className="py-8 text-center text-muted-foreground">加载中…</p>}
-          {error && <p className="py-8 text-center text-destructive">加载失败：{toAdminError(error)}</p>}
-          {!isLoading && jobs.length === 0 && <OpsEmptyState title="暂无导出任务" description="可先选择导出类型和日期范围，创建任务后会显示在这里。" />}
+          {isLoading && <p className="py-6 text-center text-sm text-muted-foreground">加载中…</p>}
+          {error && <p className="py-6 text-center text-sm text-destructive">加载失败：{toAdminError(error)}</p>}
+          {!isLoading && jobs.length === 0 && <OpsEmptyState title="暂无导出任务" description="" />}
           {jobs.map((job) => <ExportJobRow key={job.id} job={job} />)}
         </CardContent>
       </Card>
     </div>
   );
 }
-
-
-
-
-
-
-

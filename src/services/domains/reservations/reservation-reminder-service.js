@@ -1,5 +1,5 @@
 ﻿function createReservationReminderService(context = {}) {
-  const { createUserNotification, nowIso, query, uuid } = context;
+  const { autoStartDueReservations, createUserNotification, nowIso, query, uuid } = context;
 
   async function notificationExists(userId, type, relatedId) {
     const rows = await query('select 1 from user_notifications where user_id=$1 and type=$2 and related_id=$3 limit 1', [userId, type, relatedId]);
@@ -15,12 +15,12 @@
 
   async function runReservationReminderLifecycle(nowValue = nowIso()) {
     const now = new Date(nowValue);
-    if (Number.isNaN(now.getTime())) return { reservation_day_before: 0, reservation_soon: 0, return_soon: 0, overdue: 0 };
+    if (Number.isNaN(now.getTime())) return { reservation_day_before: 0, reservation_soon: 0, auto_started: 0, auto_start_blocked: 0, return_soon: 0, overdue: 0 };
     const dayStart = new Date(now.getTime() + 23 * 60 * 60 * 1000).toISOString();
     const dayEnd = new Date(now.getTime() + 25 * 60 * 60 * 1000).toISOString();
     const soonStart = new Date(now.getTime() + 25 * 60 * 1000).toISOString();
     const soonEnd = new Date(now.getTime() + 35 * 60 * 1000).toISOString();
-    const results = { reservation_day_before: 0, reservation_soon: 0, return_soon: 0, overdue: 0 };
+    const results = { reservation_day_before: 0, reservation_soon: 0, auto_started: 0, auto_start_blocked: 0, return_soon: 0, overdue: 0 };
     const reservations = await query(`select ri.id, ri.reservation_id, ri.user_id, ri.device_id, ri.start_time, ri.end_time, d.device_code, d.name as device_name
       from reservation_items ri join devices d on d.id=ri.device_id
       where ri.status='approved' and ri.start_time between $1 and $2`, [dayStart, dayEnd]);
@@ -29,6 +29,11 @@
       from reservation_items ri join devices d on d.id=ri.device_id
       where ri.status='approved' and ri.start_time between $1 and $2`, [soonStart, soonEnd]);
     for (const row of soonReservations || []) if (await writeReminder(row, 'reservation_soon', '预约即将开始', `你预约的 ${row.device_code} ${row.device_name} 将在约 30 分钟后开始，请按时到场；如无法使用请尽快取消。`)) results.reservation_soon += 1;
+    if (typeof autoStartDueReservations === 'function') {
+      const autoStart = await autoStartDueReservations(now.toISOString());
+      results.auto_started = Number(autoStart?.started_count || 0);
+      results.auto_start_blocked = Number(autoStart?.blocked_count || 0);
+    }
     const borrows = await query(`select b.id, b.user_id, b.device_id, d.device_code, d.name as device_name
       from borrow_records b join devices d on d.id=b.device_id
       where b.status='in_use' and b.expected_return_time between $1 and $2`, [soonStart, soonEnd]);

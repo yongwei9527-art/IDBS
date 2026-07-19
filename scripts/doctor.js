@@ -1,4 +1,7 @@
-﻿const { Pool } = require('pg');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { Pool } = require('pg');
 const { postgresSslOptions } = require('../src/lib/postgres-ssl');
 const { isPlaceholderSecret, isWeakAdminPassword } = require('../src/config/env');
 require('dotenv').config({ quiet: true });
@@ -152,6 +155,7 @@ async function main() {
       'idx_rate_limit_buckets_expiry',
       'idx_reservation_items_pending_time',
       'idx_borrow_records_active_due',
+      'idx_borrow_records_material_deadline',
       'idx_users_pending_active',
       'idx_maintenance_plans_due',
       'idx_maintenance_windows_device_time',
@@ -186,6 +190,12 @@ async function main() {
       ['user_requests', 'updated_by'],
       ['borrow_records', 'return_archive_photos'],
       ['borrow_records', 'return_archive_folder'],
+      ['borrow_records', 'return_material_required'],
+      ['borrow_records', 'return_material_deadline'],
+      ['borrow_records', 'return_supplement_note'],
+      ['borrow_records', 'return_supplement_photos'],
+      ['borrow_records', 'return_supplemented_at'],
+      ['borrow_records', 'return_material_late'],
       ['devices', 'return_require_note'],
       ['devices', 'return_mode'],
       ['users', 'avatar_url'],
@@ -276,6 +286,47 @@ async function main() {
   } catch (error) {
     fail('系统自检失败', error.message || String(error));
   } finally {
+    
+  // Database backup freshness / integrity
+  try {
+    const backupDir = path.resolve(process.env.BACKUP_DIR || path.join(process.cwd(), 'backups', 'db'));
+    if (!fs.existsSync(backupDir)) {
+      warn('Database backup directory', 'missing ' + backupDir + '; run npm run db:backup');
+    } else {
+      const files = fs.readdirSync(backupDir)
+        .filter((name) => /^idbs-\d{8}T\d{6}Z\.(dump|sql)$/.test(name))
+        .map((name) => {
+          const full = path.join(backupDir, name);
+          const st = fs.statSync(full);
+          return { name, full, mtimeMs: st.mtimeMs, size: st.size };
+        })
+        .sort((a, b) => b.mtimeMs - a.mtimeMs);
+      if (!files.length) {
+        warn('Database backup freshness', 'no dump files in ' + backupDir + '; run npm run db:backup');
+      } else {
+        const latest = files[0];
+        const ageHours = (Date.now() - latest.mtimeMs) / 3600000;
+        const manifestPath = latest.full + '.json';
+        if (!fs.existsSync(manifestPath)) {
+          warn('Database backup manifest', 'missing manifest for ' + latest.name);
+        } else {
+          try {
+            const meta = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+            const hash = crypto.createHash('sha256').update(fs.readFileSync(latest.full)).digest('hex');
+            if (meta.sha256 && meta.sha256 !== hash) fail('Database backup integrity', 'checksum mismatch for ' + latest.name);
+            else pass('Database backup integrity', latest.name);
+          } catch (error) {
+            warn('Database backup manifest', error.message || String(error));
+          }
+        }
+        if (ageHours > 36) warn('Database backup freshness', 'latest ' + latest.name + ' is ' + ageHours.toFixed(1) + 'h old');
+        else pass('Database backup freshness', latest.name + ' (' + ageHours.toFixed(1) + 'h old, ' + latest.size + ' bytes)');
+      }
+    }
+  } catch (error) {
+    warn('Database backup check', error.message || String(error));
+  }
+
     await pool.end().catch(() => {});
   }
 
@@ -291,6 +342,21 @@ async function main() {
       console.log('提示：如来自旧库，请应用 sql/migrations/2026-07-04_v3_foundation.sql，再运行 npm run db:migrate-2-to-3:import。');
     }
   }
+
+  // Frontend build freshness
+  const v5Index = path.join(process.cwd(), 'public', 'v5', 'index.html');
+  if (!fs.existsSync(v5Index)) {
+    warn('public/v5', 'missing production frontend build; run npm run v5:build');
+  } else {
+    const ageHours = (Date.now() - fs.statSync(v5Index).mtimeMs) / 3600000;
+    if (ageHours > 24 * 14) warn('public/v5', `index.html is ${ageHours.toFixed(1)} hours old; rebuild if frontend changed`);
+    else pass('public/v5', 'frontend build present');
+  }
+
+  const statementTimeout = Number(process.env.PG_STATEMENT_TIMEOUT_MS || 30000);
+  if (!Number.isFinite(statementTimeout) || statementTimeout < 1000) warn('PG_STATEMENT_TIMEOUT_MS', 'should be >= 1000');
+  else pass('PG_STATEMENT_TIMEOUT_MS', String(statementTimeout));
+
 }
 
 main().catch((error) => {

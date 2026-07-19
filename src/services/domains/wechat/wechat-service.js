@@ -109,6 +109,7 @@ function createWechatService(context = {}) {
       const phoneExists = await queryOne('select id from users where phone = $1 limit 1', [phone]);
       if (phoneExists) return fail('手机号已注册。', 409, 3001);
       const salt = crypto.randomBytes(8).toString('hex');
+      const tempPasswordHash = await hashPassword(crypto.randomBytes(16).toString('hex'), salt);
       user = {
         id: uuid(),
         name,
@@ -116,7 +117,7 @@ function createWechatService(context = {}) {
         student_no: studentNo,
         group_name: '',
         email: '',
-        password_hash: hashPassword(crypto.randomBytes(16).toString('hex'), salt),
+        password_hash: tempPasswordHash,
         password_salt: salt,
         role: 'user',
         status: 'pending',

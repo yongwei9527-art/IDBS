@@ -80,8 +80,8 @@ function friendlyServerMessage(message, status) {
   if (/duplicate|conflict|already exists/.test(lower)) return '当前数据已存在或状态冲突，请检查后重试。';
   if (/internal server error|cannot read|undefined|null|database|sql|postgres|typeerror|referenceerror/.test(lower)) return '服务器暂时无法处理请求，请稍后再试。';
   if (status === 400) return hasChinese ? text : '提交内容不完整或格式不正确。';
-  if (status === 401) return '未登录或登录已过期。';
-  if (status === 403) return '没有访问权限。';
+  if (status === 401) return hasChinese ? text : '未登录或登录已过期。';
+  if (status === 403) return hasChinese ? text : '没有访问权限。';
   if (status === 404) return '请求的资源不存在。';
   if (status === 409) return hasChinese ? text : '当前数据状态已变化，请刷新后重试。';
   if (status === 413) return '上传或提交内容过大。';
@@ -143,4 +143,5 @@ module.exports = {
   sendRest,
   success
 };
+
 

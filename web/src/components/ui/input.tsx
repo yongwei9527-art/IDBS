@@ -12,7 +12,7 @@ const sizeMap: Record<Exclude<Size, 'none'>, { input: string; wrapper: string }>
 };
 
 const inputBase =
-  'flex w-full rounded-md border border-input bg-card px-3 py-1 ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50';
+  'ui-input flex w-full rounded-md border border-input bg-card px-3 py-1 ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50';
 
 type BaseProps = Omit<React.InputHTMLAttributes<HTMLInputElement>, 'size' | 'prefix'> & {
   /** 一键清空 */

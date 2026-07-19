@@ -45,8 +45,8 @@ function createV5AuthRouter(service, { refreshSessions } = {}) {
 
 
   const phoneSchema = z.object({
-    phone: z.string().min(6).max(20),
-    password: z.string().min(6).max(128)
+    phone: z.string().min(6, '手机号格式不正确。').max(20, '手机号格式不正确。'),
+    password: z.string().min(6, '密码至少需要 6 位。').max(128, '密码过长。')
   });
 
   /**
@@ -99,7 +99,7 @@ function createV5AuthRouter(service, { refreshSessions } = {}) {
     const context = contextFromReq(req);
     const result = await service.loginUser(req.validated.body, context);
     if (!result || result.ok === false) {
-      throw new AppError(result?.message || '手机号或密码错误', { status: 401, code: 1001 });
+      throw new AppError(result?.message || '手机号或密码不正确。', { status: result?.status || 401, code: result?.code || 1001 });
     }
     return toV5LoginBundle(result, req, res);
   }));

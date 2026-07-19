@@ -1,5 +1,6 @@
-import { type ReactNode, useEffect, useState } from 'react';
+import { type MouseEvent, type ReactNode, useEffect, useState } from 'react';
 import { Outlet, Link, useLocation } from '@tanstack/react-router';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/features/auth/use-auth';
 import { RequireAuth } from '@/features/auth/auth-guard';
 import { useCapability } from '@/features/auth/permissions';
@@ -22,7 +23,13 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { request } from '@/lib/api';
+import {
+  fetchSystemNotice,
+  isSystemNoticeRead,
+  markSystemNoticeRead,
+  SYSTEM_NOTICE_QUERY_KEY,
+  type SystemNotice
+} from '@/features/notification/system-notice';
 
 interface NavItem {
   title: string;
@@ -32,13 +39,6 @@ interface NavItem {
   allPerm?: string[];
   adminOnly?: boolean;
   superOnly?: boolean;
-}
-
-interface SystemNotice {
-  enabled?: boolean;
-  title?: string;
-  content?: string;
-  version?: string | number;
 }
 
 const navGroups: { label: string; items: NavItem[] }[] = [
@@ -59,6 +59,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
 ];
 
 function adminNavIcon(path: string) {
+  if (path.includes('calendar')) return <CalendarCheck className="h-4 w-4" />;
   if (path.includes('devices')) return <MonitorSmartphone className="h-4 w-4" />;
   if (path.includes('reservations')) return <CalendarCheck className="h-4 w-4" />;
   if (path.includes('users')) return <UserRound className="h-4 w-4" />;
@@ -89,7 +90,7 @@ const BREADCRUMB_LABEL: Record<string, string> = {
   users: '用户',
   faults: '故障',
   requests: '诉求',
-  maintenance: '\u8bbe\u5907\u7ef4\u62a4',
+  maintenance: '设备维护',
   stats: '运营分析',
   export: '文档导出',
   system: '系统配置',
@@ -106,13 +107,13 @@ const BREADCRUMB_LABEL: Record<string, string> = {
 function Breadcrumb({ pathname }: { pathname: string }) {
   const seg = pathname.split('/').filter(Boolean);
   return (
-    <nav className="flex items-center text-sm text-muted-foreground">
+    <nav className="ops-breadcrumb flex items-center text-sm text-muted-foreground">
       {seg.length === 0 ? (
         <span>首页</span>
       ) : (
         seg.map((s, i) => (
           <span key={i} className="flex items-center gap-1">
-            {i > 0 && <span className="px-1">/</span>}
+            {i > 0 && <span className="ops-breadcrumb-separator px-1">/</span>}
             <span className={cn(i === seg.length - 1 && 'text-foreground')}>{BREADCRUMB_LABEL[s] ?? s}</span>
           </span>
         ))
@@ -134,6 +135,14 @@ export function AppLayout() {
   const location = useLocation();
   const auth = useAuth();
   const capability = useCapability();
+  const { data: latestNotice } = useQuery({
+    queryKey: SYSTEM_NOTICE_QUERY_KEY,
+    queryFn: fetchSystemNotice,
+    enabled: auth.isLoggedIn,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false
+  });
 
   const isActive = (to: string) => location.pathname === to || (to !== '/devices' && location.pathname.startsWith(`${to}/`));
   const hasItemAccess = (item: NavItem) => {
@@ -152,10 +161,12 @@ export function AppLayout() {
     ? [...visibleAdminGroups, ...navGroups.map((group) => ({ ...group, items: group.items.filter((item) => item.to === '/chat') })).filter((group) => group.items.length > 0)]
     : navGroups;
   const roleLabel = capability.isSuperAdmin ? '系统管理员' : capability.isAdminLike ? '运营权限已启用' : '服务账号';
-  const noticeVersion = String(notice?.version || '1');
-
   useEffect(() => {
     document.documentElement.dataset.ambient = ambient;
+    document.documentElement.style.colorScheme = ambient === 'night' ? 'dark' : 'light';
+    // Keep legacy data-theme in sync for residual styles that still target it.
+    if (ambient === 'night') document.documentElement.setAttribute('data-theme', 'dark');
+    else document.documentElement.removeAttribute('data-theme');
     window.localStorage.setItem('IDBS_AMBIENT', ambient);
   }, [ambient]);
 
@@ -164,40 +175,50 @@ export function AppLayout() {
       setNotice(null);
       return;
     }
-    let cancelled = false;
-    request<{ notice?: SystemNotice }>('/system/notice')
-      .then((data) => {
-        if (cancelled) return;
-        const next = data?.notice;
-        if (!next?.enabled || !next.content) return;
-        const key = `IDBS_NOTICE_CLOSED_${String(next.version || '1')}`;
-        if (localStorage.getItem(key) === '1') return;
-        setNotice(next);
-      })
-      .catch(() => {
-        // 系统提醒不能阻断主流程。
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [auth.isLoggedIn]);
+    if (!latestNotice?.enabled || !String(latestNotice.content || '').trim() || isSystemNoticeRead(latestNotice)) {
+      setNotice(null);
+      return;
+    }
+    setNotice(latestNotice);
+  }, [auth.isLoggedIn, latestNotice]);
 
   function closeNotice() {
-    localStorage.setItem(`IDBS_NOTICE_CLOSED_${noticeVersion}`, '1');
+    if (!notice) return;
+    markSystemNoticeRead(notice);
     setNotice(null);
   }
+
+  function closeNoticeByBackdrop(event: MouseEvent<HTMLDivElement>) {
+    if (event.target === event.currentTarget) closeNotice();
+  }
+
+  useEffect(() => {
+    if (!notice) return undefined;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') closeNotice();
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [notice]);
 
   if (!auth.isReady || !auth.isLoggedIn) return <RequireAuth />;
 
   return (
     <div className="ops-layout-shell relative min-h-svh w-full bg-background text-sm text-foreground">
       {notice && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-lg rounded-[var(--radius-lg)] border border-cyan-200/15 bg-[#0b1a30]/95 p-6 shadow-[0_24px_80px_rgba(0,0,0,0.55)] backdrop-blur-xl">
-            <p className="font-mono text-xs font-medium uppercase tracking-[0.16em] text-cyan-100">SYSTEM NOTICE</p>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label={notice.title || '使用注意事项'}
+          onClick={closeNoticeByBackdrop}
+        >
+          <div className="ops-dialog-surface w-full max-w-lg p-6" onClick={(event) => event.stopPropagation()}>
+            <p className="ops-dialog-kicker">系统通知</p>
             <h2 className="mt-2 text-lg font-semibold">{notice.title || '使用注意事项'}</h2>
             <div className="mt-3 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{notice.content}</div>
-            <div className="mt-5 flex justify-end">
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="outline" onClick={closeNotice}>稍后再说</Button>
               <Button onClick={closeNotice}>我已了解，确认</Button>
             </div>
           </div>
@@ -205,32 +226,29 @@ export function AppLayout() {
       )}
 
       {!collapsed ? <button type="button" aria-label="关闭导航" className="fixed inset-0 z-30 bg-slate-950/20 md:hidden" onClick={() => setCollapsed(true)} /> : null}
-      <aside className={cn('fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r border-cyan-200/12 bg-[#07152a]/95 text-slate-100 shadow-[14px_0_60px_rgba(0,0,0,0.42)] backdrop-blur-xl [background-image:radial-gradient(circle_at_0%_0%,rgba(56,189,248,0.09),transparent_28%),radial-gradient(circle_at_90%_12%,rgba(139,92,246,0.06),transparent_25%),linear-gradient(180deg,rgba(9,25,48,0.96),rgba(5,15,30,0.98))] transition-transform duration-300 ease-out', collapsed ? '-translate-x-full' : 'translate-x-0')}>
-        <div className="flex h-24 items-center border-b border-cyan-200/12 px-5">
+      <aside className={cn('ops-sidebar fixed inset-y-0 left-0 z-40 flex w-[220px] flex-col transition-transform duration-200 ease-out', collapsed ? '-translate-x-full' : 'translate-x-0')}>
+        <div className="ops-sidebar-brand flex h-[56px] items-center px-4">
           {!collapsed ? (
-            <div className="flex min-w-0 items-center gap-3.5">
-              <span className="relative flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.07] text-cyan-100 shadow-[0_0_26px_rgba(56,189,248,0.10)]">
-                <span className="absolute inset-x-0 top-0 h-1/2 bg-cyan-200/12" />
-                <GalleryVerticalEnd className="relative h-5 w-5" />
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span className="ops-brand-mark relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden">
+                <span className="ops-brand-mark-glow absolute inset-x-0 top-0 h-1/2" />
+                <GalleryVerticalEnd className="relative h-4 w-4" />
               </span>
               <div className="min-w-0 leading-tight">
-                <span className="block truncate text-[17px] font-black tracking-tight text-slate-50">IDBS <em className="not-italic text-cyan-100">5.0</em></span>
-                <span className="mt-1 block font-mono text-[10px] font-bold tracking-[0.14em] text-slate-300/70">INTELLIGENT OPERATIONS</span>
+                <span className="ops-brand-title block truncate text-[14px] font-semibold">设备预约系统</span>
+                <span className="ops-brand-subtitle mt-0.5 block text-[11px]">实验室管理</span>
               </div>
             </div>
           ) : (
-            <span className="mx-auto flex h-10 w-10 items-center justify-center rounded-2xl border border-cyan-200/20 bg-cyan-300/[0.07] text-cyan-100"><GalleryVerticalEnd className="h-5 w-5" /></span>
+            <span className="ops-brand-mark mx-auto flex h-8 w-8 items-center justify-center"><GalleryVerticalEnd className="h-4 w-4" /></span>
           )}
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-3 py-5">
+        <nav className="ops-sidebar-nav flex-1 overflow-y-auto px-2.5 py-3">
           {visibleNavGroups.map((group) => (
             <div key={group.label} className="mb-5">
               {!collapsed && (
-                <p className="flex items-center justify-between px-2 pb-2 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400">
-                  <span>{group.label}</span>
-                  {group.label !== '服务' && <span className="rounded-full border border-cyan-200/12 bg-cyan-300/[0.07] px-1.5 py-0.5 text-[10px] tabular-nums text-slate-300">{group.items.length}</span>}
-                </p>
+                <p className="ops-nav-group-label px-2 pb-2 text-[11px] font-semibold tracking-[0.08em]">{group.label}</p>
               )}
               <ul className="space-y-1">
                 {group.items.map((item) => (
@@ -238,8 +256,8 @@ export function AppLayout() {
                     <Link
                       to={item.to as any}
                       className={cn(
-                        'flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-semibold text-slate-300 transition-all hover:bg-cyan-300/[0.07] hover:text-cyan-100',
-                        isActive(item.to) && 'border border-cyan-200/15 bg-gradient-to-r from-cyan-400/14 to-violet-400/[0.08] text-slate-100 shadow-[inset_2px_0_0_rgb(125,211,252),0_0_16px_rgba(56,189,248,0.06)] hover:bg-cyan-300/[0.11] hover:text-white',
+                        'ops-nav-item flex items-center gap-2.5 px-2.5 py-2 text-[13px] font-medium',
+                        isActive(item.to) && 'ops-nav-item-active',
                         collapsed && 'justify-center'
                       )}
                       title={item.title}
@@ -255,15 +273,15 @@ export function AppLayout() {
           ))}
         </nav>
 
-        <div className="border-t border-cyan-200/12 p-4">
-          <div className="flex items-center gap-2.5 rounded-2xl border border-cyan-200/12 bg-cyan-300/[0.035] px-2.5 py-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full border border-cyan-200/18 bg-cyan-300/[0.07] text-cyan-100 shadow-[0_0_18px_rgba(56,189,248,0.07)]">
+        <div className="ops-sidebar-footer p-3">
+          <div className="ops-user-panel flex items-center gap-2.5 rounded-xl px-2.5 py-2.5">
+            <div className="ops-user-avatar flex h-9 w-9 items-center justify-center rounded-full">
               <UserRound className="h-4 w-4" />
             </div>
             {!collapsed && (
               <div className="min-w-0 flex-1 text-xs">
-                <p className="truncate font-semibold text-white">{auth.me?.name || '用户'}</p>
-                <p className="truncate text-slate-400">
+                <p className="ops-user-name truncate font-semibold">{auth.me?.name || '用户'}</p>
+                <p className="ops-user-role truncate">
                   {roleLabel}
                 </p>
               </div>
@@ -272,13 +290,13 @@ export function AppLayout() {
         </div>
       </aside>
 
-      <div className={cn('flex min-h-svh min-w-0 flex-1 flex-col bg-background transition-[padding] duration-300 ease-out', !collapsed && 'md:pl-72')}>
-        <header className="sticky top-0 z-30 flex h-[76px] items-center gap-3 border-b border-cyan-200/12 bg-[#071221]/78 px-4 backdrop-blur-xl md:px-7">
+      <div className={cn('ops-content-shell flex min-h-svh min-w-0 flex-1 flex-col transition-[padding] duration-200 ease-out', !collapsed && 'md:pl-[220px]')}>
+        <header className="ops-topbar sticky top-0 z-30 flex h-[52px] items-center gap-3 px-4 md:px-5">
           <Button variant="ghost" size="icon" onClick={() => setCollapsed((v) => !v)} aria-label={collapsed ? "打开导航" : "关闭导航"} title={collapsed ? "打开导航" : "关闭导航"}>
             <ChevronLeft className={cn('h-4 w-4 transition-transform', collapsed && 'rotate-180')} />
           </Button>
           <Breadcrumb pathname={location.pathname} />
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ops-topbar-tools ml-auto flex items-center gap-1">
             <Button
               variant="ghost"
               size="icon"
@@ -288,7 +306,7 @@ export function AppLayout() {
             >
               {ambient === 'night' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
-            <Link to={'/notifications' as any} aria-label="通知" className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-cyan-300/[0.07] hover:text-cyan-100">
+            <Link to={'/notifications' as any} aria-label="通知" className="ops-topbar-action inline-flex h-9 w-9 items-center justify-center rounded-lg">
               <Bell className="h-4 w-4" />
             </Link>
             <Button variant="ghost" size="icon" aria-label="退出登录" title="退出登录" onClick={() => auth.logout()}>
@@ -296,7 +314,7 @@ export function AppLayout() {
             </Button>
           </div>
         </header>
-        <main className="flex-1 overflow-y-auto p-4 md:p-7">
+        <main className="ops-page-area flex-1 overflow-y-auto">
           <div className="ops-main">
             <Outlet />
           </div>

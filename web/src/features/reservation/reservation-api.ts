@@ -11,6 +11,8 @@ export interface ReservationBatch {
   item_count?: number;
   device_count?: number;
   date_count?: number;
+  approved_count?: number;
+  in_use_count?: number;
   first_start_time?: string;
   last_end_time?: string;
 }
@@ -98,6 +100,20 @@ export async function getBatch(id: string) {
 
 export async function cancelReservationItem(id: string, cancelReason = '') {
   return request<{ message?: string; status?: string }>(`/reservation-items/${id}/cancel`, { method: 'PATCH', body: JSON.stringify({ cancel_reason: cancelReason }) });
+}
+
+export interface ReservationBatchStartResult {
+  message: string;
+  batch_id: string;
+  started_count: number;
+  waiting_count: number;
+  already_started_count: number;
+  blocked_count: number;
+  blockers?: Array<{ item_id: string; device_code?: string; device_name?: string; reason: string }>;
+}
+
+export async function startReservationBatch(id: string) {
+  return request<ReservationBatchStartResult>(`/reservation-batches/${encodeURIComponent(id)}/start-use`, { method: 'POST' });
 }
 
 export async function getCalendar(params?: string | { start?: string; end?: string; date?: string }) {

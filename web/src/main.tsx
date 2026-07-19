@@ -1,21 +1,15 @@
 import { createRoot } from 'react-dom/client';
 import { RouterProvider, createRouter } from '@tanstack/react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { queryClientConfig } from './lib/query-defaults';
 import { AuthProvider } from './features/auth/use-auth';
 import { WsProvider } from './lib/ws';
 import { Toaster } from './components/ui/toaster';
 import './styles/globals.css';
+import './styles/visual-system.css';
 import { routes } from './routes';
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 30_000,
-      retry: 1,
-      refetchOnWindowFocus: false
-    }
-  }
-});
+const queryClient = new QueryClient(queryClientConfig);
 
 // 部署子路径 /v5/：从当前 URL 推导出 router basepath，让 router 内部仍按
 // /login、/admin/dashboard 等内部路径匹配。

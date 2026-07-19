@@ -81,20 +81,20 @@ export function useActionDialog() {
     }
 
     return (
-      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) finish(false); }}>
+      <div className="ui-dialog-backdrop fixed inset-0 z-[80] flex items-center justify-center p-4" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) finish(false); }}>
         <form
-          className="w-full max-w-md rounded-[28px] border bg-card p-5 text-left shadow-[0_28px_80px_rgba(15,23,42,0.24)]"
+          className="ui-dialog-panel w-full max-w-md rounded-xl border p-5 text-left"
           role="dialog"
           aria-modal="true"
           aria-describedby={state.description ? descriptionId : undefined}
           onSubmit={submit}
         >
           <div className="flex items-start gap-4">
-            <span className={cn('flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl', toneClass[tone])}>
+            <span className={cn('ui-dialog-icon flex h-10 w-10 shrink-0 items-center justify-center rounded-lg', toneClass[tone])}>
               <DialogIcon tone={tone} kind={state.kind} />
             </span>
             <div className="min-w-0 flex-1">
-              <h2 className="text-lg font-black tracking-tight text-foreground">{state.title}</h2>
+              <h2 className="text-base font-semibold tracking-tight text-foreground">{state.title}</h2>
               {state.description && <div id={descriptionId} className="mt-2 text-sm leading-6 text-muted-foreground">{state.description}</div>}
             </div>
           </div>

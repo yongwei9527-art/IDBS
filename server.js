@@ -12,6 +12,7 @@ const { createRefreshSessionService } = require('./src/services/domains/auth/ref
 const { scheduleDailyUsageReport } = require('./src/tasks/daily-report-scheduler');
 const { scheduleMaintenanceWindows } = require('./src/tasks/maintenance-window-scheduler');
 const { scheduleReservationReminders } = require('./src/tasks/reservation-reminder-scheduler');
+const { scheduleChatTempGroupCleanup } = require('./src/tasks/chat-temp-group-scheduler');
 
 const config = loadConfig();
 const startupRuntime = buildRuntimeStatus(config);
@@ -43,6 +44,7 @@ let realtimeBus = null;
 let reportScheduler = null;
 let maintenanceWindowScheduler = null;
 let reservationReminderScheduler = null;
+let chatTempGroupScheduler = null;
 let systemMaintenanceTimer = null;
 let shuttingDown = false;
 const processStartedAt = new Date().toISOString();
@@ -115,6 +117,7 @@ const server = httpServer.listen(config.port, () => {
     reportScheduler = scheduleDailyUsageReport({ service, db });
     maintenanceWindowScheduler = scheduleMaintenanceWindows({ service, db });
     reservationReminderScheduler = scheduleReservationReminders({ service, db });
+    chatTempGroupScheduler = scheduleChatTempGroupCleanup({ service });
   } else {
     console.log('Background schedulers are disabled for this runtime.');
   }
@@ -137,6 +140,7 @@ async function shutdown(signal) {
     if (reportScheduler) reportScheduler.stop();
     if (maintenanceWindowScheduler) maintenanceWindowScheduler.stop();
     if (reservationReminderScheduler) reservationReminderScheduler.stop();
+    if (chatTempGroupScheduler) chatTempGroupScheduler.stop();
     if (systemMaintenanceTimer) clearInterval(systemMaintenanceTimer);
     if (wsGateway) wsGateway.close();
     if (realtimeBus) await realtimeBus.close().catch(() => {});

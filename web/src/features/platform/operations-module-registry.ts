@@ -16,6 +16,7 @@ export const ADMIN_MODULES: AdminModuleRegistration[] = [
   { group: '\u8fd0\u8425\u5de5\u5177', title: '\u603b\u89c8', path: '/admin/dashboard', anyPermissions: BACKEND_ENTRY_PERMISSIONS },
   { group: '\u8fd0\u8425\u534f\u4f5c', title: '\u8bbe\u5907\u53f0\u8d26', path: '/admin/devices', anyPermissions: [PERMISSIONS.DEVICE_VIEW, PERMISSIONS.DEVICE_MANAGE] },
   { group: '\u8fd0\u8425\u534f\u4f5c', title: '\u9884\u7ea6\u5ba1\u6279', path: '/admin/reservations', anyPermissions: [PERMISSIONS.RESERVATION_VIEW, PERMISSIONS.RESERVATION_APPROVE, PERMISSIONS.RESERVATION_CHANGE_PLAN] },
+  { group: '\u8fd0\u8425\u534f\u4f5c', title: '\u4f7f\u7528\u65e5\u5386', path: '/calendar', anyPermissions: [PERMISSIONS.RESERVATION_VIEW, PERMISSIONS.DEVICE_VIEW] },
   { group: '\u8fd0\u8425\u5904\u7406', title: '\u7528\u6237\u7ba1\u7406', path: '/admin/users', anyPermissions: [PERMISSIONS.USER_APPROVE, PERMISSIONS.USER_MANAGE] },
   { group: '\u8fd0\u8425\u5904\u7406', title: '\u6545\u969c\u5904\u7f6e', path: '/admin/faults', anyPermissions: [PERMISSIONS.DEVICE_VIEW, PERMISSIONS.DEVICE_MANAGE, PERMISSIONS.FAULT_MANAGE] },
   { group: '\u8fd0\u8425\u5904\u7406', title: '\u8bbe\u5907\u7ef4\u62a4', path: '/admin/maintenance', anyPermissions: [PERMISSIONS.DEVICE_VIEW, PERMISSIONS.DEVICE_MANAGE, PERMISSIONS.FAULT_MANAGE] },

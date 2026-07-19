@@ -8,8 +8,9 @@ import { useQuery } from '@tanstack/react-query';
 import { listDevices, type Device } from './device-api';
 import { buildChatSearch } from '@/features/chat/chat-context';
 import { shortDate, compactTimeRange, tinyTimeRange } from '@/lib/time-format';
-import { OpsBadge, OpsDataToolbar, OpsEmptyState, OpsPageHeader, OpsRiskBadge, OpsTimeBlock } from '@/components/ops/design-system';
+import { OpsEmptyState, OpsPageHeader, OpsRiskBadge, OpsTimeBlock } from '@/components/ops/design-system';
 import { toFriendlyError } from '@/lib/friendly-error';
+import { UserAnnouncementBoard } from '@/features/notification/user-announcement-board';
 
 const STATUS_LABEL: Record<string, string> = {
   available: '可预约',
@@ -109,15 +110,6 @@ function nextUseText(device: Device) {
   return '暂无排期';
 }
 
-function lifecycleLabel(status?: string) {
-  if (status === 'maintenance') return '维护';
-  if (status === 'abnormal_pending') return '异常';
-  if (status === 'disabled') return '停用';
-  if (status === 'in_use') return '使用';
-  if (status === 'reserved') return '已约';
-  return '可约';
-}
-
 function riskLevel(device: Device): 'low' | 'medium' | 'high' | 'critical' {
   if (device.status === 'disabled' || device.status === 'abnormal_pending') return 'critical';
   if (device.status === 'maintenance') return 'high';
@@ -204,50 +196,60 @@ function DeviceActions({ device, compact = false }: { device: Device; compact?: 
   );
 }
 
+function DeviceCoverPlaceholder({ device }: { device: Device }) {
+  return (
+    <div className="device-cover-placeholder absolute inset-0" aria-hidden="true">
+      <svg viewBox="0 0 520 150" preserveAspectRatio="none" role="presentation">
+        <path d="M18 116H502M64 24h170l38 38v54H64z" fill="none" stroke="currentColor" strokeOpacity=".15" />
+        <path d="M234 24v38h38M95 50h96M95 68h122M95 88h72" fill="none" stroke="currentColor" strokeOpacity=".12" />
+        <rect x="308" y="35" width="154" height="74" rx="7" fill="none" stroke="currentColor" strokeOpacity=".17" />
+        <path d="M329 87l25-18 23 8 30-26 34 18" fill="none" stroke="currentColor" strokeOpacity=".42" strokeWidth="2" />
+        <circle cx="482" cy="35" r="3" fill="currentColor" fillOpacity=".7" />
+      </svg>
+      <span className="device-cover-code font-mono">{device.device_code}</span>
+    </div>
+  );
+}
+
 function DeviceCard({ device }: { device: Device }) {
   const code = device.device_code;
   const statusTone = STATUS_TONE[device.status] ?? 'muted';
   return (
     <Card className="device-card-v4 group h-full overflow-hidden">
-      <div className="relative h-28 overflow-hidden bg-secondary/70">
+      <div className="device-card-cover relative h-28 overflow-hidden">
         {device.cover_photo ? (
-          <img src={device.cover_photo} alt={device.name || '设备图片'} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" />
+          <><img src={device.cover_photo} alt={device.name || '设备图片'} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.01]" /><div className="device-cover-shade absolute inset-0" /></>
         ) : (
-          <div className="flex h-full items-center justify-center text-sm font-semibold text-muted-foreground">设备</div>
+          <DeviceCoverPlaceholder device={device} />
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-black/5 to-transparent" />
         <span className={`badge-pill badge-${statusTone} absolute right-3 top-3 shadow-sm`}>{STATUS_LABEL[device.status] ?? device.status}</span>
-        {device.category && <span className="absolute bottom-3 left-3 rounded-full bg-white/88 px-2.5 py-1 text-[11px] font-bold text-foreground shadow-sm">{device.category}</span>}
+        {device.category && <span className="absolute bottom-3 left-3 device-card-category rounded-full px-2.5 py-1 text-[11px] font-semibold">{device.category}</span>}
       </div>
-      <CardContent className="flex min-h-[15.5rem] flex-col gap-3 p-4">
+      <CardContent className="flex min-h-[14.5rem] flex-col gap-3 p-4">
         <div className="min-w-0">
-          <h2 className="truncate text-base font-black tracking-tight">{device.name}</h2>
+          <h2 className="truncate text-base font-semibold tracking-tight">{device.name}</h2>
           <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground"><Tag className="h-3 w-3" /> <span className="font-mono">{code}</span></p>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 text-xs">
+        <div className="device-fact-grid grid grid-cols-2 text-xs">
           <InfoPill label="位置" value={device.location || '未填写'} />
           <InfoPill label="负责人" value={device.manager || '未填写'} />
           <InfoPill label="当前" value={device.current_borrow ? `${device.current_borrow.user_name || '-'} ${device.current_borrow.user_phone || ''}` : '空闲'} />
-          <div className="rounded-2xl border bg-background/70 px-3 py-2">
+          <div className="device-fact px-3 py-2">
             <p className="text-[10px] font-semibold text-muted-foreground">下次</p>
             <div className="mt-1 min-w-0"><NextUseBlock device={device} compact /></div>
           </div>
         </div>
 
-        <div className="rounded-2xl border bg-background/70 p-3">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <span className="text-[10px] font-semibold text-muted-foreground">开放时段</span>
-            <OpsBadge tone={device.status === 'available' ? 'success' : riskLevel(device) === 'low' ? 'default' : 'warning'}>{lifecycleLabel(device.status)}</OpsBadge>
-          </div>
+        <div className="device-slot-section border-t pt-3">
+          <span className="mb-2 block text-[10px] font-semibold text-muted-foreground">开放时段</span>
           <DeviceSlotBlocks device={device} />
         </div>
 
-        <div className="flex flex-wrap gap-2 text-xs">
+        {(device.allow_reservation === false || ['maintenance', 'abnormal_pending', 'disabled'].includes(device.status)) ? <div className="flex flex-wrap gap-2 text-xs">
           {device.allow_reservation === false && <span className="badge-pill badge-warn">暂停预约</span>}
-          {device.next_reservation?.start_time ? <span className="badge-pill badge-info">有排期</span> : <span className="badge-pill badge-success">近期空闲</span>}
-          <OpsRiskBadge level={riskLevel(device)}>{riskText(device)}</OpsRiskBadge>
-        </div>
+          {['maintenance', 'abnormal_pending', 'disabled'].includes(device.status) && <OpsRiskBadge level={riskLevel(device)}>{riskText(device)}</OpsRiskBadge>}
+        </div> : null}
         <DeviceActions device={device} />
       </CardContent>
     </Card>
@@ -256,7 +258,7 @@ function DeviceCard({ device }: { device: Device }) {
 
 function InfoPill({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) {
   return (
-    <div className="rounded-2xl border bg-background/70 px-3 py-2">
+    <div className="device-fact px-3 py-2">
       <p className="text-[10px] font-semibold text-muted-foreground">{label}</p>
       <p className={strong ? 'mt-0.5 truncate font-bold text-primary' : 'mt-0.5 truncate font-semibold text-foreground'} title={value}>{value}</p>
     </div>
@@ -339,12 +341,14 @@ export function DevicesPage() {
         <Button variant="outline" onClick={() => nav({ to: '/calendar' } as any)}>日历</Button>
       </OpsPageHeader>
 
+      <UserAnnouncementBoard />
+
       <Card className="ops-card">
         <CardContent className="space-y-3 p-3 md:p-4">
-          <OpsDataToolbar
-            title="设备筛选"
-            meta={<>当前 {filtered.length}/{data.length} 台</>}
-          />
+          <div className="flex items-center justify-between gap-3 border-b pb-3">
+            <h2 className="text-sm font-semibold">设备筛选</h2>
+            <span className="text-xs text-muted-foreground">{filtered.length}/{data.length} 台</span>
+          </div>
           <div className="grid gap-2 md:grid-cols-[minmax(240px,1.4fr)_repeat(3,minmax(140px,0.7fr))_auto] md:items-end">
             <label className="space-y-1 text-xs font-bold text-muted-foreground">
               关键词
@@ -378,7 +382,7 @@ export function DevicesPage() {
             <Button variant="outline" onClick={resetFilters}><RotateCcw className="h-4 w-4" /> 重置</Button>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap gap-2" aria-label="常用筛选">
+            <div className="ops-segment-group flex-wrap" aria-label="常用筛选">
               {QUICK_FILTERS.map((item) => {
                 const active = filters.status === item.status && filters.availability === item.availability;
                 return (
@@ -396,8 +400,10 @@ export function DevicesPage() {
             </div>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <span>视图</span>
-              <Button type="button" size="sm" variant={view === 'card' ? 'default' : 'outline'} onClick={() => setView('card')}><Grid2X2 className="h-4 w-4" /> 卡片</Button>
-              <Button type="button" size="sm" variant={view === 'table' ? 'default' : 'outline'} onClick={() => setView('table')}><List className="h-4 w-4" /> 表格</Button>
+              <div className="ops-segment-group">
+                <Button type="button" size="sm" variant={view === 'card' ? 'default' : 'outline'} onClick={() => setView('card')}><Grid2X2 className="h-4 w-4" /> 卡片</Button>
+                <Button type="button" size="sm" variant={view === 'table' ? 'default' : 'outline'} onClick={() => setView('table')}><List className="h-4 w-4" /> 表格</Button>
+              </div>
             </div>
           </div>
         </CardContent>
@@ -414,5 +420,3 @@ export function DevicesPage() {
     </div>
   );
 }
-
-

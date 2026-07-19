@@ -10,6 +10,7 @@ const ignoredDirectories = new Set(['.git', 'node_modules', 'uploads', 'dist', '
 const hardPatterns = [
   { name: 'replacement character', regex: /\uFFFD/u },
   { name: 'classic mojibake marker', regex: /(\u951F\u65A4\u62F7|[\u00C2\u00C3\u00E2])/u },
+  { name: 'garbled Chinese sequence', regex: /(涓婂崍|涓嬪崍|澶滈棿|瀹為獙瀹|瀹屾垚|澶辫触)/u },
   { name: 'broken closing tag', regex: /\?\/(?:h[1-6]|p|a|button|option|div)>/u }
 ];
 
@@ -31,13 +32,12 @@ function walk(directory, files = []) {
 
 function inspectFile(filePath) {
   const relative = path.normalize(path.relative(root, filePath));
+  if (whitelistFiles.has(relative)) return [];
   const text = fs.readFileSync(filePath, 'utf8');
   const findings = [];
   const lines = text.split(/\r?\n/);
 
   lines.forEach((line, index) => {
-    if (whitelistFiles.has(relative) && line.includes('mojibake')) return;
-
     for (const pattern of hardPatterns) {
       if (pattern.regex.test(line)) findings.push({ line: index + 1, reason: pattern.name, text: line.trim().slice(0, 160) });
     }

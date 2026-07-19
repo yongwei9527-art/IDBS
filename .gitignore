@@ -1,4 +1,4 @@
-node_modules/
+﻿node_modules/
 functions/*/node_modules/
 web/node_modules/
 .kilo/node_modules/
@@ -20,3 +20,28 @@ ERR
 $null
 Thumbs.db
 .DS_Store
+
+# database dumps
+backups/db/*
+!backups/db/.gitkeep
+
+# local runtime clutter
+local-server*.log
+local-server*.err.log
+.tmp-*
+tmp-*
+debug.log
+.codex-server.*
+.server.*
+.v5-validation-server.*
+server.local.*
+
+# local tooling / caches (do not publish)
+.audit-screenshots/
+.codex/
+.kilo/
+.pnpm-store/
+.pnpm-store-opt/
+.runtime/
+logs/
+scripts/_*.js

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Activity, Archive, Boxes, CalendarDays, CheckCircle2, Edit3, ImagePlus, Search, ShieldAlert, Wrench } from 'lucide-react';
+import { Activity, Archive, Boxes, CheckCircle2, Edit3, ImagePlus, Search, ShieldAlert, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   useAdminDeviceDetail,
@@ -17,9 +17,9 @@ import { useActionDialog } from '@/components/ui/action-dialog';
 import { Input } from '@/components/ui/input';
 import { uploadImage } from '@/lib/api';
 import { useCapability } from '@/features/auth/permissions';
-import { compactTimeRange, slotDisplayName, tinyTimeRange } from '@/lib/time-format';
+import { compactTimeRange, fullDateTimeRange, slotDisplayName, tinyTimeRange } from '@/lib/time-format';
 import { briefDateTime } from '@/lib/time-format';
-import { OpsBadge, OpsDataToolbar, OpsEmptyState, OpsMetricCard, OpsPageHeader, OpsPermissionHint, OpsRiskBadge, OpsSectionHeader, OpsTimeBlock } from '@/components/ops/design-system';
+import { OpsBadge, OpsDataToolbar, OpsDetailDrawer, OpsEmptyState, OpsMetricCard, OpsPageHeader, OpsPermissionHint, OpsSectionHeader, OpsTimeBlock } from '@/components/ops/design-system';
 import { toFriendlyError } from '@/lib/friendly-error';
 
 const STATUS_LABEL: Record<string, string> = {
@@ -41,6 +41,7 @@ const STATUS_TONE: Record<string, string> = {
 };
 
 const STATUS_OPTIONS = ['available', 'reserved', 'in_use', 'maintenance', 'abnormal_pending', 'disabled'];
+const DEVICE_PAGE_SIZE = 9;
 
 const RETURN_MODE_LABEL: Record<string, string> = {
   confirm_only: '确认归还',
@@ -104,15 +105,6 @@ function selectedKeysFromDevice(device: AdminDevice) {
 }
 
 
-function deviceRiskLevel(device: AdminDevice): 'low' | 'medium' | 'high' | 'critical' {
-  if (device.status === 'disabled') return 'critical';
-  if (device.status === 'abnormal_pending') return 'critical';
-  if (device.status === 'maintenance') return 'high';
-  if (device.allow_reservation === false) return 'medium';
-  if (device.status === 'in_use') return 'medium';
-  return 'low';
-}
-
 function deviceRiskText(device: AdminDevice) {
   if (device.status === 'disabled') return '设备已停用，需复核是否归档或重新启用。';
   if (device.status === 'abnormal_pending') return '存在异常待处理，归还和维护档案需要优先确认。';
@@ -137,15 +129,6 @@ function lifecycleTone(status?: string) {
   if (status === 'maintenance') return 'warning';
   if (status === 'abnormal_pending' || status === 'disabled') return 'danger';
   return 'muted';
-}
-
-function lifecycleSteps(status?: string) {
-  const active = lifecycleStage(status);
-  const base = ['入库', '可预约', '已预约', '使用中', '归还待检', '可预约'];
-  if (status === 'maintenance') return ['入库', '可预约', '维护中', '恢复可预约'];
-  if (status === 'abnormal_pending') return ['入库', '使用中', '异常待处理', '维护确认', '恢复可预约'];
-  if (status === 'disabled') return ['入库', '可预约', '停用/归档'];
-  return base.map((step) => (step === '已预约' && active === '已预约') || (step === '使用中' && active === '使用中') ? active : step);
 }
 
 function slotTotal(device: AdminDevice) {
@@ -207,11 +190,11 @@ function BorrowArchiveRows({ rows }: { rows?: Array<Record<string, unknown>> }) 
         const archivePhotos = stringArrayValue(row.return_archive_photos);
         const photos = (archivePhotos.length ? archivePhotos : stringArrayValue(row.return_photos)).slice(0, 5);
         return (
-          <article key={String(row.id ?? index)} className="rounded-3xl border bg-card p-4 shadow-sm">
+          <article key={String(row.id ?? index)} className="rounded-xl border bg-card p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-xs font-black uppercase tracking-wider text-primary">归还档案</p>
-                <h3 className="mt-1 truncate text-sm font-black" title={valueText(row.return_archive_folder, '')}>{valueText(row.return_archive_folder, '未生成文件夹')}</h3>
+                <p className="text-xs font-semibold text-primary">归还档案</p>
+                <h3 className="mt-1 truncate text-sm font-semibold" title={valueText(row.return_archive_folder, '')}>{valueText(row.return_archive_folder, '未生成文件夹')}</h3>
               </div>
               <OpsBadge tone={String(row.return_condition || '').includes('异常') || row.status === 'abnormal_pending' ? 'danger' : 'success'}>
                 {STATUS_LABEL[String(row.status || '')] ?? valueText(row.status, '已归还')}
@@ -252,6 +235,9 @@ export function AdminDevicesPage() {
   const initialParams = new URLSearchParams(window.location.search);
   const [editingId, setEditingId] = useState('');
   const [detailId, setDetailId] = useState('');
+  const [formOpen, setFormOpen] = useState(false);
+  const [detailTab, setDetailTab] = useState<'overview' | 'records' | 'archive' | 'faults'>('overview');
+  const [page, setPage] = useState(1);
   const [form, setForm] = useState<DeviceForm>(EMPTY_FORM);
   const [statusFilter, setStatusFilter] = useState(initialParams.get('status') ?? '');
   const [keyword, setKeyword] = useState(initialParams.get('device_code') ?? initialParams.get('device') ?? '');
@@ -271,6 +257,8 @@ export function AdminDevicesPage() {
       .some((value) => String(value || '').toLowerCase().includes(q));
     return statusMatched && keywordMatched;
   }), [keyword, list, statusFilter]);
+  const totalPages = Math.max(1, Math.ceil(filteredList.length / DEVICE_PAGE_SIZE));
+  const visibleList = filteredList.slice((page - 1) * DEVICE_PAGE_SIZE, page * DEVICE_PAGE_SIZE);
 
   const statusCounts = useMemo(() => list.reduce<Record<string, number>>((acc, device) => {
     const key = device.status || 'unknown';
@@ -292,6 +280,14 @@ export function AdminDevicesPage() {
     if (target?.id) setDetailId(target.id);
   }, [detailId, keyword, list]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [keyword, statusFilter]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
   function patchForm(patch: Partial<DeviceForm>) {
     setForm((prev) => ({ ...prev, ...patch }));
   }
@@ -303,7 +299,9 @@ export function AdminDevicesPage() {
 
   function editDevice(device: AdminDevice) {
     setEditingId(device.id);
-    setDetailId(device.id);
+    setDetailId('');
+    setDetailTab('overview');
+    setFormOpen(true);
     setForm({
       device_code: device.device_code ?? '',
       name: device.name ?? '',
@@ -375,6 +373,7 @@ export function AdminDevicesPage() {
       onSuccess: () => {
         toast.success(editingId ? '设备已更新' : '设备已创建');
         resetForm();
+        setFormOpen(false);
       },
       onError: (e: Error) => toast.error(`保存失败：${toFriendlyError(e)}`)
     };
@@ -409,20 +408,8 @@ export function AdminDevicesPage() {
   return (
     <div className="flex flex-col gap-4">
       <ActionDialog />
-      <OpsPageHeader
-        title="设备资产运营中心"
-        description="统一查看设备状态、预约时段、归还规则和生命周期风险；维护、停用、恢复等高风险动作只对具备设备管理权限的账号开放。"
-        aside={
-          <div className="grid grid-cols-2 gap-3">
-            <OpsBadge tone="success">可预约 {health.available}</OpsBadge>
-            <OpsBadge tone="info">使用中 {health.inUse}</OpsBadge>
-            <OpsBadge tone="danger">异常/停用 {health.abnormal}</OpsBadge>
-            <OpsBadge tone={canManage ? 'default' : 'muted'}>{canManage ? '可维护' : '只读'}</OpsBadge>
-          </div>
-        }
-      >
-        <OpsBadge tone="info"><ShieldAlert className="h-3.5 w-3.5" /> 后端同步复核设备管理权限</OpsBadge>
-        <OpsBadge tone="default"><CalendarDays className="h-3.5 w-3.5" /> 时段以紧凑色块展示</OpsBadge>
+      <OpsPageHeader title="设备台账" className="ops-page-header--compact">
+        {canManage ? <Button size="sm" onClick={() => { resetForm(); setFormOpen(true); }}>新增设备</Button> : null}
       </OpsPageHeader>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -438,99 +425,69 @@ export function AdminDevicesPage() {
         </OpsPermissionHint>
       ) : null}
 
-      <div className={canManage ? "grid gap-4 2xl:grid-cols-[minmax(0,1fr)_420px]" : "grid gap-4"}>
+      <div className="grid gap-4">
         <div className="grid gap-4">
           <Card className="ops-card">
             <CardContent className="p-4">
               <OpsDataToolbar
-                title="设备矩阵"
-                description="按状态、编号、位置快速定位设备；维护按钮只对具备设备管理权限的账号显示。"
-                meta={<>显示 {filteredList.length} / {list.length} 台</>}
+                title="设备队列"
+                description="按状态或关键词快速定位设备。"
+                meta={<>显示 {filteredList.length} / {list.length} 台 · 第 {page}/{totalPages} 页</>}
                 filters={
                   <>
                     <div className="relative">
                       <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                       <Input className="w-64 pl-9" value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索编号、名称、位置" clearable />
                     </div>
-                    {[
-                      { key: '', label: '全部' },
-                      { key: 'available', label: '可预约' },
-                      { key: 'in_use', label: '使用中' },
-                      { key: 'abnormal', label: '异常/停用' }
-                    ].map((item) => (
-                      <Button key={item.key || 'all'} size="sm" variant={statusFilter === item.key ? 'default' : 'outline'} onClick={() => setStatusFilter(item.key)}>{item.label}</Button>
-                    ))}
+                    <div className="ops-segment-group flex flex-wrap gap-1">
+                      {[
+                        { key: '', label: '全部' },
+                        { key: 'available', label: '可预约' },
+                        { key: 'in_use', label: '使用中' },
+                        { key: 'abnormal', label: '异常/停用' }
+                      ].map((item) => (
+                        <Button key={item.key || 'all'} size="sm" variant={statusFilter === item.key ? 'default' : 'outline'} onClick={() => setStatusFilter(item.key)}>{item.label}</Button>
+                      ))}
+                    </div>
                   </>
                 }
               />
 
               <div className="grid gap-3 xl:grid-cols-2 2xl:grid-cols-3">
-                {filteredList.map((device) => (
+                {visibleList.map((device) => (
                   <article
                     key={device.id}
                     className={[
-                      'rounded-3xl border bg-card/80 p-4 transition-all',
-                      detailId === device.id ? 'border-primary ring-2 ring-primary/15' : 'border-input hover:border-primary/40'
+                      'rounded-2xl border p-3 transition hover:-translate-y-0.5 hover:shadow-md',
+                      detailId === device.id ? 'border-primary bg-primary/5' : 'border-input bg-card/80 hover:border-primary/40'
                     ].join(' ')}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-xs font-black text-primary">{device.device_code}</span>
-                          <span className={`badge-pill badge-${STATUS_TONE[device.status] ?? 'muted'}`}>{STATUS_LABEL[device.status] ?? device.status}</span>
-                          <span className={`badge-pill ${device.allow_reservation === false ? 'badge-warn' : 'badge-success'}`}>
-                            {device.allow_reservation === false ? '暂停预约' : '可预约'}
-                          </span>
-                          <span className="badge-pill badge-info">{RETURN_MODE_LABEL[String(device.return_mode || 'image_required')] ?? '图片必传'}</span>
-                        </div>
-                        <h3 className="mt-2 truncate text-lg font-black">{device.name}</h3>
-                        <p className="mt-1 text-xs text-muted-foreground">{device.category || '未分类'} · {device.location || '未知位置'} · {device.manager || '未指定负责人'}</p>
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                          <OpsBadge tone={lifecycleTone(device.status) as any}>{lifecycleStage(device.status)}</OpsBadge>
-                          <OpsRiskBadge level={deviceRiskLevel(device)}>{deviceRiskText(device)}</OpsRiskBadge>
-                        </div>
+                        <p className="truncate text-base font-bold text-foreground">{device.name}</p>
+                        <p className="mt-1 font-mono text-xs font-semibold text-primary">{device.device_code}</p>
                       </div>
-                      {device.cover_photo ? (
-                        <img src={device.cover_photo} alt={device.name} className="h-16 w-20 rounded-2xl object-cover" />
-                      ) : (
-                        <div className="flex h-16 w-20 items-center justify-center rounded-2xl bg-muted/50 text-muted-foreground">
-                          <Boxes className="h-5 w-5" />
-                        </div>
-                      )}
-                    </div>
-                    <div className="mt-4 grid gap-3 rounded-2xl bg-muted/30 p-3 text-xs text-muted-foreground">
-                      <div>
-                        <span className="mb-1 block font-bold text-foreground/70">预约时段</span>
-                        <div className="flex flex-wrap gap-1.5">
-                          {(device.reservation_slot_options ?? []).length ? (
-                            (device.reservation_slot_options ?? []).slice(0, 4).map((slot) => (
-                              <OpsTimeBlock key={slot.key} compact label={slotDisplayName(slot.key, slot.label)} title={slotLabel(slot)} />
-                            ))
-                          ) : (device.reservation_slot_keys ?? []).length ? (
-                            (device.reservation_slot_keys ?? []).slice(0, 4).map((key) => <OpsTimeBlock key={key} compact label={slotDisplayName(key)} title={key} />)
-                          ) : (
-                            <span className="text-muted-foreground">系统默认</span>
-                          )}
-                          {((device.reservation_slot_options?.length ?? device.reservation_slot_keys?.length ?? 0) > 4) ? <span className="rounded-full bg-background px-2 py-1 font-bold text-primary">+{(device.reservation_slot_options?.length ?? device.reservation_slot_keys?.length ?? 0) - 4}</span> : null}
-                        </div>
-                      </div>
-                      <p>归还规则：{RETURN_MODE_LABEL[String(device.return_mode || 'image_required')] ?? '图片必传'}{device.return_require_note ? ' / 说明必填' : ''}</p>
-                      <p>当前使用：{device.current_borrow ? `${valueText(device.current_borrow.user_name)} / ${valueText(device.current_borrow.user_phone)}` : '无'}</p>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span>下个预约：</span>
-                        {device.next_reservation ? (
-                          <OpsTimeBlock
-                            compact
-                            label={tinyTimeRange(String(device.next_reservation.start_time || ''), String(device.next_reservation.end_time || ''))}
-                            subLabel={valueText(device.next_reservation.user_name)}
-                            title={valueText(device.next_reservation.user_name) + ' / ' + compactTimeRange(String(device.next_reservation.start_time || ''), String(device.next_reservation.end_time || ''))}
-                          />
-                        ) : '无'}
+                      <div className="flex flex-wrap justify-end gap-1.5">
+                        <span className={`badge-pill badge-${STATUS_TONE[device.status] ?? 'muted'}`}>{STATUS_LABEL[device.status] ?? device.status}</span>
+                        {device.allow_reservation === false ? <span className="badge-pill badge-warn">暂停预约</span> : null}
                       </div>
                     </div>
-                    <div className="mt-4 flex flex-wrap gap-2">
+                    <p className="mt-2 truncate text-xs text-muted-foreground">{device.category || '未分类'} · {device.location || '未知位置'}</p>
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                      <div className="rounded-xl bg-muted/40 px-3 py-2"><p className="text-muted-foreground">负责人</p><p className="mt-1 truncate font-semibold text-foreground">{device.manager || '未指定'}</p></div>
+                      <div className="rounded-xl bg-muted/40 px-3 py-2"><p className="text-muted-foreground">时段</p><p className="mt-1 truncate font-semibold text-foreground">{slotTotal(device) || '默认'}</p></div>
+                      <div className="rounded-xl bg-muted/40 px-3 py-2"><p className="text-muted-foreground">归还</p><p className="mt-1 truncate font-semibold text-foreground">{RETURN_MODE_LABEL[String(device.return_mode || 'image_required')] ?? '图片必传'}</p></div>
+                    </div>
+                    <div className="mt-3 grid gap-1.5 rounded-xl border bg-muted/20 px-3 py-2 text-xs sm:grid-cols-2">
+                      <p className="truncate text-muted-foreground">当前：<strong className="text-foreground">{device.current_borrow ? valueText(device.current_borrow.user_name) : '无人使用'}</strong></p>
+                      <p className="truncate text-muted-foreground" title={device.next_reservation ? fullDateTimeRange(String(device.next_reservation.start_time || ''), String(device.next_reservation.end_time || '')) : ''}>下次：<strong className="text-foreground">{device.next_reservation ? `${tinyTimeRange(String(device.next_reservation.start_time || ''), String(device.next_reservation.end_time || ''))} · ${valueText(device.next_reservation.user_name)}` : '暂无预约'}</strong></p>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
                       {canManage ? <Button size="sm" variant="outline" onClick={() => editDevice(device)}><Edit3 className="h-4 w-4" /> 编辑</Button> : null}
-                      <Button size="sm" variant="outline" onClick={() => setDetailId(detailId === device.id ? '' : device.id)}>
+                      <Button size="sm" variant="outline" onClick={() => {
+                        if (detailId === device.id) setDetailId('');
+                        else { setDetailId(device.id); setDetailTab('overview'); }
+                      }}>
                         <Activity className="h-4 w-4" /> {detailId === device.id ? '收起详情' : '查看详情'}
                       </Button>
                       {canManage && device.status === 'available' ? (
@@ -545,22 +502,27 @@ export function AdminDevicesPage() {
                   </article>
                 ))}
               </div>
+              {filteredList.length > DEVICE_PAGE_SIZE ? (
+                <div className="mt-4 flex items-center justify-end gap-2 border-t pt-4">
+                  <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>上一页</Button>
+                  <span className="text-xs text-muted-foreground">{page} / {totalPages}</span>
+                  <Button size="sm" variant="outline" disabled={page >= totalPages} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}>下一页</Button>
+                </div>
+              ) : null}
               {isLoading ? <p className="py-6 text-center text-muted-foreground">加载中…</p> : null}
               {error ? <p className="py-6 text-center text-destructive">加载失败：{toFriendlyError(error)}</p> : null}
               {!isLoading && !error && filteredList.length === 0 ? <OpsEmptyState title="暂无匹配设备" description="可清空筛选条件，或检查设备编号、分类、位置是否录入准确。" /> : null}
             </CardContent>
           </Card>
 
-          {detailId ? (
-            <Card className="ops-card">
-              <CardContent className="grid gap-4 p-5">
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div>
-                    <p className="text-xs font-black uppercase tracking-wider text-primary">设备详情 / 历史</p>
-                    <h2 className="mt-1 text-xl font-black">{detail.data?.device ? `${detail.data.device.device_code} ${detail.data.device.name}` : '正在加载设备历史…'}</h2>
-                  </div>
-                  <Button variant="outline" size="sm" onClick={() => setDetailId('')}>关闭</Button>
-                </div>
+          <OpsDetailDrawer
+            open={Boolean(detailId) && !formOpen}
+            title={detail.data?.device ? `${detail.data.device.device_code} ${detail.data.device.name}` : '设备详情'}
+            subtitle="状态、预约、使用与故障记录"
+            onClose={() => setDetailId('')}
+            className="max-w-4xl"
+          >
+              <div className="grid gap-4">
                 {detail.isLoading ? <p className="py-4 text-center text-muted-foreground">加载中…</p> : null}
                 {detail.error ? <p className="py-4 text-center text-destructive">加载失败：{toFriendlyError(detail.error)}</p> : null}
                 {detail.data ? (
@@ -572,86 +534,49 @@ export function AdminDevicesPage() {
                       <OpsMetricCard label="故障记录" value={detail.data.fault_reports?.length ?? 0} hint="异常和维护追溯" tone={(detail.data.fault_reports?.length ?? 0) ? 'warning' : 'success'} />
                     </div>
 
-                    <section className="rounded-3xl border bg-muted/20 p-4">
-                      <OpsSectionHeader
-                        eyebrow="Lifecycle"
-                        title="设备生命周期"
-                        description="用于快速判断设备从入库、预约、使用、归还检查到维护归档的当前位置。"
-                        action={<OpsRiskBadge level={deviceRiskLevel(detail.data.device)} />}
-                      />
-                      <div className="mt-4 grid gap-2 md:grid-cols-4">
-                        {lifecycleSteps(detail.data.device.status).map((step, index, arr) => {
-                          const activeStage = lifecycleStage(detail.data.device.status);
-                          const activeIndex = arr.findIndex((item) => item === activeStage);
-                          const current = step === activeStage;
-                          const done = activeIndex < 0 ? index === 0 : index < activeIndex;
-                          return (
-                            <div key={String(step) + '-' + index} className={['rounded-2xl border p-3 text-sm', current ? 'border-primary bg-primary/10 text-primary' : done ? 'bg-muted/40 text-foreground' : 'bg-background text-muted-foreground'].join(' ')}>
-                              <p className="text-xs font-black">{index + 1}</p>
-                              <p className="mt-1 font-black">{step}</p>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </section>
-
-                    <div className="grid gap-3 md:grid-cols-3">
-                      <div className="ops-stat-card p-4"><p className="text-xs text-muted-foreground">位置</p><strong>{detail.data.device.location ?? '—'}</strong></div>
-                      <div className="ops-stat-card p-4"><p className="text-xs text-muted-foreground">负责人</p><strong>{detail.data.device.manager ?? '—'}</strong></div>
-                      <div className="ops-stat-card p-4"><p className="text-xs text-muted-foreground">状态</p><strong>{STATUS_LABEL[detail.data.device.status] ?? detail.data.device.status}</strong></div>
-                      <div className="ops-stat-card p-4 md:col-span-3"><p className="text-xs text-muted-foreground">归还规则</p><strong>{RETURN_MODE_LABEL[String(detail.data.device.return_mode || 'image_required')] ?? '图片必传'}{detail.data.device.return_require_note ? ' · 说明必填' : ''}</strong></div>
+                    <div className="ops-segment-group flex flex-wrap gap-1">
+                      {([
+                        ['overview', '概况'], ['records', '预约/使用'], ['archive', '归还档案'], ['faults', '故障']
+                      ] as const).map(([key, label]) => (
+                        <Button key={key} size="sm" variant={detailTab === key ? 'default' : 'outline'} onClick={() => setDetailTab(key)}>{label}</Button>
+                      ))}
                     </div>
 
-                    <section className="grid gap-2">
-                      <OpsSectionHeader title="预约记录" description="展示近期预约，避免进入详情页后再次跳转。" />
-                      <DetailRows rows={detail.data.reservations} columns={[{ key: 'user_name', label: '用户' }, { key: 'start_time', label: '开始', time: true }, { key: 'end_time', label: '结束', time: true }, { key: 'status', label: '状态' }]} />
-                    </section>
-                    <section className="grid gap-2">
-                      <OpsSectionHeader title="使用历史" description="用于确认设备借出、归还和图片档案闭环。" />
-                      <DetailRows rows={detail.data.borrows} columns={[{ key: 'user_name', label: '用户' }, { key: 'borrow_time', label: '借用', time: true }, { key: 'return_time', label: '归还', time: true }, { key: 'status', label: '状态' }]} />
-                    </section>
-                    <section className="grid gap-2">
-                      <OpsSectionHeader
-                        title="归还图片档案"
-                        description="按设备、归还时间、使用人和联系方式自动生成文件夹；图片入口只对归还查看、图片复核或导出权限开放。"
-                        action={<Archive className="h-4 w-4 text-primary" />}
-                      />
-                      {canViewReturnArchive && detail.data.can_view_return_archive !== false ? (
-                        <BorrowArchiveRows rows={detail.data.borrows} />
-                      ) : (
-                        <OpsPermissionHint title="归还档案受保护">
-                          当前账号未被授予归还查看、图片复核或归还导出权限；页面已隐藏图片与归档文件夹，后端接口也会同步脱敏。
-                        </OpsPermissionHint>
-                      )}
-                    </section>
-                    <section className="grid gap-2">
-                      <OpsSectionHeader title="故障历史" description="异常待处理和维护记录会影响用户端预约入口。" />
-                      <DetailRows rows={detail.data.fault_reports} columns={[{ key: 'user_name', label: '报告人' }, { key: 'issue_type', label: '类型' }, { key: 'status', label: '状态' }, { key: 'created_at', label: '时间', time: true }]} />
-                    </section>
+                    {detailTab === 'overview' ? (
+                      <div className="grid gap-3 md:grid-cols-4">
+                        <div className="ops-stat-card p-3"><p className="text-xs text-muted-foreground">位置</p><strong>{detail.data.device.location ?? '—'}</strong></div>
+                        <div className="ops-stat-card p-3"><p className="text-xs text-muted-foreground">负责人</p><strong>{detail.data.device.manager ?? '—'}</strong></div>
+                        <div className="ops-stat-card p-3"><p className="text-xs text-muted-foreground">当前阶段</p><strong>{lifecycleStage(detail.data.device.status)}</strong></div>
+                        <div className="ops-stat-card p-3"><p className="text-xs text-muted-foreground">归还规则</p><strong>{RETURN_MODE_LABEL[String(detail.data.device.return_mode || 'image_required')] ?? '图片必传'}{detail.data.device.return_require_note ? ' · 说明必填' : ''}</strong></div>
+                      </div>
+                    ) : null}
+                    {detailTab === 'records' ? (
+                      <div className="grid gap-4 xl:grid-cols-2">
+                        <section className="grid gap-2"><OpsSectionHeader title="预约记录" /><DetailRows rows={detail.data.reservations} columns={[{ key: 'user_name', label: '用户' }, { key: 'start_time', label: '开始', time: true }, { key: 'end_time', label: '结束', time: true }, { key: 'status', label: '状态' }]} /></section>
+                        <section className="grid gap-2"><OpsSectionHeader title="使用历史" /><DetailRows rows={detail.data.borrows} columns={[{ key: 'user_name', label: '用户' }, { key: 'borrow_time', label: '借用', time: true }, { key: 'return_time', label: '归还', time: true }, { key: 'status', label: '状态' }]} /></section>
+                      </div>
+                    ) : null}
+                    {detailTab === 'archive' ? (
+                      <section className="grid gap-2">
+                        <OpsSectionHeader title="归还图片档案" action={<Archive className="h-4 w-4 text-primary" />} />
+                        {canViewReturnArchive && detail.data.can_view_return_archive !== false ? <BorrowArchiveRows rows={detail.data.borrows} /> : <OpsPermissionHint title="归还档案受保护">当前账号没有归还档案查看权限。</OpsPermissionHint>}
+                      </section>
+                    ) : null}
+                    {detailTab === 'faults' ? (
+                      <section className="grid gap-2"><OpsSectionHeader title="故障历史" /><DetailRows rows={detail.data.fault_reports} columns={[{ key: 'user_name', label: '报告人' }, { key: 'issue_type', label: '类型' }, { key: 'status', label: '状态' }, { key: 'created_at', label: '时间', time: true }]} /></section>
+                    ) : null}
                   </>
                 ) : null}
-              </CardContent>
-            </Card>
-          ) : null}
+              </div>
+          </OpsDetailDrawer>
         </div>
 
-        {canManage ? (
-        <aside className="2xl:sticky 2xl:top-4 2xl:self-start">
-          <Card className="ops-card">
-            <CardContent className="p-5">
-              <div className="mb-4 flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-black uppercase tracking-wider text-primary">设备维护面板</p>
-                  <h2 className="mt-1 text-xl font-black">{editingId ? '编辑设备' : '新增设备'}</h2>
-                  <p className="mt-1 text-xs text-muted-foreground">不选择预约时段时，后端会使用系统默认时段。</p>
-                </div>
-                {editingId ? <Button type="button" size="sm" variant="outline" onClick={resetForm}>取消</Button> : null}
-              </div>
-
-              {!canManage ? (
-                <OpsPermissionHint className="mb-4" title="表单已锁定">当前账号缺少设备维护权限，不能新增、编辑或变更设备预约时段。</OpsPermissionHint>
-              ) : null}
-
+        <OpsDetailDrawer
+          open={canManage && formOpen}
+          title={editingId ? '编辑设备' : '新增设备'}
+          subtitle="设备信息、归还规则与预约时段"
+          onClose={() => { setFormOpen(false); resetForm(); }}
+        >
               <form className="grid gap-4" onSubmit={handleSubmit}>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="grid gap-1 text-sm">设备编号<Input disabled={!canManage} value={form.device_code} onChange={(e) => patchForm({ device_code: e.target.value })} placeholder="如 R200" /></label>
@@ -686,24 +611,28 @@ export function AdminDevicesPage() {
                   </label>
                 </div>
 
-                <label className="grid gap-1 text-sm">
-                  说明
-                  <textarea disabled={!canManage} className="min-h-20 rounded-md border border-input bg-card px-3 py-2 text-sm disabled:opacity-60" value={form.description} onChange={(e) => patchForm({ description: e.target.value })} />
-                </label>
-                <label className="grid gap-1 text-sm">
-                  使用须知
-                  <textarea disabled={!canManage} className="min-h-20 rounded-md border border-input bg-card px-3 py-2 text-sm disabled:opacity-60" value={form.usage_notice} onChange={(e) => patchForm({ usage_notice: e.target.value })} />
-                </label>
-
-                <label className="grid gap-1 text-sm">
-                  封面
-                  <Input disabled={!canManage} value={form.cover_photo} onChange={(e) => patchForm({ cover_photo: e.target.value })} placeholder="图片地址" />
-                  <span className="inline-flex cursor-pointer items-center gap-2 rounded-2xl border border-dashed px-3 py-3 text-xs text-muted-foreground">
-                    <ImagePlus className="h-4 w-4" /> 上传封面
-                    <input disabled={!canManage} className="sr-only" type="file" accept="image/*" onChange={(e) => handleUpload(e.target.files?.[0])} />
-                  </span>
-                  {form.cover_photo ? <img src={form.cover_photo} alt="设备封面预览" className="h-32 w-full rounded-2xl object-cover" /> : null}
-                </label>
+                <details className="equipment-optional-section rounded-xl border">
+                  <summary className="cursor-pointer px-3 py-2.5 text-sm font-semibold">说明、须知与封面 <span>选填</span></summary>
+                  <div className="grid gap-3 border-t p-3">
+                    <label className="grid gap-1 text-sm">
+                      设备说明
+                      <textarea disabled={!canManage} className="min-h-20 rounded-md border border-input bg-card px-3 py-2 text-sm disabled:opacity-60" value={form.description} onChange={(e) => patchForm({ description: e.target.value })} />
+                    </label>
+                    <label className="grid gap-1 text-sm">
+                      使用须知
+                      <textarea disabled={!canManage} className="min-h-20 rounded-md border border-input bg-card px-3 py-2 text-sm disabled:opacity-60" value={form.usage_notice} onChange={(e) => patchForm({ usage_notice: e.target.value })} />
+                    </label>
+                    <label className="grid gap-1 text-sm">
+                      设备封面
+                      <Input disabled={!canManage} value={form.cover_photo} onChange={(e) => patchForm({ cover_photo: e.target.value })} placeholder="图片地址" />
+                      <span className="ops-upload-zone text-xs">
+                        <ImagePlus className="h-4 w-4" /> 上传封面
+                        <input disabled={!canManage} className="sr-only" type="file" accept="image/*" onChange={(e) => handleUpload(e.target.files?.[0])} />
+                      </span>
+                      {form.cover_photo ? <img src={form.cover_photo} alt="设备封面预览" className="h-28 w-full rounded-xl object-cover" /> : null}
+                    </label>
+                  </div>
+                </details>
 
                 <div className="grid gap-2">
                   <div className="flex items-center justify-between gap-2">
@@ -738,14 +667,8 @@ export function AdminDevicesPage() {
                   <Button type="button" variant="outline" disabled={!canManage} onClick={resetForm}>重置</Button>
                 </div>
               </form>
-            </CardContent>
-          </Card>
-        </aside>
-        ) : null}
+        </OpsDetailDrawer>
       </div>
     </div>
   );
 }
-
-
-

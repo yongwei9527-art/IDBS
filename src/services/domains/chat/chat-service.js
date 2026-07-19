@@ -10,6 +10,8 @@ const {
 const MANAGEMENT_GROUP_KEY = 'lab_management';
 const MANAGEMENT_GROUP_TITLE = '实验管理总群';
 const MANAGEMENT_GROUP_RETENTION_DAYS = 7;
+const TEMP_GROUP_TTL_DAYS = 2;
+const TEMP_GROUP_WARN_HOURS = 6;
 const PENDING_ACCOUNT_TTL_DAYS = 3;
 const CHAT_MESSAGE_TYPES = new Set(['text', 'image', 'file', 'system', 'device_card', 'reservation_card', 'fault_card', 'user_request_card']);
 const CHAT_CARD_LABELS = {
@@ -325,6 +327,170 @@ function createChatService(context = {}) {
     return queryOne('select * from chat_conversations where system_key = $1 limit 1', [MANAGEMENT_GROUP_KEY]);
   }
 
+
+  function formatExpireLabel(iso) {
+    if (!iso) return '';
+    try {
+      return new Date(iso).toLocaleString('zh-CN', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+    } catch (_) {
+      return String(iso);
+    }
+  }
+
+  function remainingMs(expiresAt) {
+    if (!expiresAt) return null;
+    return new Date(expiresAt).getTime() - Date.now();
+  }
+
+  function remainingLabel(expiresAt) {
+    const ms = remainingMs(expiresAt);
+    if (ms == null) return '';
+    if (ms <= 0) return '即将解散';
+    const totalMinutes = Math.ceil(ms / 60000);
+    const days = Math.floor(totalMinutes / (60 * 24));
+    const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+    const minutes = totalMinutes % 60;
+    if (days > 0) return `剩余 ${days} 天 ${hours} 小时`;
+    if (hours > 0) return `剩余 ${hours} 小时 ${minutes} 分`;
+    return `剩余 ${minutes} 分钟`;
+  }
+
+  async function insertSystemChatMessage(conversationId, content, runQuery = query) {
+    if (!conversationId || !content) return null;
+    const id = uuid();
+    const at = nowIso();
+    await runQuery(`
+      insert into chat_messages (
+        id, conversation_id, sender_id, message_type, content, attachments, metadata, delivery_status, created_at
+      ) values ($1,$2,null,'system',$3,'[]'::jsonb,'{}'::jsonb,'sent',$4)
+    `, [id, conversationId, String(content).slice(0, 1500), at]);
+    await runQuery('update chat_conversations set last_message_at = $1, updated_at = $1, last_message_preview = $2, last_message_type = $3 where id = $4', [
+      at,
+      String(content).slice(0, 200),
+      'system',
+      conversationId
+    ]);
+    return { id, conversation_id: conversationId, content, created_at: at, message_type: 'system' };
+  }
+
+  async function ensureTemporaryGroupExpiry(runQuery = query) {
+    // Backfill expires_at for legacy temporary groups.
+    await runQuery(`
+      update chat_conversations
+      set expires_at = created_at + ($1::int * interval '1 day'),
+          retention_days = coalesce(retention_days, $1::int)
+      where coalesce(is_system, false) = false
+        and (system_key is null or system_key <> $2)
+        and expires_at is null
+    `, [TEMP_GROUP_TTL_DAYS, MANAGEMENT_GROUP_KEY]);
+    await runQuery(`
+      update chat_conversations
+      set expires_at = null,
+          dissolve_notified_at = null
+      where system_key = $1
+         or (coalesce(is_system, false) = true and title = $2)
+    `, [MANAGEMENT_GROUP_KEY, MANAGEMENT_GROUP_TITLE]);
+  }
+
+  async function warnExpiringTemporaryGroups(runQuery = query) {
+    const rows = await rowsFrom(runQuery, `
+      select c.id, c.title, c.type, c.expires_at
+      from chat_conversations c
+      where c.expires_at is not null
+        and c.expires_at > now()
+        and c.expires_at <= now() + ($1::int * interval '1 hour')
+        and c.dissolve_notified_at is null
+        and coalesce(c.is_system, false) = false
+        and (c.system_key is null or c.system_key <> $2)
+    `, [TEMP_GROUP_WARN_HOURS, MANAGEMENT_GROUP_KEY]);
+
+    let warned = 0;
+    for (const group of rows || []) {
+      const label = formatExpireLabel(group.expires_at);
+      const isGroup = group.type === 'group';
+      const title = group.title || (isGroup ? '临时群聊' : '私聊会话');
+      const content = isGroup
+        ? `「${title}」将于 ${label} 自动解散，聊天记录将一并清除。请尽快完成沟通。`
+        : `「${title}」将于 ${label} 自动结束，聊天记录将一并清除。请尽快完成沟通。`;
+      await insertSystemChatMessage(group.id, content, runQuery);
+      const members = await rowsFrom(runQuery, 'select user_id from chat_participants where conversation_id = $1', [group.id]);
+      for (const member of members || []) {
+        await createUserNotification({
+          user_id: member.user_id,
+          type: 'chat',
+          title: isGroup ? '临时群即将解散' : '临时私聊即将结束',
+          content,
+          related_type: 'chat_conversation',
+          related_id: group.id
+        });
+      }
+      await runQuery('update chat_conversations set dissolve_notified_at = $1, updated_at = $1 where id = $2', [nowIso(), group.id]);
+      await publishChatEvent((members || []).map((m) => m.user_id), 'conversation_changed', {
+        conversation_id: group.id,
+        reason: 'expiring_soon'
+      });
+      warned += 1;
+    }
+    return warned;
+  }
+
+  async function dissolveTemporaryGroup(group, runQuery = query) {
+    if (!group?.id) return false;
+    if (isManagementGroup(group)) return false;
+    const members = await rowsFrom(runQuery, 'select user_id from chat_participants where conversation_id = $1', [group.id]);
+    const isGroup = group.type === 'group';
+    const title = group.title || (isGroup ? '临时群聊' : '私聊会话');
+    const content = isGroup
+      ? `「${title}」已满 ${TEMP_GROUP_TTL_DAYS} 天，系统已自动解散并清除聊天记录。`
+      : `「${title}」已满 ${TEMP_GROUP_TTL_DAYS} 天，系统已自动结束会话并清除聊天记录。`;
+    // Notifications first (conversation will be deleted).
+    for (const member of members || []) {
+      await createUserNotification({
+        user_id: member.user_id,
+        type: 'chat',
+        title: isGroup ? '临时群已自动解散' : '临时私聊已自动结束',
+        content,
+        related_type: 'chat_conversation',
+        related_id: group.id
+      });
+    }
+    // Cascade deletes messages + participants.
+    await runQuery('delete from chat_conversations where id = $1', [group.id]);
+    await publishChatEvent((members || []).map((m) => m.user_id), 'conversation_deleted', {
+      conversation_id: group.id,
+      reason: 'auto_dissolved'
+    });
+    return true;
+  }
+
+  async function cleanupExpiredTemporaryGroups(runQuery = query) {
+    await ensureTemporaryGroupExpiry(runQuery);
+    await warnExpiringTemporaryGroups(runQuery);
+    const rows = await rowsFrom(runQuery, `
+      select *
+      from chat_conversations
+      where expires_at is not null
+        and expires_at <= now()
+        and coalesce(is_system, false) = false
+        and (system_key is null or system_key <> $1)
+    `, [MANAGEMENT_GROUP_KEY]);
+    let dissolved = 0;
+    for (const group of rows || []) {
+      try {
+        if (await dissolveTemporaryGroup(group, runQuery)) dissolved += 1;
+      } catch (error) {
+        // continue other groups
+      }
+    }
+    return dissolved;
+  }
+
   async function ensureManagementGroup(runQuery = query) {
     await assertChatReady();
     await cleanupExpiredPendingUsers(runQuery);
@@ -356,6 +522,7 @@ function createChatService(context = {}) {
       `, [group.id, user.id, ['super_admin', 'admin'].includes(user.role) ? 'admin' : 'member', nowIso()]);
     }
     await cleanupManagementGroupMessages(group.id, Number(group.retention_days || MANAGEMENT_GROUP_RETENTION_DAYS), runQuery);
+    await cleanupExpiredTemporaryGroups(runQuery);
     return group;
   }
 
@@ -479,6 +646,10 @@ function createChatService(context = {}) {
       const members = participantsMap.get(conversation.id) || [];
       const peer = conversation.type === 'direct' ? members.find((member) => member.id !== actorId) : null;
       const latest = latestMap.get(conversation.id);
+      const expiresAt = conversation.expires_at || null;
+      const isTempChat = !isManagementGroup(conversation)
+        && !conversation.is_system
+        && (conversation.type === 'group' || conversation.type === 'direct');
       return {
         ...conversation,
         title: conversation.title || (peer ? peer.name : '群聊'),
@@ -488,7 +659,12 @@ function createChatService(context = {}) {
           created_at: latest.created_at,
           sender_name: latest.sender_name || ''
         } : null,
-        unread_count: unreadMap.get(conversation.id) || 0
+        unread_count: unreadMap.get(conversation.id) || 0,
+        expires_at: expiresAt,
+        is_temporary_group: isTempChat,
+        is_temporary_chat: isTempChat,
+        remaining_label: isTempChat ? remainingLabel(expiresAt) : '',
+        auto_dissolve_days: isTempChat ? TEMP_GROUP_TTL_DAYS : null
       };
     });
   }
@@ -503,9 +679,10 @@ function createChatService(context = {}) {
       from chat_conversations c
       join chat_participants p on p.conversation_id = c.id
       where p.user_id = $1
-      order by coalesce(c.last_message_at, c.updated_at, c.created_at) desc
-      limit $2
-    `, [actor.id, limit]);
+      order by case when c.system_key = $2 then 0 else 1 end,
+        coalesce(c.last_message_at, c.updated_at, c.created_at) desc
+      limit $3
+    `, [actor.id, MANAGEMENT_GROUP_KEY, limit]);
     const allowed = [];
     for (const conversation of rows || []) {
       if (await conversationMatchesChatPolicy(conversation)) allowed.push(conversation);
@@ -539,8 +716,19 @@ function createChatService(context = {}) {
       if (fullGroupError) return fullGroupError;
     }
     if (type === 'direct') {
-      const existing = await directConversationBetween(actor.id, participantIds.find((id) => id !== actor.id));
+      let existing = await directConversationBetween(actor.id, participantIds.find((id) => id !== actor.id));
       if (existing) {
+        if (!existing.expires_at && !isManagementGroup(existing)) {
+          await query(
+            `update chat_conversations
+             set expires_at = coalesce(expires_at, created_at + ($2::int * interval '1 day')),
+                 retention_days = coalesce(retention_days, $2::int)
+             where id = $1 and expires_at is null`,
+            [existing.id, TEMP_GROUP_TTL_DAYS]
+          );
+          const refreshed = await query('select * from chat_conversations where id = $1', [existing.id]);
+          existing = refreshed[0] || existing;
+        }
         const hydrated = await hydrateChatConversations([existing], actor.id);
         return ok({ conversation: hydrated[0], existed: true });
       }
@@ -550,10 +738,12 @@ function createChatService(context = {}) {
     const title = type === 'group'
       ? String(payload.title || '').trim().slice(0, 120) || `${actor.name} 发起的群聊`
       : '';
+    const expiresAt = new Date(Date.parse(now) + TEMP_GROUP_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
     await withTransaction(async (client) => {
-      await client.query('insert into chat_conversations (id, type, title, created_by, created_at, updated_at, last_message_at) values ($1,$2,$3,$4,$5,$6,$7)', [
-        conversationId, type, title || null, actor.id, now, now, null
-      ]);
+      await client.query(
+        'insert into chat_conversations (id, type, title, created_by, created_at, updated_at, last_message_at, retention_days, expires_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+        [conversationId, type, title || null, actor.id, now, now, null, TEMP_GROUP_TTL_DAYS, expiresAt]
+      );
       for (const userId of participantIds) {
         await client.query('insert into chat_participants (conversation_id, user_id, role, joined_at) values ($1,$2,$3,$4) on conflict do nothing', [
           conversationId, userId, userId === actor.id ? 'owner' : 'member', now
@@ -561,6 +751,24 @@ function createChatService(context = {}) {
       }
     });
     await log('create_chat_conversation', `Created ${type} chat`, actor, null, conversationId);
+    if (expiresAt) {
+      const expireLabel = formatExpireLabel(expiresAt);
+      const sessionLabel = type === 'group' ? (title || '临时群聊') : '私聊会话';
+      const systemText = type === 'group'
+        ? `本群为临时协作群，将于 ${expireLabel} 自动解散并清除聊天记录（约 ${TEMP_GROUP_TTL_DAYS} 天后）。实验管理总群除外。`
+        : `本会话为临时私聊，将于 ${expireLabel} 自动结束并清除聊天记录（约 ${TEMP_GROUP_TTL_DAYS} 天后）。`;
+      await insertSystemChatMessage(conversationId, systemText);
+      for (const userId of participantIds) {
+        await createUserNotification({
+          user_id: userId,
+          type: 'chat',
+          title: type === 'group' ? '临时群已创建' : '临时私聊已创建',
+          content: `「${sessionLabel}」将于 ${expireLabel} 自动结束并清除聊天记录。`,
+          related_type: 'chat_conversation',
+          related_id: conversationId
+        });
+      }
+    }
     const rows = await query('select * from chat_conversations where id = $1', [conversationId]);
     const conversation = (await hydrateChatConversations(rows, actor.id))[0];
     await publishChatEvent(participantIds, 'conversation_changed', {
@@ -890,6 +1098,7 @@ function createChatService(context = {}) {
     addUserToManagementGroup,
     bootstrapSystem,
     canSubscribeChatChannel,
+    cleanupExpiredTemporaryGroups,
     createChatConversation,
     dissolveChatConversation,
     leaveChatConversation,

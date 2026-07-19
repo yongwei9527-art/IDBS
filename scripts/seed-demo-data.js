@@ -58,6 +58,24 @@ async function getColumns(client, tableName) {
   return columns;
 }
 
+
+async function clearDemoBusinessData(client) {
+  // 仅清理演示 UUID 前缀数据，避免本地重灌时时段排他约束冲突
+  const demo = "d0000000-0000-4000-8000-%";
+  await client.query("delete from receive_records where previous_record_id::text like $1 or id::text like $1", [demo]);
+  await client.query("delete from usage_log where id::text like $1 or record_id::text like $1", [demo]);
+  await client.query("delete from device_fault_reports where id::text like $1 or borrow_record_id::text like $1", [demo]);
+  await client.query("delete from borrow_records where id::text like $1 or reservation_id::text like $1 or reservation_item_id::text like $1", [demo]);
+  await client.query("delete from reservation_items where id::text like $1 or reservation_id::text like $1 or batch_id::text like $1", [demo]);
+  await client.query("delete from reservations where id::text like $1 or batch_id::text like $1", [demo]);
+  await client.query("delete from reservation_batches where id::text like $1", [demo]);
+  await client.query("delete from user_requests where id::text like $1", [demo]);
+  await client.query("delete from user_notifications where id::text like $1", [demo]);
+  await client.query("delete from user_activity_logs where id::text like $1", [demo]);
+  await client.query("delete from operation_logs where id::text like $1", [demo]);
+  await client.query("delete from intelligence_action_logs where id::text like $1", [demo]).catch(() => {});
+}
+
 async function ensureDemoSchema(_client) {
   // 兼容非 owner 的本地库：不强制 ALTER，写入时根据现有列动态降级。
 }
@@ -532,27 +550,29 @@ async function seedChatDemo(client, users) {
     delete from chat_conversations
     where id <> all($1::uuid[])
       and (
-        title in ('实验管理总群','实验室总群','演示超级管理员 发起的群聊')
+        title in ('实验管理总群','实验室总群','设备协作群')
         or id in ($2,$3)
       )
   `, [[managementGroupId, demoGroupId, directId], demoGroupId, directId]);
 
   await client.query(`
-    insert into chat_conversations (id, type, title, created_by, created_at, updated_at, last_message_at)
+    insert into chat_conversations (id, type, title, created_by, created_at, updated_at, last_message_at, expires_at)
     values
-      ($1,'group','演示超级管理员 发起的群聊',$3,$4,now(),$5),
-      ($2,'direct',null,$3,$4,now(),$6)
+      ($1,'group','设备协作群',$3,$4,now(),$5,null),
+      ($2,'direct',null,$3,$4,now(),$6,$7)
     on conflict (id) do update set
       title = excluded.title,
       updated_at = now(),
-      last_message_at = excluded.last_message_at
+      last_message_at = excluded.last_message_at,
+      expires_at = excluded.expires_at
   `, [
     demoGroupId,
     directId,
     users.admin,
     atDay(-1, 10).toISOString(),
     addHours(new Date(), -4).toISOString(),
-    addHours(new Date(), -3).toISOString()
+    addHours(new Date(), -3).toISOString(),
+    addHours(new Date(), 48).toISOString()
   ]);
 
   const participants = [
@@ -577,7 +597,7 @@ async function seedChatDemo(client, users) {
   const messages = [
     [uuid(1101), managementGroupId, users.admin, '欢迎加入实验管理总群。这里用于发布实验室管理通知，聊天记录仅保留 7 天。', atDay(-1, 9).toISOString()],
     [uuid(1102), managementGroupId, users.admin, '@全体成员 明天上午显微镜维护，请提前调整预约安排。', addHours(new Date(), -1).toISOString()],
-    [uuid(1103), demoGroupId, users.admin, '你好，这个群用于演示成员添加、成员操作和群聊消息。', addHours(new Date(), -5).toISOString()],
+    [uuid(1103), demoGroupId, users.admin, '本群用于协调设备排期、样品准备和现场交接。', addHours(new Date(), -5).toISOString()],
     [uuid(1104), demoGroupId, users.zhang, '收到，我会按预约时间使用设备。', addHours(new Date(), -4).toISOString()],
     [uuid(1105), directId, users.admin, '张三，你的预约申请已经收到，稍后会统一审核。', addHours(new Date(), -3).toISOString()]
   ];
@@ -594,6 +614,33 @@ async function seedChatDemo(client, users) {
   }
 }
 
+const DEVICE_RESERVATION_PURPOSE = {
+  'DEMO-MIC-001': '细胞荧光成像与多通道采集',
+  'DEMO-OSC-001': '传感器输出波形校准',
+  'DEMO-CAM-001': '高速运动过程记录',
+  'DEMO-INC-001': '细胞培养温控稳定性观察',
+  'DEMO-3DP-001': '实验夹具快速成型',
+  'DEMO-LAS-001': '亚克力试件切割与尺寸验证',
+  'DEMO-CEN-001': '样品低温离心分离',
+  'DEMO-PCR-001': '核酸扩增与定量检测',
+  'DEMO-SPC-001': '样品吸光度与标准曲线测定',
+  'DEMO-VAC-001': '粉末样品真空干燥',
+  'DEMO-ROBOT-001': '机械臂抓取轨迹标定',
+  'DEMO-SEM-001': '材料微纳形貌观察',
+  'DEMO-XRD-001': '晶体结构与物相分析',
+  'DEMO-RHEO-001': '浆料流变性能测试',
+  'DEMO-FTIR-001': '材料官能团分析',
+  'DEMO-HPLC-001': '复杂样品分离检测',
+  'DEMO-BAL-001': '标准样品精密称量',
+  'DEMO-FURN-001': '陶瓷样品高温烧结',
+  'DEMO-STER-001': '实验器具高压灭菌'
+};
+
+function reservationPurpose(deviceCode, suffix = '') {
+  const purpose = DEVICE_RESERVATION_PURPOSE[deviceCode] || '实验样品测试';
+  return suffix ? `${purpose} · ${suffix}` : purpose;
+}
+
 async function seedIntelligentOpsDemo(client, users, deviceIds) {
   const patterns = [
     ['DEMO-MIC-001', users.zhang, -28, 'morning', 8, 12, 'completed', 'normal'],
@@ -602,11 +649,11 @@ async function seedIntelligentOpsDemo(client, users, deviceIds) {
     ['DEMO-OSC-001', users.li, -19, 'afternoon', 12, 17, 'completed', 'normal'],
     ['DEMO-OSC-001', users.zhang, -16, 'evening', 17, 22, 'completed', 'normal'],
     ['DEMO-CAM-001', users.li, -14, 'afternoon', 12, 17, 'completed', 'normal'],
-    ['DEMO-LAS-001', users.zhang, -12, 'evening', 17, 22, 'completed', 'minor_scratch'],
+    ['DEMO-LAS-001', users.zhang, -12, 'evening', 17, 22, 'completed', 'appearance_damage'],
     ['DEMO-MIC-001', users.li, -10, 'afternoon', 12, 17, 'completed', 'normal'],
     ['DEMO-OSC-001', users.zhang, -8, 'afternoon', 12, 17, 'completed', 'normal'],
     ['DEMO-LAS-001', users.li, -6, 'evening', 17, 22, 'completed', 'normal'],
-    ['DEMO-INC-001', users.zhang, -5, 'morning', 8, 12, 'completed', 'temperature_unstable'],
+    ['DEMO-INC-001', users.zhang, -5, 'morning', 8, 12, 'completed', 'operation_abnormal'],
     ['DEMO-OSC-001', users.li, -4, 'afternoon', 12, 17, 'completed', 'normal']
   ];
 
@@ -619,7 +666,7 @@ async function seedIntelligentOpsDemo(client, users, deviceIds) {
     const start = atDay(days, startHour);
     const end = atDay(days, endHour);
     const returnTime = addHours(end, condition === 'normal' ? -0.2 : 0.4);
-    const purpose = `智能运营演示：${slotKey} 时段使用 ${deviceCode}`;
+    const purpose = reservationPurpose(deviceCode);
     await upsertBatch(client, {
       id: batchId,
       user_id: userId,
@@ -628,7 +675,7 @@ async function seedIntelligentOpsDemo(client, users, deviceIds) {
       purpose,
       status,
       created_at: addHours(start, -24).toISOString(),
-      admin_note: '智能运营演示历史批次'
+      admin_note: '已核对设备状态与使用时段。'
     });
     const reservation = {
       id: reservationId,
@@ -657,7 +704,7 @@ async function seedIntelligentOpsDemo(client, users, deviceIds) {
       return_time: returnTime.toISOString(),
       duration_minutes: Math.max(1, Math.round((returnTime.getTime() - start.getTime()) / 60_000)),
       return_condition: condition,
-      return_note: condition === 'normal' ? '智能运营演示：正常归还。' : `智能运营演示：${condition}，已纳入风险判断。`,
+      return_note: condition === 'normal' ? '设备与配件检查正常。' : ({ appearance_damage: '表面有轻微划痕，已转管理员复核。', operation_abnormal: '运行状态异常，已转管理员复核。', temperature_unstable: '温度波动偏大，已转管理员复核。', minor_scratch: '表面有轻微划痕，已转管理员复核。' }[condition] || '异常归还，已转管理员复核。'),
       status: condition === 'normal' ? 'returned' : 'abnormal_pending',
       is_overdue: returnTime > end,
       return_photos: condition === 'normal' ? [] : ['/uploads/demo/return-abnormal.jpg'],
@@ -702,10 +749,10 @@ async function seedIntelligentOpsDemo(client, users, deviceIds) {
       user_id: userId,
       device_codes: deviceCode,
       time_slots: slotKey,
-      purpose: `智能运营演示：未来待审批 ${deviceCode}`,
+      purpose: reservationPurpose(deviceCode, '复测'),
       status: 'pending',
       created_at: atDay(-1, 18 + index).toISOString(),
-      submit_note: '用于展示智能运营待处理工作量。'
+      submit_note: '样品和操作人员已确认，请按计划安排。'
     });
     const reservation = {
       id: reservationId,
@@ -715,7 +762,7 @@ async function seedIntelligentOpsDemo(client, users, deviceIds) {
       user_id: userId,
       start_time: atDay(days, startHour).toISOString(),
       end_time: atDay(days, endHour).toISOString(),
-      purpose: `智能运营演示：未来待审批 ${deviceCode}`,
+      purpose: reservationPurpose(deviceCode, '复测'),
       status: 'pending',
       slot_key: slotKey,
       created_at: atDay(-1, 18 + index).toISOString()
@@ -740,7 +787,7 @@ async function seedIntelligentOpsDemo(client, users, deviceIds) {
     { id: uuid(1701), device_id: deviceIds['DEMO-LAS-001'], user_id: users.li, issue_type: '切割精度偏移', severity: 'high', description: '连续两次任务出现偏移，建议校准光路。', status: 'pending', created_at: atDay(-6, 21).toISOString() },
     { id: uuid(1702), device_id: deviceIds['DEMO-LAS-001'], user_id: users.zhang, issue_type: '排烟异常', severity: 'normal', description: '排烟风量偏低，使用后有明显残留气味。', status: 'processing', admin_note: '已安排检查排风管路。', created_at: atDay(-3, 18).toISOString() },
     { id: uuid(1703), device_id: deviceIds['DEMO-OSC-001'], user_id: users.zhang, issue_type: '探头接触不良', severity: 'normal', description: '1 号通道探头偶发接触不良。', status: 'resolved', admin_note: '已更换探头。', created_at: atDay(-11, 14).toISOString(), resolved_at: atDay(-10, 10).toISOString() },
-    { id: uuid(1704), device_id: deviceIds['DEMO-INC-001'], user_id: users.li, issue_type: '温控报警复现', severity: 'high', description: '智能运营演示：恒温培养箱温控报警复现。', status: 'pending', created_at: atDay(-1, 16).toISOString() }
+    { id: uuid(1704), device_id: deviceIds['DEMO-INC-001'], user_id: users.li, issue_type: '温控报警复现', severity: 'high', description: '恒温培养箱连续两次出现温控报警，需暂停使用并复检。', status: 'pending', created_at: atDay(-1, 16).toISOString() }
   ];
   for (const fault of riskFaults) await upsertFault(client, fault);
 }
@@ -805,7 +852,7 @@ async function seedDenseCalendarDemo(client, users, deviceIds) {
     const batchId = uuid(2100 + index);
     const reservationId = uuid(2200 + index);
     const itemId = uuid(2300 + index);
-    const purpose = `演示：日历色块压力测试 ${deviceCode} ${slotKey}（第 ${index + 1} 条）`;
+    const purpose = reservationPurpose(deviceCode, `第 ${(index % 4) + 1} 组样品`);
     const createdAt = atDay(-1, 8 + (index % 8), (index % 4) * 10).toISOString();
     await upsertBatch(client, {
       id: batchId,
@@ -815,8 +862,8 @@ async function seedDenseCalendarDemo(client, users, deviceIds) {
       purpose,
       status,
       created_at: createdAt,
-      submit_note: '演示数据：用于检查密集日历、设备色块、预约浮层和权限边界。',
-      admin_note: status === 'pending' ? null : '演示数据：已通过，用于日历展示。'
+      submit_note: '本周实验排期，样品和操作人员已确认。',
+      admin_note: status === 'pending' ? null : '设备与时段均可用，审批通过。'
     });
     const reservation = {
       id: reservationId,
@@ -829,7 +876,7 @@ async function seedDenseCalendarDemo(client, users, deviceIds) {
       purpose,
       status,
       slot_key: slotKey,
-      admin_note: status === 'pending' ? null : '演示数据：已通过，用于日历展示。',
+      admin_note: status === 'pending' ? null : '设备与时段均可用，审批通过。',
       approved_at: status === 'pending' ? null : atDay(-1, 17).toISOString(),
       created_at: createdAt
     };
@@ -854,7 +901,7 @@ async function seedRequestsNotificationsDemo(client, users, deviceIds) {
     { id: uuid(3102), user_id: users.li, type: 'user_request', title: '诉求已确认：跨夜设备联系人', content: '你的跨夜设备联系人展示诉求已确认，将进入版本优化。', related_type: 'user_request', related_id: uuid(3002), device_id: deviceIds['DEMO-VAC-001'], is_read: true, read_at: atDay(-1, 10).toISOString(), created_at: atDay(-1, 9, 5).toISOString() },
     { id: uuid(3103), user_id: users.zhang, type: 'fault', title: 'HPLC 异常需要补充信息', content: '请补充流动相、流速和柱温信息，便于管理员判断是否恢复开放。', related_type: 'user_request', related_id: uuid(3003), device_id: deviceIds['DEMO-HPLC-001'], created_at: atDay(-1, 18, 30).toISOString() },
     { id: uuid(3104), user_id: users.li, type: 'reservation', title: '马弗炉跨夜安全提醒', content: '跨夜使用高温设备请确认紧急联系人，并按要求完成归还确认。', device_id: deviceIds['DEMO-FURN-001'], created_at: atDay(0, 8).toISOString() },
-    { id: uuid(3105), user_id: users.zhang, type: 'system', title: '智能管理 4.0 演示数据已更新', content: '已加入更多设备、权限边界、诉求、故障和通知样本，便于发现页面问题。', created_at: addHours(new Date(), -1).toISOString() }
+    { id: uuid(3105), user_id: users.zhang, type: 'system', title: '实验室设备服务规则已更新', content: '预约取消、归还材料和续约规则已更新，请在操作前查看页面提示。', created_at: addHours(new Date(), -1).toISOString() }
   ];
   for (const notification of notifications) await upsertNotificationDemo(client, notification);
 
@@ -862,15 +909,15 @@ async function seedRequestsNotificationsDemo(client, users, deviceIds) {
     { id: uuid(3201), device_id: deviceIds['DEMO-HPLC-001'], user_id: users.zhang, issue_type: '泵压波动', severity: 'high', description: '压力曲线出现周期性波动，等待用户补充现场照片与方法参数。', status: 'pending', created_at: atDay(-1, 17).toISOString() },
     { id: uuid(3202), device_id: deviceIds['DEMO-XRD-001'], user_id: users.li, issue_type: '样品台校准', severity: 'normal', description: '样品台零点偏移，工程师已接单处理中。', status: 'processing', admin_note: '已暂停预约并安排校准。', created_at: atDay(-2, 14).toISOString() },
     { id: uuid(3203), device_id: deviceIds['DEMO-FTIR-001'], user_id: users.zhang, issue_type: '背景噪声偏高', severity: 'normal', description: '更换干燥剂后背景噪声恢复正常。', status: 'resolved', admin_note: '已处理并恢复开放。', created_at: atDay(-8, 13).toISOString(), resolved_at: atDay(-7, 10).toISOString() },
-    { id: uuid(3204), device_id: deviceIds['DEMO-STER-001'], user_id: users.li, issue_type: '压力阀老化', severity: 'high', description: '设备停用归档，保留用于演示 closed 故障生命周期。', status: 'closed', admin_note: '设备停用，建议迁移至替代灭菌设备。', created_at: atDay(-12, 9).toISOString(), resolved_at: atDay(-10, 16).toISOString() }
+    { id: uuid(3204), device_id: deviceIds['DEMO-STER-001'], user_id: users.li, issue_type: '压力阀老化', severity: 'high', description: '压力阀老化且维修成本较高，设备已停用归档。', status: 'closed', admin_note: '设备停用，建议迁移至替代灭菌设备。', created_at: atDay(-12, 9).toISOString(), resolved_at: atDay(-10, 16).toISOString() }
   ];
   for (const fault of lifecycleFaults) await upsertFault(client, fault);
 
   const operationLogs = [
-    { id: uuid(3301), operator_id: users.admin, operator_name: '演示超级管理员', action: 'review_user_request', target_type: 'user_request', target_id: uuid(3002), detail: { status: 'confirmed', module: 'requests', permission: 'user.manage' }, created_at: atDay(-1, 9).toISOString() },
-    { id: uuid(3302), operator_id: users.adminFault, operator_name: '演示故障管理员', action: 'resolve_device_fault', target_type: 'fault_report', target_id: uuid(3202), detail: { status: 'processing', device_code: 'DEMO-XRD-001', permission: 'fault.manage' }, created_at: atDay(-2, 15).toISOString() },
-    { id: uuid(3303), operator_id: users.adminAuditor, operator_name: '演示数据审计员', action: 'export_faults', target_type: 'export', target_id: uuid(3303), detail: { type: 'faults', permissions: ['stats.export', 'device.view'] }, created_at: atDay(-1, 12).toISOString() },
-    { id: uuid(3304), operator_id: users.admin, operator_name: '演示超级管理员', action: 'update_security_config', target_type: 'system', target_id: users.admin, detail: { scope: 'super_admin_only', module: 'system' }, created_at: atDay(-3, 17).toISOString() }
+    { id: uuid(3301), operator_id: users.admin, operator_name: '系统管理员', action: 'review_user_request', target_type: 'user_request', target_id: uuid(3002), detail: { status: 'confirmed', module: 'requests', permission: 'user.manage' }, created_at: atDay(-1, 9).toISOString() },
+    { id: uuid(3302), operator_id: users.adminFault, operator_name: '设备维护管理员', action: 'resolve_device_fault', target_type: 'fault_report', target_id: uuid(3202), detail: { status: 'processing', device_code: 'DEMO-XRD-001', permission: 'fault.manage' }, created_at: atDay(-2, 15).toISOString() },
+    { id: uuid(3303), operator_id: users.adminAuditor, operator_name: '数据审计管理员', action: 'export_faults', target_type: 'export', target_id: uuid(3303), detail: { type: 'faults', permissions: ['stats.export', 'device.view'] }, created_at: atDay(-1, 12).toISOString() },
+    { id: uuid(3304), operator_id: users.admin, operator_name: '系统管理员', action: 'update_security_config', target_type: 'system', target_id: users.admin, detail: { scope: 'super_admin_only', module: 'system' }, created_at: atDay(-3, 17).toISOString() }
   ];
   for (const item of operationLogs) await insertOperationLog(client, item);
 }
@@ -895,34 +942,35 @@ async function main() {
   try {
     await client.query('begin');
     await ensureDemoSchema(client);
+    await clearDemoBusinessData(client);
 
     const users = {
-      admin: await upsertUser(client, { id: uuid(1), name: '演示超级管理员', phone: '13900000000', student_no: 'ADMIN001', group_name: '设备中心', email: 'admin.demo@example.com', password: '123456', role: 'super_admin', status: 'active', created_at: atDay(-60, 9).toISOString() }),
+      admin: await upsertUser(client, { id: uuid(1), name: '系统管理员', phone: '13900000000', student_no: 'ADMIN001', group_name: '设备中心', email: 'admin.demo@example.com', password: '123456', role: 'super_admin', status: 'active', created_at: atDay(-60, 9).toISOString() }),
       zhang: await upsertUser(client, { id: uuid(2), name: '张三', phone: '13800000001', student_no: 'S2026001', group_name: '材料学院', email: 'zhangsan.demo@example.com', password: '123456', role: 'user', status: 'active', created_at: atDay(-35, 10).toISOString() }),
       li: await upsertUser(client, { id: uuid(3), name: '李四', phone: '13800000002', student_no: 'S2026002', group_name: '电子学院', email: 'lisi.demo@example.com', password: '123456', role: 'user', status: 'active', created_at: atDay(-18, 11).toISOString() }),
       wang: await upsertUser(client, { id: uuid(4), name: '王五（待审核）', phone: '13800000003', student_no: 'S2026003', group_name: '生命学院', email: 'wangwu.demo@example.com', password: '123456', role: 'user', status: 'pending', created_at: atDay(-1, 15).toISOString(), last_login_at: null }),
       zhao: await upsertUser(client, { id: uuid(5), name: '赵六（账号封禁）', phone: '13800000004', student_no: 'S2026004', group_name: '化学学院', email: 'zhaoliu.demo@example.com', password: '123456', role: 'user', status: 'active', is_banned: true, created_at: atDay(-12, 9).toISOString() }),
       qian: await upsertUser(client, { id: uuid(6), name: '钱七（审核驳回）', phone: '13800000005', student_no: 'S2026005', group_name: '机械学院', email: 'qianqi.demo@example.com', password: '123456', role: 'user', status: 'rejected', created_at: atDay(-6, 12).toISOString() }),
-      adminReadonly: await upsertUser(client, { id: uuid(10), name: '演示普通管理员（无预约审批）', phone: '13900000010', student_no: 'ADMIN010', group_name: '设备中心', email: 'admin.readonly.demo@example.com', password: '123456', role: 'admin', status: 'active', created_at: atDay(-50, 9).toISOString() }),
-      adminReservation: await upsertUser(client, { id: uuid(11), name: '演示预约管理员', phone: '13900000011', student_no: 'ADMIN011', group_name: '设备中心', email: 'admin.reservation.demo@example.com', password: '123456', role: 'admin', status: 'active', created_at: atDay(-45, 9).toISOString() }),
-      adminFault: await upsertUser(client, { id: uuid(12), name: '演示故障管理员', phone: '13900000012', student_no: 'ADMIN012', group_name: '设备中心', email: 'admin.fault.demo@example.com', password: '123456', role: 'admin', status: 'active', created_at: atDay(-40, 9).toISOString() }),
-      adminAuditor: await upsertUser(client, { id: uuid(13), name: '演示数据审计员', phone: '13900000013', student_no: 'ADMIN013', group_name: '设备中心', email: 'admin.auditor.demo@example.com', password: '123456', role: 'admin', status: 'active', created_at: atDay(-38, 9).toISOString() })
+      adminReadonly: await upsertUser(client, { id: uuid(10), name: '设备值班管理员', phone: '13900000010', student_no: 'ADMIN010', group_name: '设备中心', email: 'admin.readonly.demo@example.com', password: '123456', role: 'admin', status: 'active', created_at: atDay(-50, 9).toISOString() }),
+      adminReservation: await upsertUser(client, { id: uuid(11), name: '预约审批管理员', phone: '13900000011', student_no: 'ADMIN011', group_name: '设备中心', email: 'admin.reservation.demo@example.com', password: '123456', role: 'admin', status: 'active', created_at: atDay(-45, 9).toISOString() }),
+      adminFault: await upsertUser(client, { id: uuid(12), name: '设备维护管理员', phone: '13900000012', student_no: 'ADMIN012', group_name: '设备中心', email: 'admin.fault.demo@example.com', password: '123456', role: 'admin', status: 'active', created_at: atDay(-40, 9).toISOString() }),
+      adminAuditor: await upsertUser(client, { id: uuid(13), name: '数据审计管理员', phone: '13900000013', student_no: 'ADMIN013', group_name: '设备中心', email: 'admin.auditor.demo@example.com', password: '123456', role: 'admin', status: 'active', created_at: atDay(-38, 9).toISOString() })
     };
 
-    await upsertAdminRole(client, { id: uuid(90), user_id: users.admin, role_key: 'super_admin', permissions: ['*'], note: '演示超级管理员，拥有全部权限' });
+    await upsertAdminRole(client, { id: uuid(90), user_id: users.admin, role_key: 'super_admin', permissions: ['*'], note: '系统管理员，拥有全部模块权限' });
     await upsertAdminRole(client, {
       id: uuid(91),
       user_id: users.adminReadonly,
       role_key: 'admin',
-      permissions: ['user.manage', 'user.approve', 'device.view', 'device.manage', 'reservation.view', 'fault.manage', 'stats.view'],
-      note: '普通管理员：可查看预约，但默认不能改变用户预约计划'
+      permissions: ['device.view', 'device.manage', 'fault.manage', 'reservation.view', 'stats.view'],
+      note: '设备值班管理员：设备台账、故障维护与运营查看，不含用户管理'
     });
     await upsertAdminRole(client, {
       id: uuid(92),
       user_id: users.adminReservation,
       role_key: 'admin',
-      permissions: ['user.manage', 'device.view', 'reservation.view', 'reservation.approve', 'stats.view'],
-      note: '已授予 reservation.approve，可审批/驳回用户预约'
+      permissions: ['device.view', 'reservation.view', 'reservation.approve', 'stats.view'],
+      note: '预约审批管理员：可审批/驳回用户预约，不含用户管理'
     });
     await upsertAdminRole(client, {
       id: uuid(93),
@@ -946,23 +994,23 @@ async function main() {
       { id: uuid(103), device_code: 'DEMO-CAM-001', name: '高速摄像机', category: '影像采集', location: 'C 楼 108', manager: '孙老师', status: 'in_use', allow_reservation: true, description: '用于高速运动拍摄和过程分析。', usage_notice: '请提前准备存储卡并确认补光。' },
       { id: uuid(104), device_code: 'DEMO-INC-001', name: '恒温培养箱', category: '生命科学', location: 'D 楼 412', manager: '周老师', status: 'abnormal_pending', allow_reservation: false, description: '用于样品恒温培养和稳定性观察。', usage_notice: '当前温度波动异常，待处理期间暂停预约。' },
       { id: uuid(105), device_code: 'DEMO-3DP-001', name: '3D 打印机', category: '加工制造', location: '创新工坊', manager: '吴老师', status: 'maintenance', allow_reservation: false, description: '用于 PLA/ABS 快速原型打印。', usage_notice: '喷头维护中，恢复后开放预约。' },
-      { id: uuid(106), device_code: 'DEMO-OLD-001', name: '停用旧设备', category: '历史设备', location: '仓库', manager: '管理员', status: 'disabled', allow_reservation: false, description: '演示停用状态。', usage_notice: '该设备不再开放预约。' },
-      { id: uuid(107), device_code: 'DEMO-LAS-001', name: '激光切割机', category: '加工制造', location: '创新工坊', manager: '郑老师', status: 'in_use', allow_reservation: true, description: '用于亚克力、木板与薄板材料切割，是智能运营风险预警演示设备。', usage_notice: '使用前确认排烟系统，严禁无人值守。' },
-      { id: uuid(108), device_code: 'DEMO-CEN-001', name: '低温离心机', category: '生命科学', location: 'D 楼 208', manager: '陈老师', status: 'available', allow_reservation: true, description: '用于样品低温离心分离，是智能运营低利用率优化演示设备。', usage_notice: '请提前配平样品并确认转子型号。' },
-      { id: uuid(109), device_code: 'DEMO-PCR-001', name: '实时荧光 PCR 仪', category: '生命科学', location: 'D 楼 216', manager: '林老师', status: 'available', allow_reservation: true, reservation_slot_keys: ['morning', 'afternoon', 'evening'], description: '用于核酸定量检测，演示多时段高频预约。', usage_notice: '请提前准备耗材并完成模板登记。' },
-      { id: uuid(110), device_code: 'DEMO-SPC-001', name: '紫外可见分光光度计', category: '分析检测', location: 'A 楼 220', manager: '何老师', status: 'available', allow_reservation: true, reservation_slot_keys: ['morning', 'afternoon', 'daytime'], description: '用于样品吸收光谱测试，演示同日多设备排期。', usage_notice: '请使用洁净比色皿，结束后导出数据。' },
-      { id: uuid(111), device_code: 'DEMO-VAC-001', name: '真空干燥箱', category: '材料制备', location: 'C 楼 307', manager: '高老师', status: 'available', allow_reservation: true, reservation_slot_keys: ['daytime', 'night'], description: '用于长时间干燥任务，演示跨夜预约色块。', usage_notice: '跨夜使用请确认样品标签与紧急联系人。' },
-      { id: uuid(112), device_code: 'DEMO-ROBOT-001', name: '协作机械臂', category: '自动化', location: '创新工坊', manager: '邓老师', status: 'reserved', allow_reservation: true, reservation_slot_keys: ['morning', 'afternoon', 'evening'], description: '用于运动控制和自动化实验，演示未来密集预约。', usage_notice: '使用前必须完成安全围栏检查。' }
+      { id: uuid(106), device_code: 'DEMO-OLD-001', name: '停用旧设备', category: '历史设备', location: '仓库', manager: '管理员', status: 'disabled', allow_reservation: false, description: '已完成资产归档，保留历史借还记录。', usage_notice: '该设备不再开放预约。' },
+      { id: uuid(107), device_code: 'DEMO-LAS-001', name: '激光切割机', category: '加工制造', location: '创新工坊', manager: '郑老师', status: 'in_use', allow_reservation: true, description: '用于亚克力、木板与薄板材料切割。', usage_notice: '使用前确认排烟系统，严禁无人值守。' },
+      { id: uuid(108), device_code: 'DEMO-CEN-001', name: '低温离心机', category: '生命科学', location: 'D 楼 208', manager: '陈老师', status: 'available', allow_reservation: true, description: '用于样品低温离心分离。', usage_notice: '请提前配平样品并确认转子型号。' },
+      { id: uuid(109), device_code: 'DEMO-PCR-001', name: '实时荧光 PCR 仪', category: '生命科学', location: 'D 楼 216', manager: '林老师', status: 'available', allow_reservation: true, reservation_slot_keys: ['morning', 'afternoon', 'evening'], description: '用于核酸扩增和定量检测。', usage_notice: '请提前准备耗材并完成模板登记。' },
+      { id: uuid(110), device_code: 'DEMO-SPC-001', name: '紫外可见分光光度计', category: '分析检测', location: 'A 楼 220', manager: '何老师', status: 'available', allow_reservation: true, reservation_slot_keys: ['morning', 'afternoon', 'daytime'], description: '用于样品吸收光谱与浓度测定。', usage_notice: '请使用洁净比色皿，结束后导出数据。' },
+      { id: uuid(111), device_code: 'DEMO-VAC-001', name: '真空干燥箱', category: '材料制备', location: 'C 楼 307', manager: '高老师', status: 'available', allow_reservation: true, reservation_slot_keys: ['daytime', 'night'], description: '用于粉末和器件的长时间真空干燥。', usage_notice: '跨夜使用请确认样品标签与紧急联系人。' },
+      { id: uuid(112), device_code: 'DEMO-ROBOT-001', name: '协作机械臂', category: '自动化', location: '创新工坊', manager: '邓老师', status: 'reserved', allow_reservation: true, reservation_slot_keys: ['morning', 'afternoon', 'evening'], description: '用于运动控制、抓取和自动化实验。', usage_notice: '使用前必须完成安全围栏检查。' }
     ];
     devices.push(
-      { id: uuid(113), device_code: 'DEMO-SEM-001', name: '扫描电镜', category: '表征分析', location: 'A 楼 505', manager: '郑老师', status: 'available', allow_reservation: true, reservation_slot_keys: ['morning', 'afternoon'], description: '用于微纳形貌观察，适合演示高价值设备预约审批与风险提示。', usage_notice: '预约前需完成样品导电处理，使用后确认样品仓清洁。' },
-      { id: uuid(114), device_code: 'DEMO-XRD-001', name: 'X 射线衍射仪', category: '材料表征', location: 'A 楼 508', manager: '韩老师', status: 'maintenance', allow_reservation: false, reservation_slot_keys: ['morning', 'afternoon'], description: '用于晶体结构分析，当前演示维护中状态。', usage_notice: '维护期间暂停预约，恢复后需管理员开放。' },
-      { id: uuid(115), device_code: 'DEMO-RHEO-001', name: '流变仪', category: '材料测试', location: 'B 楼 318', manager: '罗老师', status: 'available', allow_reservation: true, reservation_slot_keys: ['morning', 'afternoon', 'evening'], description: '用于浆料与高分子样品流变测试，演示连续时段预约。', usage_notice: '测试前确认转子型号，结束后清洁夹具。' },
-      { id: uuid(116), device_code: 'DEMO-FTIR-001', name: '傅里叶红外光谱仪', category: '分析检测', location: 'B 楼 322', manager: '许老师', status: 'available', allow_reservation: true, reservation_slot_keys: ['morning', 'afternoon', 'daytime'], description: '用于官能团与材料成分分析，演示普通高频设备。', usage_notice: '请保持 ATR 晶体清洁，数据自行导出备份。' },
-      { id: uuid(117), device_code: 'DEMO-HPLC-001', name: '高效液相色谱仪', category: '分析检测', location: 'C 楼 406', manager: '沈老师', status: 'abnormal_pending', allow_reservation: false, reservation_slot_keys: ['daytime'], description: '用于复杂样品分离检测，当前演示异常待确认。', usage_notice: '泵压异常排查中，暂不开放预约。' },
-      { id: uuid(118), device_code: 'DEMO-BAL-001', name: '万分之一天平', category: '基础仪器', location: 'C 楼 201', manager: '刘老师', status: 'available', allow_reservation: true, reservation_slot_keys: ['morning', 'afternoon', 'evening'], description: '用于精密称量，演示低门槛高频设备。', usage_notice: '称量后清洁台面，关闭防风罩。' },
-      { id: uuid(119), device_code: 'DEMO-FURN-001', name: '马弗炉', category: '材料制备', location: 'C 楼 510', manager: '郭老师', status: 'in_use', allow_reservation: true, reservation_slot_keys: ['daytime', 'night'], description: '用于高温烧结与灰化，演示长时间/跨夜使用。', usage_notice: '高温设备必须填写紧急联系人，禁止无人值守异常升温。' },
-      { id: uuid(120), device_code: 'DEMO-STER-001', name: '高压灭菌锅', category: '生命科学', location: 'D 楼 105', manager: '曹老师', status: 'disabled', allow_reservation: false, reservation_slot_keys: ['morning', 'afternoon'], description: '用于灭菌处理，当前演示停用设备。', usage_notice: '停用设备不可预约，仅用于权限和状态展示。' }
+      { id: uuid(113), device_code: 'DEMO-SEM-001', name: '扫描电镜', category: '表征分析', location: 'A 楼 505', manager: '郑老师', status: 'available', allow_reservation: true, reservation_slot_keys: ['morning', 'afternoon'], description: '用于材料微纳形貌观察和图像采集。', usage_notice: '预约前需完成样品导电处理，使用后确认样品仓清洁。' },
+      { id: uuid(114), device_code: 'DEMO-XRD-001', name: 'X 射线衍射仪', category: '材料表征', location: 'A 楼 508', manager: '韩老师', status: 'maintenance', allow_reservation: false, reservation_slot_keys: ['morning', 'afternoon'], description: '用于晶体结构和物相分析。', usage_notice: '维护期间暂停预约，恢复后需管理员开放。' },
+      { id: uuid(115), device_code: 'DEMO-RHEO-001', name: '流变仪', category: '材料测试', location: 'B 楼 318', manager: '罗老师', status: 'available', allow_reservation: true, reservation_slot_keys: ['morning', 'afternoon', 'evening'], description: '用于浆料与高分子样品流变测试。', usage_notice: '测试前确认转子型号，结束后清洁夹具。' },
+      { id: uuid(116), device_code: 'DEMO-FTIR-001', name: '傅里叶红外光谱仪', category: '分析检测', location: 'B 楼 322', manager: '许老师', status: 'available', allow_reservation: true, reservation_slot_keys: ['morning', 'afternoon', 'daytime'], description: '用于材料官能团和成分分析。', usage_notice: '请保持 ATR 晶体清洁，数据自行导出备份。' },
+      { id: uuid(117), device_code: 'DEMO-HPLC-001', name: '高效液相色谱仪', category: '分析检测', location: 'C 楼 406', manager: '沈老师', status: 'abnormal_pending', allow_reservation: false, reservation_slot_keys: ['daytime'], description: '用于复杂样品分离与定量检测。', usage_notice: '泵压异常排查中，暂不开放预约。' },
+      { id: uuid(118), device_code: 'DEMO-BAL-001', name: '万分之一天平', category: '基础仪器', location: 'C 楼 201', manager: '刘老师', status: 'available', allow_reservation: true, reservation_slot_keys: ['morning', 'afternoon', 'evening'], description: '用于标准品和实验样品精密称量。', usage_notice: '称量后清洁台面，关闭防风罩。' },
+      { id: uuid(119), device_code: 'DEMO-FURN-001', name: '马弗炉', category: '材料制备', location: 'C 楼 510', manager: '郭老师', status: 'in_use', allow_reservation: true, reservation_slot_keys: ['daytime', 'night'], description: '用于材料高温烧结与灰化处理。', usage_notice: '高温设备必须填写紧急联系人，禁止无人值守异常升温。' },
+      { id: uuid(120), device_code: 'DEMO-STER-001', name: '高压灭菌锅', category: '生命科学', location: 'D 楼 105', manager: '曹老师', status: 'disabled', allow_reservation: false, reservation_slot_keys: ['morning', 'afternoon'], description: '用于实验器具和培养基灭菌处理。', usage_notice: '设备停用检修，暂不可预约。' }
     );
     const demoReturnRules = [
       ['DEMO-MIC-001', 'image_required', false],
@@ -988,21 +1036,21 @@ async function main() {
     await upsertDeviceSlots(client, deviceIds);
 
     const batches = [
-      { id: uuid(201), user_id: users.zhang, device_codes: 'DEMO-MIC-001,DEMO-OSC-001', time_slots: '明天上午、后天下午', purpose: '演示：多设备多日期预约待审核', status: 'pending', created_at: atDay(-1, 16).toISOString(), submit_note: '希望连续两天完成观察和信号采集。' },
-      { id: uuid(202), user_id: users.li, device_codes: 'DEMO-OSC-001', time_slots: '后天下午', purpose: '演示：已通过预约', status: 'approved', created_at: atDay(-2, 14).toISOString(), admin_note: '演示管理员已通过。' },
-      { id: uuid(203), user_id: users.zhang, device_codes: 'DEMO-CAM-001', time_slots: '今天使用中', purpose: '演示：当前使用中', status: 'approved', created_at: atDay(-3, 9).toISOString(), admin_note: '已开始使用。' },
-      { id: uuid(204), user_id: users.li, device_codes: 'DEMO-MIC-001', time_slots: '过去一周已完成', purpose: '演示：历史完成记录', status: 'completed', created_at: atDay(-8, 10).toISOString(), admin_note: '使用完成。' },
-      { id: uuid(205), user_id: users.wang, device_codes: 'DEMO-INC-001', time_slots: '故障设备预约', purpose: '演示：故障设备被拒绝', status: 'rejected', created_at: atDay(-1, 11).toISOString(), admin_note: '设备异常待处理，暂不可预约。' },
-      { id: uuid(206), user_id: users.zhang, device_codes: 'DEMO-PCR-001,DEMO-SPC-001,DEMO-ROBOT-001', time_slots: '明天上午/下午/晚上密集预约', purpose: '演示：同一天多设备密集排期，用于检查日历色块和浮层', status: 'pending', created_at: atDay(-1, 19).toISOString(), submit_note: '希望在同一天完成前处理、检测与机械臂演示。' },
-      { id: uuid(207), user_id: users.li, device_codes: 'DEMO-VAC-001', time_slots: '后天夜间跨日预约', purpose: '演示：跨夜长时段预约', status: 'approved', created_at: atDay(-2, 18).toISOString(), admin_note: '跨夜任务已确认样品标签。' },
-      { id: uuid(208), user_id: users.li, device_codes: 'DEMO-PCR-001', time_slots: '大后天上午/下午连续预约', purpose: '演示：同设备同日不同时间段连续预约', status: 'pending', created_at: atDay(-1, 20).toISOString(), submit_note: '连续检测两批样品，便于观察时间色块。' }
+      { id: uuid(201), user_id: users.zhang, device_codes: 'DEMO-MIC-001,DEMO-OSC-001', time_slots: '明天上午、后天下午', purpose: '荧光成像与电信号联合采集', status: 'pending', created_at: atDay(-1, 16).toISOString(), submit_note: '希望连续两天完成观察和信号采集。' },
+      { id: uuid(202), user_id: users.li, device_codes: 'DEMO-OSC-001', time_slots: '后天下午', purpose: '传感器输出波形校准', status: 'approved', created_at: atDay(-2, 14).toISOString(), admin_note: '设备与时段均可用，审批通过。' },
+      { id: uuid(203), user_id: users.zhang, device_codes: 'DEMO-CAM-001', time_slots: '今天使用中', purpose: '高速运动过程记录', status: 'approved', created_at: atDay(-3, 9).toISOString(), admin_note: '已开始使用。' },
+      { id: uuid(204), user_id: users.li, device_codes: 'DEMO-MIC-001', time_slots: '过去一周已完成', purpose: '细胞荧光成像与多通道采集', status: 'completed', created_at: atDay(-8, 10).toISOString(), admin_note: '使用完成。' },
+      { id: uuid(205), user_id: users.wang, device_codes: 'DEMO-INC-001', time_slots: '故障设备预约', purpose: '细胞培养温控稳定性观察', status: 'rejected', created_at: atDay(-1, 11).toISOString(), admin_note: '设备异常待处理，暂不可预约。' },
+      { id: uuid(206), user_id: users.zhang, device_codes: 'DEMO-PCR-001,DEMO-SPC-001,DEMO-ROBOT-001', time_slots: '明天上午/下午/晚上密集预约', purpose: '核酸检测与样品自动转运', status: 'pending', created_at: atDay(-1, 19).toISOString(), submit_note: '需要在同一天完成扩增、吸光度检测与样品转运。' },
+      { id: uuid(207), user_id: users.li, device_codes: 'DEMO-VAC-001', time_slots: '后天夜间跨日预约', purpose: '粉末样品真空干燥', status: 'approved', created_at: atDay(-2, 18).toISOString(), admin_note: '跨夜任务已确认样品标签。' },
+      { id: uuid(208), user_id: users.li, device_codes: 'DEMO-PCR-001', time_slots: '大后天上午/下午连续预约', purpose: '两批核酸样品连续检测', status: 'pending', created_at: atDay(-1, 20).toISOString(), submit_note: '连续检测两批样品，试剂和模板已准备。' }
     ];
     for (const batch of batches) await upsertBatch(client, batch);
 
     const reservations = [
       { id: uuid(301), item_id: uuid(401), batch_id: uuid(201), device_id: deviceIds['DEMO-MIC-001'], user_id: users.zhang, start_time: atDay(1, 8).toISOString(), end_time: atDay(1, 12).toISOString(), purpose: batches[0].purpose, status: 'pending', slot_key: 'morning', created_at: batches[0].created_at },
       { id: uuid(302), item_id: uuid(402), batch_id: uuid(201), device_id: deviceIds['DEMO-OSC-001'], user_id: users.zhang, start_time: atDay(2, 12).toISOString(), end_time: atDay(2, 17).toISOString(), purpose: batches[0].purpose, status: 'pending', slot_key: 'afternoon', created_at: batches[0].created_at },
-      { id: uuid(303), item_id: uuid(403), batch_id: uuid(202), device_id: deviceIds['DEMO-OSC-001'], user_id: users.li, start_time: atDay(3, 12).toISOString(), end_time: atDay(3, 17).toISOString(), purpose: batches[1].purpose, status: 'approved', slot_key: 'afternoon', admin_note: '演示管理员已通过', approved_at: atDay(-1, 9).toISOString(), created_at: batches[1].created_at },
+      { id: uuid(303), item_id: uuid(403), batch_id: uuid(202), device_id: deviceIds['DEMO-OSC-001'], user_id: users.li, start_time: atDay(3, 12).toISOString(), end_time: atDay(3, 17).toISOString(), purpose: batches[1].purpose, status: 'approved', slot_key: 'afternoon', admin_note: '设备与时段均可用，审批通过', approved_at: atDay(-1, 9).toISOString(), created_at: batches[1].created_at },
       { id: uuid(304), item_id: uuid(404), batch_id: uuid(203), device_id: deviceIds['DEMO-CAM-001'], user_id: users.zhang, start_time: atDay(0, 8).toISOString(), end_time: atDay(0, 22).toISOString(), purpose: batches[2].purpose, status: 'in_use', slot_key: 'daytime', admin_note: '已开始使用', approved_at: atDay(-2, 10).toISOString(), created_at: batches[2].created_at },
       { id: uuid(305), item_id: uuid(405), batch_id: uuid(204), device_id: deviceIds['DEMO-MIC-001'], user_id: users.li, start_time: atDay(-7, 8).toISOString(), end_time: atDay(-7, 12).toISOString(), purpose: batches[3].purpose, status: 'completed', slot_key: 'morning', admin_note: '已完成归还', approved_at: atDay(-8, 13).toISOString(), created_at: batches[3].created_at },
       { id: uuid(306), item_id: uuid(406), batch_id: uuid(205), device_id: deviceIds['DEMO-INC-001'], user_id: users.wang, start_time: atDay(4, 8).toISOString(), end_time: atDay(4, 12).toISOString(), purpose: batches[4].purpose, status: 'rejected', slot_key: 'morning', admin_note: batches[4].admin_note, created_at: batches[4].created_at },
@@ -1021,7 +1069,7 @@ async function main() {
     const borrows = [
       { id: uuid(501), reservation_id: uuid(304), reservation_item_id: uuid(404), device_id: deviceIds['DEMO-CAM-001'], user_id: users.zhang, borrow_time: addHours(new Date(), -2).toISOString(), expected_return_time: addHours(new Date(), 3).toISOString(), status: 'in_use', return_photos: [], created_at: addHours(new Date(), -2).toISOString() },
       { id: uuid(502), reservation_id: uuid(305), reservation_item_id: uuid(405), device_id: deviceIds['DEMO-MIC-001'], user_id: users.li, borrow_time: atDay(-7, 8).toISOString(), expected_return_time: atDay(-7, 12).toISOString(), return_time: atDay(-7, 11, 45).toISOString(), duration_minutes: 225, return_condition: 'normal', return_note: '设备状态正常，镜头已清洁。', status: 'returned', return_photos: ['/uploads/demo/return-mic.jpg'], created_at: atDay(-7, 8).toISOString() },
-      { id: uuid(503), reservation_id: null, device_id: deviceIds['DEMO-INC-001'], user_id: users.zhang, borrow_time: atDay(-2, 13).toISOString(), expected_return_time: atDay(-2, 17).toISOString(), return_time: atDay(-2, 16, 40).toISOString(), duration_minutes: 220, return_condition: 'temperature_unstable', return_note: '归还时发现温度波动偏大，已提交故障报备。', status: 'abnormal_pending', return_photos: ['/uploads/demo/fault-incubator.jpg'], created_at: atDay(-2, 13).toISOString() }
+      { id: uuid(503), reservation_id: null, device_id: deviceIds['DEMO-INC-001'], user_id: users.zhang, borrow_time: atDay(-2, 13).toISOString(), expected_return_time: atDay(-2, 17).toISOString(), return_time: atDay(-2, 16, 40).toISOString(), duration_minutes: 220, return_condition: 'operation_abnormal', return_note: '归还时发现温度波动偏大，已提交故障报备。', status: 'abnormal_pending', return_photos: ['/uploads/demo/fault-incubator.jpg'], created_at: atDay(-2, 13).toISOString() }
     ];
     for (const borrow of borrows) await upsertBorrow(client, borrow);
 
@@ -1030,14 +1078,14 @@ async function main() {
 
     await insertUsageLog(client, { id: uuid(701), record_id: uuid(501), reservation_id: uuid(304), device_id: deviceIds['DEMO-CAM-001'], user_id: users.zhang, action: 'BORROW', device_code: 'DEMO-CAM-001', device_name: '高速摄像机', user_name: '张三', user_phone: '13800000001', user_student_no: 'S2026001', borrow_time: borrows[0].borrow_time, expected_return_time: borrows[0].expected_return_time, record_status: 'in_use', operator_name: '张三', created_at: borrows[0].borrow_time });
     await insertUsageLog(client, { id: uuid(702), record_id: uuid(502), reservation_id: uuid(305), device_id: deviceIds['DEMO-MIC-001'], user_id: users.li, action: 'RETURN', device_code: 'DEMO-MIC-001', device_name: '荧光显微镜', user_name: '李四', user_phone: '13800000002', user_student_no: 'S2026002', borrow_time: borrows[1].borrow_time, expected_return_time: borrows[1].expected_return_time, return_time: borrows[1].return_time, duration_minutes: 225, return_condition: 'normal', return_note: borrows[1].return_note, record_status: 'returned', operator_name: '李四', created_at: borrows[1].return_time });
-    await insertUsageLog(client, { id: uuid(703), record_id: uuid(503), device_id: deviceIds['DEMO-INC-001'], user_id: users.zhang, action: 'RETURN', device_code: 'DEMO-INC-001', device_name: '恒温培养箱', user_name: '张三', user_phone: '13800000001', user_student_no: 'S2026001', borrow_time: borrows[2].borrow_time, expected_return_time: borrows[2].expected_return_time, return_time: borrows[2].return_time, duration_minutes: 220, return_condition: 'temperature_unstable', return_note: borrows[2].return_note, record_status: 'abnormal_pending', operator_name: '张三', created_at: borrows[2].return_time });
+    await insertUsageLog(client, { id: uuid(703), record_id: uuid(503), device_id: deviceIds['DEMO-INC-001'], user_id: users.zhang, action: 'RETURN', device_code: 'DEMO-INC-001', device_name: '恒温培养箱', user_name: '张三', user_phone: '13800000001', user_student_no: 'S2026001', borrow_time: borrows[2].borrow_time, expected_return_time: borrows[2].expected_return_time, return_time: borrows[2].return_time, duration_minutes: 220, return_condition: 'operation_abnormal', return_note: borrows[2].return_note, record_status: 'abnormal_pending', operator_name: '张三', created_at: borrows[2].return_time });
 
     const activities = [
-      ['register', users.wang, '王五（待审核）', '13800000003', '演示：新用户提交注册，等待后台审核', atDay(-1, 15).toISOString()],
-      ['login', users.zhang, '张三', '13800000001', '演示：用户登录并查看预约记录', addHours(new Date(), -1).toISOString()],
-      ['wechat_bind', users.li, '李四', '13800000002', '演示：用户完成微信绑定', atDay(-3, 12).toISOString()],
-      ['ban', users.zhao, '赵六（账号封禁）', '13800000004', '演示：违规使用后被封禁，用于测试禁用态', atDay(-2, 17).toISOString()],
-      ['reject', users.qian, '钱七（审核驳回）', '13800000005', '演示：注册资料不完整被驳回', atDay(-5, 16).toISOString()]
+      ['register', users.wang, '王五（待审核）', '13800000003', '新用户提交注册，等待管理员核验资料', atDay(-1, 15).toISOString()],
+      ['login', users.zhang, '张三', '13800000001', '用户登录并查看预约记录', addHours(new Date(), -1).toISOString()],
+      ['wechat_bind', users.li, '李四', '13800000002', '用户完成微信绑定', atDay(-3, 12).toISOString()],
+      ['ban', users.zhao, '赵六（账号封禁）', '13800000004', '因多次违规使用设备被管理员封禁', atDay(-2, 17).toISOString()],
+      ['reject', users.qian, '钱七（审核驳回）', '13800000005', '注册资料不完整，管理员已驳回', atDay(-5, 16).toISOString()]
     ];
     for (let index = 0; index < activities.length; index += 1) {
       const [eventType, userId, name, phone, remark, createdAt] = activities[index];
@@ -1048,13 +1096,13 @@ async function main() {
       `, [uuid(801 + index), userId, eventType, name, phone, `demo-openid-${index + 1}`, remark, createdAt]);
     }
 
-    await insertOperationLog(client, { id: uuid(901), operator_id: users.admin, operator_name: '演示超级管理员', action: 'approve_reservation_batch', target_type: 'reservation_batch', target_id: uuid(202), detail: { message: '演示：通过李四的示波器预约批次' }, created_at: atDay(-1, 9).toISOString() });
-    await insertOperationLog(client, { id: uuid(902), operator_id: users.admin, operator_name: '演示超级管理员', action: 'resolve_fault_processing', target_type: 'fault_report', target_id: uuid(602), detail: { message: '演示：3D 打印机喷头堵塞转处理中' }, created_at: atDay(-1, 11).toISOString() });
-    await insertOperationLog(client, { id: uuid(903), operator_id: users.admin, operator_name: '演示超级管理员', action: 'grant_admin_role', target_type: 'user', target_id: users.admin, detail: { permissions: ['*'], role_key: 'super_admin' }, created_at: atDay(-2, 10).toISOString() });
-    await insertOperationLog(client, { id: uuid(904), operator_id: users.admin, operator_name: '演示超级管理员', action: 'grant_admin_role', target_type: 'user', target_id: users.adminReadonly, detail: { permissions: ['reservation.view'], role_key: 'admin', note: '无 reservation.approve，不能改用户预约计划' }, created_at: atDay(-2, 10, 10).toISOString() });
-    await insertOperationLog(client, { id: uuid(905), operator_id: users.admin, operator_name: '演示超级管理员', action: 'grant_admin_role', target_type: 'user', target_id: users.adminReservation, detail: { permissions: ['reservation.view', 'reservation.approve'], role_key: 'admin', note: '已授权预约审批' }, created_at: atDay(-2, 10, 20).toISOString() });
-    await insertOperationLog(client, { id: uuid(906), operator_id: users.admin, operator_name: '演示超级管理员', action: 'grant_admin_role', target_type: 'user', target_id: users.adminFault, detail: { permissions: ['device.view', 'fault.manage'], role_key: 'admin', note: '只开放故障处理，不开放预约审批' }, created_at: atDay(-2, 10, 30).toISOString() });
-    await insertOperationLog(client, { id: uuid(907), operator_id: users.admin, operator_name: '演示超级管理员', action: 'grant_admin_role', target_type: 'user', target_id: users.adminAuditor, detail: { permissions: ['audit.view', 'reservation.view', 'return.view', 'device.view'], role_key: 'auditor', note: '数据导出按业务权限匹配' }, created_at: atDay(-2, 10, 40).toISOString() });
+    await insertOperationLog(client, { id: uuid(901), operator_id: users.admin, operator_name: '系统管理员', action: 'approve_reservation_batch', target_type: 'reservation_batch', target_id: uuid(202), detail: { message: '通过李四的示波器预约批次' }, created_at: atDay(-1, 9).toISOString() });
+    await insertOperationLog(client, { id: uuid(902), operator_id: users.admin, operator_name: '系统管理员', action: 'resolve_fault_processing', target_type: 'fault_report', target_id: uuid(602), detail: { message: '3D 打印机喷头堵塞转处理中' }, created_at: atDay(-1, 11).toISOString() });
+    await insertOperationLog(client, { id: uuid(903), operator_id: users.admin, operator_name: '系统管理员', action: 'grant_admin_role', target_type: 'user', target_id: users.admin, detail: { permissions: ['*'], role_key: 'super_admin' }, created_at: atDay(-2, 10).toISOString() });
+    await insertOperationLog(client, { id: uuid(904), operator_id: users.admin, operator_name: '系统管理员', action: 'grant_admin_role', target_type: 'user', target_id: users.adminReadonly, detail: { permissions: ['reservation.view'], role_key: 'admin', note: '无 reservation.approve，不能改用户预约计划' }, created_at: atDay(-2, 10, 10).toISOString() });
+    await insertOperationLog(client, { id: uuid(905), operator_id: users.admin, operator_name: '系统管理员', action: 'grant_admin_role', target_type: 'user', target_id: users.adminReservation, detail: { permissions: ['reservation.view', 'reservation.approve'], role_key: 'admin', note: '已授权预约审批' }, created_at: atDay(-2, 10, 20).toISOString() });
+    await insertOperationLog(client, { id: uuid(906), operator_id: users.admin, operator_name: '系统管理员', action: 'grant_admin_role', target_type: 'user', target_id: users.adminFault, detail: { permissions: ['device.view', 'fault.manage'], role_key: 'admin', note: '只开放故障处理，不开放预约审批' }, created_at: atDay(-2, 10, 30).toISOString() });
+    await insertOperationLog(client, { id: uuid(907), operator_id: users.admin, operator_name: '系统管理员', action: 'grant_admin_role', target_type: 'user', target_id: users.adminAuditor, detail: { permissions: ['audit.view', 'reservation.view', 'return.view', 'device.view'], role_key: 'auditor', note: '数据导出按业务权限匹配' }, created_at: atDay(-2, 10, 40).toISOString() });
 
     await upsertIntelligenceActionLog(client, {
       id: uuid(1251),
@@ -1062,7 +1110,7 @@ async function main() {
       action_type: 'user_review',
       action_title: '完成待审核用户处理',
       status: 'done',
-      note: '演示闭环：已核验一批用户资料，保留 1 个待审核样本用于测试。',
+      note: '已核验一批用户资料，仍有 1 个账号等待补充材料。',
       handled_by: users.admin,
       handled_at: addHours(new Date(), -6).toISOString(),
       created_at: atDay(-1, 9).toISOString(),
@@ -1074,7 +1122,7 @@ async function main() {
       action_type: 'fault_backlog',
       action_title: '优先收敛未处理故障',
       status: 'delegated',
-      note: '演示闭环：已转交设备管理员现场复检，保留待办用于观察高压状态。',
+      note: '已转交设备管理员现场复检，等待维护结果。',
       assigned_to: users.adminReservation,
       handled_by: users.admin,
       handled_at: addHours(new Date(), -2).toISOString(),

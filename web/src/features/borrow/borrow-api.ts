@@ -20,6 +20,12 @@ export interface BorrowRecord {
   return_photo_required?: boolean;
   return_rule_label?: string;
   return_require_note?: boolean;
+  return_material_required?: boolean;
+  return_material_deadline?: string | null;
+  return_supplement_note?: string | null;
+  return_supplement_photos?: string[];
+  return_supplemented_at?: string | null;
+  return_material_late?: boolean;
   status: 'in_use' | 'returned' | 'return_pending' | 'abnormal_pending' | 'overdue';
   is_overdue?: boolean;
 }
@@ -30,6 +36,21 @@ export async function startBorrow(payload: { reservation_item_id?: string; devic
     body: JSON.stringify(payload)
   });
   return ('record' in data && data.record ? data.record : data) as BorrowRecord;
+}
+
+export interface BorrowExtensionPrecheck {
+  available: boolean;
+  available_until: string;
+  default_end: string;
+  reasons: Array<{ code: string; message: string }>;
+  next_conflict?: { type: string; start_time: string } | null;
+}
+
+export async function precheckBorrowExtension(recordId: string, payload: { expected_return_time?: string } = {}) {
+  return request<BorrowExtensionPrecheck>('/borrow-records/' + recordId + '/extend/precheck', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
 }
 
 export async function extendBorrow(recordId: string, payload: { expected_return_time?: string } = {}) {
@@ -49,6 +70,16 @@ export async function submitReturn(recordId: string, payload: {
 }) {
   return request<BorrowRecord | { message?: string }>(`/borrow-records/${recordId}/return`, {
     method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function supplementReturnMaterials(recordId: string, payload: {
+  return_supplement_note?: string;
+  return_supplement_photos?: string[];
+}) {
+  return request<{ message?: string; supplemented_at?: string; late?: boolean; photos?: string[] }>(`/borrow-records/${recordId}/return-supplement`, {
+    method: 'PATCH',
     body: JSON.stringify(payload)
   });
 }

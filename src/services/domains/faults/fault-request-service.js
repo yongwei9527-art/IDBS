@@ -276,7 +276,12 @@ function createFaultRequestService(context = {}) {
     }
     const where = clauses.length ? `where ${clauses.join(' and ')}` : '';
     const rows = await query(`
-      select f.*, d.device_code, d.name as device_name, d.location as device_location, u.name as user_name, u.phone as user_phone, u.student_no as user_student_no
+      select f.*, d.device_code, d.name as device_name, d.location as device_location, u.name as user_name, u.phone as user_phone, u.student_no as user_student_no,
+        (select count(*)::int from reservation_items ri where ri.device_id = f.device_id and ri.status in ('pending','approved') and ri.start_time >= now()) as future_reservation_count,
+        (select count(*)::int from reservation_items ri where ri.device_id = f.device_id and ri.status in ('pending','approved') and ri.start_time >= date_trunc('day', now())) as today_reservation_count,
+        (select json_build_object('record_id', br.id, 'user_name', bu.name, 'user_phone', bu.phone, 'expected_return_time', br.expected_return_time)
+          from borrow_records br left join users bu on bu.id = br.user_id
+          where br.device_id = f.device_id and br.status = 'in_use' order by br.borrow_time desc limit 1) as active_borrow
       from device_fault_reports f
       join devices d on d.id = f.device_id
       left join users u on u.id = f.user_id
@@ -284,6 +289,48 @@ function createFaultRequestService(context = {}) {
       order by f.created_at desc
     `, sqlParams);
     return ok({ reports: rows || [] });
+  }
+
+  async function adminNotifyAffectedFaultUsers(payload, token) {
+    const { admin } = await requireAdminRole(token, ['super_admin', 'admin'], ['fault.manage', 'device.manage']);
+    const reportId = assertText(payload.report_id || payload.reportId, 'report_id', 60);
+    const report = await getById('device_fault_reports', reportId);
+    if (!report) return fail('故障记录不存在。', 404, 3004);
+    const device = await getById('devices', report.device_id);
+    if (!device) return fail('关联设备不存在。', 404, 3004);
+
+    const result = await withTransaction(async (client) => {
+      const txQuery = (sql, params = []) => client.query(sql, params);
+      const activeRows = await client.query("select user_id from borrow_records where device_id = $1 and status = 'in_use' order by borrow_time desc limit 1", [device.id]);
+      const futureRows = await client.query("select count(*)::int as count from reservation_items where device_id = $1 and status in ('pending', 'approved') and start_time >= now()", [device.id]);
+      let currentUserNotified = false;
+      if (activeRows.rows?.[0]?.user_id) {
+        await createUserNotification({
+          user_id: activeRows.rows[0].user_id,
+          type: 'device_fault',
+          title: '当前使用设备发生故障',
+          content: '你正在使用的设备 ' + (device.device_code || device.name || '') + ' 已报故障。请停止使用并联系实验室管理员。',
+          related_type: 'fault_report',
+          related_id: report.id
+        }, txQuery);
+        currentUserNotified = true;
+      }
+      await notifyReservationUsersForDevice(device, {
+        type: 'device_fault',
+        title: '预约设备发生故障',
+        content: '你预约的 {device_code} {device_name} 发生故障，管理员正在处理。请关注后续通知或联系管理员调整设备与时段。预约时间：{time_range}',
+        related_type: 'fault_report',
+        related_id: report.id
+      }, txQuery);
+      const futureReservationCount = Number(futureRows.rows?.[0]?.count || 0);
+      await log('notify_fault_affected_users', { message: '已通知故障影响用户', current_user_notified: currentUserNotified, future_reservation_count: futureReservationCount }, admin, device.id, report.id, txQuery);
+      return { currentUserNotified, futureReservationCount };
+    });
+    return ok({
+      message: result.currentUserNotified ? '已通知当前使用人和后续预约用户。' : '已通知后续预约用户。',
+      current_user_notified: result.currentUserNotified,
+      future_reservation_count: result.futureReservationCount
+    });
   }
 
   async function adminResolveFaultReport(payload, token) {
@@ -330,6 +377,7 @@ function createFaultRequestService(context = {}) {
   return {
     adminListFaultReports,
     adminListUserRequests,
+    adminNotifyAffectedFaultUsers,
     adminResolveFaultReport,
     adminReviewUserRequest,
     cancelUserRequest,

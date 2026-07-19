@@ -53,6 +53,16 @@ function MessageBubble({ msg, isMine }: { msg: ChatMessage; isMine: boolean }) {
     metadata.request_id ? `需求 ${formatCompactId(String(metadata.request_id), 8, 4, 'REQ')}` : '',
     msg.related_id && ![metadata.device_code, metadata.reservation_id, metadata.batch_id, metadata.fault_id, metadata.request_id].includes(msg.related_id) ? formatCompactId(String(msg.related_id), 8, 4, 'REF') : ''
   ].filter(Boolean).map(String);
+  if (msg.message_type === 'system') {
+    return (
+      <div className="flex justify-center py-1">
+        <p className="max-w-[90%] rounded-full bg-muted px-3 py-1 text-center text-[11px] leading-5 text-muted-foreground">
+          {msg.content}
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className={cn('flex', isMine ? 'justify-end' : 'justify-start')}>
       <div className={cn('max-w-[75%] rounded-lg px-3 py-2 text-sm', isMine ? 'bg-primary text-primary-foreground' : 'bg-muted')}>
@@ -239,10 +249,22 @@ export function ChatDetailPage() {
           {conversation?.type === 'group' ? <Users className="h-4 w-4 text-muted-foreground" /> : <MessageSquare className="h-4 w-4 text-muted-foreground" />}
           <span className="truncate text-sm font-medium">{title}</span>
           {conversation?.type === 'group' && <span className="text-xs text-muted-foreground">{conversation.participants?.length ?? 0} 人</span>}
+          {conversation?.is_temporary_group && conversation?.remaining_label ? (
+            <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">{conversation.remaining_label}</span>
+          ) : null}
           <Button type="button" size="sm" variant="ghost" className="ml-auto lg:hidden" onClick={() => setShowInfo((v) => !v)}>
             <Info className="h-4 w-4" />
           </Button>
         </div>
+        {conversation?.is_temporary_group ? (
+          <div className="border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+            临时会话 · {conversation.remaining_label || '2 天后自动结束'}
+            {conversation.expires_at
+              ? '（' + new Date(conversation.expires_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) + '）'
+              : ''}
+            ，到期后将结束并清除聊天记录。
+          </div>
+        ) : null}
         {activeContext ? (
           <ChatContextPanel
             context={activeContext}
@@ -395,6 +417,15 @@ function ConversationInfo({ conversation, currentUser, onLeave, onDissolve, leav
         <div className="flex items-center justify-between"><span className="text-muted-foreground">类型</span><span>{conversation.type === 'group' ? '群聊' : '单聊'}</span></div>
         <div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">成员</span><span>{participants.length} 人</span></div>
         {isSystem && <p className="mt-2 text-xs text-muted-foreground">实验室管理总群由系统维护成员，无需手动管理。</p>}
+        {conversation?.is_temporary_group ? (
+          <p className="mt-2 text-xs text-amber-700">
+            临时会话 · {conversation.remaining_label || "2 天后自动结束"}
+            {conversation.expires_at
+              ? "（" + new Date(conversation.expires_at).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }) + "）"
+              : ""}
+            ，到期后系统将结束会话并清除聊天记录。
+          </p>
+        ) : null}
       </div>
       {isGroup && (
         <div className="flex flex-wrap gap-2">

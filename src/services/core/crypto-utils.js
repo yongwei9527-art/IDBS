@@ -6,8 +6,17 @@ function createCryptoUtils({ crypto, tokenSecret }) {
     return crypto.createHash('sha256').update(value).digest('hex');
   }
 
-  function hashPassword(password, salt) {
+  function hashPasswordSync(password, salt) {
     return crypto.scryptSync(String(password), String(salt), SCRYPT_KEY_LENGTH, SCRYPT_OPTIONS).toString('hex');
+  }
+
+  function hashPassword(password, salt) {
+    return new Promise((resolve, reject) => {
+      crypto.scrypt(String(password), String(salt), SCRYPT_KEY_LENGTH, SCRYPT_OPTIONS, (err, derived) => {
+        if (err) reject(err);
+        else resolve(derived.toString('hex'));
+      });
+    });
   }
 
   function legacyPasswordHash(password, salt) {
@@ -24,10 +33,11 @@ function createCryptoUtils({ crypto, tokenSecret }) {
     return !/^[a-f0-9]{128}$/i.test(String(storedHash || ''));
   }
 
-  function verifyPassword(password, salt, storedHash) {
-    const expected = needsPasswordRehash(storedHash)
-      ? legacyPasswordHash(password, salt)
-      : hashPassword(password, salt);
+  async function verifyPassword(password, salt, storedHash) {
+    if (needsPasswordRehash(storedHash)) {
+      return safeEqualText(legacyPasswordHash(password, salt), storedHash);
+    }
+    const expected = await hashPassword(password, salt);
     return safeEqualText(expected, storedHash);
   }
 
@@ -39,12 +49,19 @@ function createCryptoUtils({ crypto, tokenSecret }) {
     return crypto.createHmac('sha256', tokenSecret).update(value).digest('base64url');
   }
 
+  /**
+   * @deprecated Prefer JWT via src/lib/auth.js (issueJwt/verifyJwt).
+   * Kept only for internal service-layer compatibility bridge during migration.
+   */
   function makeToken(payload, days = 7) {
     const full = { ...payload, exp: Date.now() + days * 86400_000 };
     const body = base64url(JSON.stringify(full));
     return `${body}.${sign(body)}`;
   }
 
+  /**
+   * @deprecated Prefer verifyJwt from src/lib/auth.js.
+   */
   function verifyToken(token) {
     if (!token || !token.includes('.')) return null;
     const [body, sig] = token.split('.');
@@ -60,6 +77,7 @@ function createCryptoUtils({ crypto, tokenSecret }) {
 
   return {
     hashPassword,
+    hashPasswordSync,
     makeToken,
     needsPasswordRehash,
     sha256,

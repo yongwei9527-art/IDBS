@@ -25,75 +25,18 @@ import { toast } from 'sonner';
 import { PERMISSION_LABELS } from '@/features/auth/permissions';
 import { useAuth } from '@/features/auth/use-auth';
 import { toFriendlyError } from '@/lib/friendly-error';
-import { OpsPageHeader, OpsPermissionHint } from '@/components/ops/design-system';
+import { OpsPageHeader } from '@/components/ops/design-system';
+import {
+  ROLE_LABELS,
+  STAFF_CONTACT_PRESETS,
+  emptySecurityForm as emptyForm,
+  type SecurityForm,
+  type EditRole,
+  type SystemSectionKey
+} from './system-config-constants';
 
-const ROLE_LABELS: Record<string, string> = {
-  super_admin: '超级管理员',
-  admin: '实验室主管',
-  reservation_admin: '预约管理员',
-  equipment_admin: '设备管理员',
-  duty_admin: '值班管理员',
-  analyst: '运营分析员',
-  auditor: '审计员'
-};
 
-const STAFF_CONTACT_PRESETS: StaffContact[] = [
-  { key: 'admin', label: '管理员（系统维护）', description: '系统登录、账号权限、平台异常与维护' },
-  { key: 'reservation', label: '管理员（预约与取消）', description: '预约申请、取消调整、审核进度与排期协调' },
-  { key: 'fault', label: '设备维修员', description: '设备故障、维修处理、异常恢复与现场检查' },
-  { key: 'usage', label: '值班管理员（紧急联系）', description: '紧急情况、现场协助、无法归类的问题' }
-];
 
-type SecurityForm = {
-  captcha_expire_minutes: string;
-  captcha_hourly_limit: string;
-  openid_daily_register_limit: string;
-  enable_image_captcha: boolean;
-  require_return_photo: boolean;
-  block_ip_access_enabled: boolean;
-  public_show_reserver_name: boolean;
-  public_show_reserver_phone: boolean;
-  public_show_reserver_student_no: boolean;
-  site_domain: string;
-  system_notice_enabled: boolean;
-  system_notice_title: string;
-  system_notice_content: string;
-  admin_report_enabled: boolean;
-  admin_report_hour: string;
-  admin_report_minute: string;
-  admin_report_timezone: string;
-  wechat_token: string;
-  wechat_app_id: string;
-  wechat_app_secret: string;
-  wechat_admin_openids: string;
-};
-
-type EditRole = { user_id: string; role_key: string; note: string; permissions: string[] };
-type SystemSectionKey = 'overview' | 'security' | 'wechat' | 'reports' | 'roles';
-
-const emptyForm: SecurityForm = {
-  captcha_expire_minutes: '3',
-  captcha_hourly_limit: '3',
-  openid_daily_register_limit: '1',
-  enable_image_captcha: false,
-  require_return_photo: true,
-  block_ip_access_enabled: false,
-  public_show_reserver_name: true,
-  public_show_reserver_phone: true,
-  public_show_reserver_student_no: false,
-  site_domain: '',
-  system_notice_enabled: true,
-  system_notice_title: '',
-  system_notice_content: '',
-  admin_report_enabled: false,
-  admin_report_hour: '9',
-  admin_report_minute: '0',
-  admin_report_timezone: 'Asia/Shanghai',
-  wechat_token: '',
-  wechat_app_id: '',
-  wechat_app_secret: '',
-  wechat_admin_openids: ''
-};
 
 function asText(value: unknown, fallback = '') {
   if (value === undefined || value === null) return fallback;
@@ -244,35 +187,30 @@ export function AdminSystemPage() {
         title: '运营概览',
         desc: '今日注册、登录、微信绑定与最近活动',
         metric: `${activityCards.reduce((sum, [, value]) => sum + Number(value || 0), 0)} 条`,
-        tone: 'from-blue-500/15'
       },
       {
         key: 'security' as const,
         title: '安全策略',
         desc: '密码、验证码、公告、隐私公开和归还照片',
         metric: form.require_return_photo ? '归还拍照' : '普通归还',
-        tone: 'from-rose-500/15'
       },
       {
         key: 'wechat' as const,
         title: '微信与联系人',
         desc: '公众号密钥、管理员 OpenID、工作人员二维码',
         metric: `${contactEnabledCount}/${STAFF_CONTACT_PRESETS.length} 启用`,
-        tone: 'from-emerald-500/15'
       },
       {
         key: 'reports' as const,
         title: '日报推送',
-        desc: '智能运营日报预览、定时和立即发送',
+        desc: '运营日报预览、定时和立即发送',
         metric: form.admin_report_enabled ? `${form.admin_report_hour}:${String(form.admin_report_minute).padStart(2, '0')}` : '未启用',
-        tone: 'from-amber-500/15'
       },
       {
         key: 'roles' as const,
         title: '角色授权',
         desc: '分权管理员、审计员、运营员权限矩阵',
         metric: `${roleCount} 人`,
-        tone: 'from-violet-500/15'
       }
     ],
     [activityCards, contactEnabledCount, form.admin_report_enabled, form.admin_report_hour, form.admin_report_minute, form.require_return_photo, roleCount]
@@ -511,19 +449,8 @@ export function AdminSystemPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <OpsPageHeader
-        eyebrow="SUPER ADMIN CONTROL"
-        title="系统设置与授权中枢"
-        description="集中维护安全、微信、日报、联系人和角色；高危修改会进入审计留痕。"
-        aside={
-          <OpsPermissionHint
-            title="高危区提醒"
-            permissions="修改关键配置前请确认影响范围，保存后建议查看审计日志。"
-            className="border-white/10 bg-white/10 text-white"
-          />
-        }
-      />
+    <div className="system-config-page flex flex-col gap-6">
+      <OpsPageHeader title="系统设置与授权" className="ops-page-header--compact" />
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         {sectionCards.map((section) => (
@@ -531,16 +458,14 @@ export function AdminSystemPage() {
             key={section.key}
             type="button"
             onClick={() => setActiveSection(section.key)}
-            className={`rounded-2xl border bg-gradient-to-br ${section.tone} to-card p-4 text-left shadow-sm transition hover:-translate-y-px hover:border-primary/40 hover:shadow-md ${
-              activeSection === section.key ? 'border-primary ring-2 ring-primary/15' : ''
-            }`}
+            className={`ops-section-nav-card ${activeSection === section.key ? 'ops-section-nav-card--active' : ''}`}
           >
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-sm font-black">{section.title}</p>
+                <p className="text-sm font-semibold">{section.title}</p>
                 <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">{section.desc}</p>
               </div>
-              <span className="shrink-0 rounded-full bg-background/80 px-2 py-1 text-xs font-bold text-primary shadow-sm">{section.metric}</span>
+              <span className="ops-section-nav-metric shrink-0 px-2 py-1 text-xs font-semibold">{section.metric}</span>
             </div>
           </button>
         ))}
@@ -551,19 +476,19 @@ export function AdminSystemPage() {
         <CardContent>
           <div className="grid gap-3 sm:grid-cols-4">
             {activityCards.map(([label, value]) => (
-              <div key={label} className="rounded-md border bg-muted/30 p-3">
+              <div key={label} className="system-config-stat p-3">
                 <div className="text-xs text-muted-foreground">{label}</div>
-                <div className="mt-1 text-2xl font-bold">{value}</div>
+                <div className="system-config-stat-value mt-1 text-2xl font-bold tracking-tight">{value}</div>
               </div>
             ))}
           </div>
-          <div className="mt-4 rounded-md border bg-muted/20 p-3">
+          <div className="system-config-panel mt-4 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <div className="text-sm font-medium">{'5.0 \u8fd0\u884c\u72b6\u6001'}</div>
                 <div className="mt-1 text-xs text-muted-foreground">{'\u4ec5\u5c55\u793a\u8131\u654f\u8fd0\u884c\u6307\u6807\uff0c\u4e0d\u5305\u542b\u6570\u636e\u5e93\u5730\u5740\u3001\u8d26\u53f7\u6216\u5bc6\u94a5\u3002'}</div>
               </div>
-              <span className={runtimeData?.readiness?.status === 'ready' ? 'rounded bg-emerald-500/15 px-2 py-1 text-xs font-medium text-emerald-700' : 'rounded bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-700'}>
+              <span className={runtimeData?.readiness?.status === 'ready' ? 'system-status-pill system-status-pill--ok rounded px-2 py-1 text-xs font-medium' : 'system-status-pill system-status-pill--warn rounded px-2 py-1 text-xs font-medium'}>
                 {isRuntimeLoading ? '\u68c0\u6d4b\u4e2d' : runtimeData?.readiness?.status === 'ready' ? '\u670d\u52a1\u5c31\u7eea' : '\u9700\u8981\u5173\u6ce8'}
               </span>
             </div>
@@ -575,9 +500,9 @@ export function AdminSystemPage() {
             </div>
             {(runtimeData?.readiness?.runtime?.warnings?.length ?? 0) > 0 && <div className="mt-3 text-xs text-amber-700">{'\u914d\u7f6e\u63d0\u793a\uff1a'}{runtimeData?.readiness?.runtime?.warnings?.join('\uff1b')}</div>}
           </div>
-          <div className="mt-3 max-h-64 overflow-auto rounded-md border">
+          <div className="system-config-table-wrap mt-3 max-h-64 overflow-auto">
             <table className="w-full text-left text-xs">
-              <thead className="bg-muted/70"><tr><th className="p-2">时间</th><th className="p-2">事件</th><th className="p-2">用户</th><th className="p-2">手机</th><th className="p-2">微信</th><th className="p-2">备注</th></tr></thead>
+              <thead><tr><th className="p-2">时间</th><th className="p-2">事件</th><th className="p-2">用户</th><th className="p-2">手机</th><th className="p-2">微信</th><th className="p-2">备注</th></tr></thead>
               <tbody>
                 {(activityData?.rows ?? []).map((row, index) => (
                   <tr key={row.id ?? `${row.created_at}-${index}`} className="border-t">
@@ -624,19 +549,28 @@ export function AdminSystemPage() {
           <div className="grid gap-3">
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={form.system_notice_enabled} onChange={(e) => setField('system_notice_enabled', e.target.checked)} />
-              启用登录公告
+              启用用户公告
             </label>
             <label className="text-sm">
               <span className="text-muted-foreground">公告标题</span>
               <Input value={form.system_notice_title} onChange={(e) => setField('system_notice_title', e.target.value)} />
             </label>
             <label className="text-sm">
-              <span className="text-muted-foreground">公告内容</span>
-              <textarea value={form.system_notice_content} onChange={(e) => setField('system_notice_content', e.target.value)} rows={4} className="w-full rounded-md border bg-card px-3 py-2 text-sm" />
+              <span className="flex items-center justify-between gap-3 text-muted-foreground"><span>公告内容</span><span>{form.system_notice_content.length}/3000</span></span>
+              <textarea maxLength={3000} value={form.system_notice_content} onChange={(e) => setField('system_notice_content', e.target.value)} rows={4} className="w-full rounded-md border bg-card px-3 py-2 text-sm" />
             </label>
           </div>
-          <div className="mt-3">
+          {form.system_notice_enabled && form.system_notice_content.trim() ? (
+            <div className="relative mt-3 overflow-hidden rounded-xl border border-primary/20 bg-muted/25 p-3 pl-4">
+              <span className="absolute inset-y-0 left-0 w-1 bg-primary" />
+              <div className="flex items-center gap-2 text-xs font-semibold text-primary"><span>用户端预览</span><span className="badge-pill badge-info">置顶</span></div>
+              <div className="mt-1 font-semibold text-foreground">{form.system_notice_title.trim() || '实验室使用公告'}</div>
+              <div className="mt-1 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{form.system_notice_content.trim()}</div>
+            </div>
+          ) : null}
+          <div className="mt-3 flex items-center gap-3">
             <Button disabled={update.isPending} onClick={saveNotice}>保存公告</Button>
+            <span className="text-xs text-muted-foreground">保存后用户端将在 1 分钟内更新。</span>
           </div>
         </CardContent>
       </Card>
@@ -731,7 +665,7 @@ export function AdminSystemPage() {
           </div>
           {reportPreview?.intelligence_summary && (
             <div className="mt-4 rounded-lg border border-primary/20 bg-primary/5 p-3">
-              <div className="text-xs font-semibold text-primary">5.0 智能运营解读</div>
+              <div className="text-xs font-semibold text-primary">运营日报摘要</div>
               <div className="mt-3 grid gap-2 sm:grid-cols-5">
                 {[
                   ['风险设备', reportPreview.intelligence_summary.risk_devices ?? 0],
@@ -819,7 +753,7 @@ export function AdminSystemPage() {
                     <span className="rounded bg-muted px-1.5 py-0.5 text-xs">{ROLE_LABELS[role.role_key] ?? systemText(role.role_key)}</span>
                     {role.note && <span className="ml-2 text-xs text-muted-foreground">{systemText(role.note)}</span>}
                     {moduleSummary.length > 0 && <div className="mt-1 text-xs text-muted-foreground">已授权模块：{moduleSummary.join('、')}</div>}
-                    {isSelf && <div className="mt-1 text-xs font-semibold text-amber-600">当前登录账号：禁止自改权限</div>}
+                    {isSelf && <div className="mt-1 text-xs font-semibold text-amber-600 dark:text-amber-300">当前登录账号：禁止自改权限</div>}
                   </div>
                   <div className="flex gap-2">
                     <Button size="sm" variant="outline" disabled={isSelf} onClick={() => editExistingRole(role)}>{isSelf ? '已保护' : '编辑'}</Button>
@@ -896,4 +830,3 @@ export function AdminSystemPage() {
     </div>
   );
 }
-

@@ -1,5 +1,6 @@
 ﻿import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { friendlyApiMessage, request, tokenStore } from '@/lib/api';
+import { QUERY_STALE } from '@/lib/query-defaults';
 
 // ---------- Dashboard ----------
 
@@ -22,6 +23,7 @@ export interface AdminDashboard {
 export function useAdminDashboard() {
   return useQuery({
     queryKey: ['admin-dashboard'],
+    staleTime: QUERY_STALE.approvalQueue,
     queryFn: () => request<AdminDashboard>('/admin/dashboard')
   });
 }
@@ -37,6 +39,13 @@ export interface AdminReturnTask {
   return_time?: string | null;
   return_condition?: string | null;
   return_note?: string | null;
+  return_archive_photos?: string[];
+  return_material_required?: boolean;
+  return_material_deadline?: string | null;
+  return_supplement_note?: string | null;
+  return_supplement_photos?: string[];
+  return_supplemented_at?: string | null;
+  return_material_late?: boolean;
   is_overdue?: boolean;
 }
 
@@ -49,6 +58,7 @@ export interface AdminReturnTaskSummary {
 export function useAdminReturnTasks(enabled = true) {
   return useQuery({
     queryKey: ['admin-return-tasks'],
+    staleTime: QUERY_STALE.faultWorkbench,
     queryFn: () => request<{ tasks: AdminReturnTask[]; summary: AdminReturnTaskSummary }>('/admin/return-tasks'),
     enabled
   });
@@ -82,8 +92,23 @@ export interface AdminUser {
   [key: string]: unknown;
 }
 
+export interface UserFulfillmentProfile {
+  normal_completed_count: number;
+  cancelled_count: number;
+  no_show_count: number;
+  overdue_count: number;
+  abnormal_return_count: number;
+  pending_material_count: number;
+  material_default_count: number;
+  latest_no_show_reason?: string | null;
+  restriction_status: 'normal' | 'restricted' | string;
+  restriction_reason?: string | null;
+  restriction_until?: string | null;
+}
+
 export interface AdminUserDetail {
   user: AdminUser;
+  fulfillment?: UserFulfillmentProfile;
   reservations?: Array<Record<string, unknown>>;
   borrows?: Array<Record<string, unknown>>;
   fault_reports?: Array<Record<string, unknown>>;
@@ -301,6 +326,9 @@ export interface AdminFaultRow {
   admin_note?: string;
   created_at: string;
   resolved_at?: string;
+  future_reservation_count?: number;
+  today_reservation_count?: number;
+  active_borrow?: { record_id?: string; user_name?: string; user_phone?: string; expected_return_time?: string } | null;
   [key: string]: unknown;
 }
 
@@ -311,7 +339,17 @@ export function useAdminFaults(status?: string, deviceCode?: string) {
   const query = qs.toString();
   return useQuery({
     queryKey: ['admin-faults', status ?? '', deviceCode ?? ''],
+    staleTime: QUERY_STALE.faultWorkbench,
     queryFn: () => request<{ reports: AdminFaultRow[] }>(`/admin/fault-reports${query ? `?${query}` : ''}`)
+  });
+}
+
+export function useNotifyFaultAffectedUsers() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      request<{ current_user_notified?: boolean; future_reservation_count?: number }>(`/admin/fault-reports/${encodeURIComponent(id)}/notify-affected`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-faults'] })
   });
 }
 
@@ -395,6 +433,7 @@ export interface AnalyticsOverview {
 export function useAnalyticsOverview(range?: string) {
   return useQuery({
     queryKey: ['admin-analytics-overview', range ?? ''],
+    staleTime: QUERY_STALE.analytics,
     queryFn: () => request<AnalyticsOverview>(`/admin/analytics/overview${range ? `?range=${encodeURIComponent(range)}` : ''}`)
   });
 }
@@ -921,7 +960,8 @@ export interface SystemRolesData {
 }
 
 export function useAdminSecurityConfig() {
-  return useQuery({ queryKey: ['admin-security-config'], queryFn: () => request<SecurityConfig>('/admin/system/security-config') });
+  return useQuery({ queryKey: ['admin-security-config'],
+    staleTime: QUERY_STALE.systemConfig, queryFn: () => request<SecurityConfig>('/admin/system/security-config') });
 }
 export function useUpdateSecurityConfig() {
   const qc = useQueryClient();
@@ -932,7 +972,8 @@ export function useUpdateSecurityConfig() {
   });
 }
 export function useAdminRoles() {
-  return useQuery({ queryKey: ['admin-roles'], queryFn: () => request<SystemRolesData>('/admin/system/roles') });
+  return useQuery({ queryKey: ['admin-roles'],
+    staleTime: QUERY_STALE.systemConfig, queryFn: () => request<SystemRolesData>('/admin/system/roles') });
 }
 export function useUpsertRole() {
   const qc = useQueryClient();

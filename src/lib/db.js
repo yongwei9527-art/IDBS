@@ -12,16 +12,26 @@ function createPool(options = {}) {
     throw new Error('DATABASE_URL is not configured');
   }
 
+  const statementTimeoutMs = Number(process.env.PG_STATEMENT_TIMEOUT_MS || 30_000);
+
   pool = new Pool({
     connectionString,
     ssl: options.ssl && typeof options.ssl === 'object' ? options.ssl : (options.ssl ? postgresSslOptions() : undefined),
     max: Number(process.env.PGPOOL_MAX || 10),
     idleTimeoutMillis: Number(process.env.PGPOOL_IDLE_TIMEOUT_MS || 30_000),
-    connectionTimeoutMillis: Number(process.env.PGPOOL_CONN_TIMEOUT_MS || 10_000)
+    connectionTimeoutMillis: Number(process.env.PGPOOL_CONN_TIMEOUT_MS || 10_000),
+    statement_timeout: statementTimeoutMs > 0 ? statementTimeoutMs : undefined,
+    query_timeout: statementTimeoutMs > 0 ? statementTimeoutMs : undefined
   });
 
   pool.on('error', (error) => {
     console.error('PostgreSQL pool error:', error);
+  });
+
+  pool.on('connect', (client) => {
+    if (statementTimeoutMs > 0) {
+      client.query(`set statement_timeout = ${Math.floor(statementTimeoutMs)}`).catch(() => {});
+    }
   });
 
   return pool;
@@ -29,11 +39,32 @@ function createPool(options = {}) {
 
 function createDb(options = {}) {
   const activePool = createPool(options);
+  const slowQueryMs = Number(process.env.PG_SLOW_QUERY_MS || 200);
+
+  async function timedQuery(runner, text, params = []) {
+    const started = Date.now();
+    try {
+      const result = await runner.query(text, params);
+      const elapsed = Date.now() - started;
+      if (slowQueryMs > 0 && elapsed >= slowQueryMs) {
+        const preview = String(text || '').replace(/\s+/g, ' ').slice(0, 180);
+        console.warn(`[SLOW_QUERY ${elapsed}ms] ${preview}`);
+      }
+      return result;
+    } catch (error) {
+      const elapsed = Date.now() - started;
+      if (elapsed >= Math.max(50, slowQueryMs || 200)) {
+        const preview = String(text || '').replace(/\s+/g, ' ').slice(0, 180);
+        console.warn(`[FAILED_QUERY ${elapsed}ms] ${preview}`);
+      }
+      throw error;
+    }
+  }
 
   return {
     pool: activePool,
     async query(text, params = []) {
-      return activePool.query(text, params);
+      return timedQuery(activePool, text, params);
     },
     async transaction(work) {
       const client = await activePool.connect();

@@ -67,14 +67,14 @@
       }
       plans.push({ deviceCodes, devices, slots });
     }
-    if (!plans.length) return fail('reservation_groups is required', 400, 2001);
+    if (!plans.length) return fail('请选择设备与时段', 400, 2001);
     const created = [];
     const selectedKeys = new Set();
     for (const plan of plans) {
       for (const device of plan.devices) {
           for (const { start, end } of plan.slots) {
           const selectedKey = `${device.id}:${start.toISOString()}:${end.toISOString()}`;
-          if (selectedKeys.has(selectedKey)) return fail(`Duplicate selected time slot for ${device.device_code}`, 409, 3001);
+          if (selectedKeys.has(selectedKey)) return fail(`重复选择时段：${device.device_code}`, 409, 3001);
           selectedKeys.add(selectedKey);
         }
       }
@@ -272,7 +272,7 @@
     const approved = parseBoolean(payload.approved);
     const adminNote = String(payload.admin_note || payload.adminNote || '').trim().slice(0, 500);
     const batch = await getById('reservation_batches', batchId);
-    if (!batch) return fail('Reservation batch not found', 404, 3004);
+    if (!batch) return fail('预约批次不存在', 404, 3004);
     const nextStatus = approved ? 'approved' : 'rejected';
     const approvedBy = admin.user_id || admin.id || null;
     await withTransaction(async (client) => {

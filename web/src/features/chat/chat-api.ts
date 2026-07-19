@@ -1,5 +1,6 @@
-﻿import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { request } from '@/lib/api';
+import { QUERY_STALE } from '@/lib/query-defaults';
 
 export interface ChatUser {
   id: string;
@@ -22,7 +23,11 @@ export interface ChatConversation {
   created_by?: string;
   system_key?: string | null;
   is_system?: boolean;
+  is_temporary_group?: boolean;
   retention_days?: number;
+  expires_at?: string | null;
+  remaining_ms?: number | null;
+  remaining_label?: string | null;
   last_message_preview?: string;
   last_message_type?: string;
   last_message_at?: string;
@@ -94,11 +99,17 @@ function normalizeConversation(input: ChatConversation): ChatConversation {
 
 export function useChatConversations() {
   return useQuery({
+    staleTime: QUERY_STALE.chatList,
     queryKey: ['chat-conversations'],
     queryFn: async () => {
       const data = await request<ChatConversation[] | { conversations?: ChatConversation[] }>('/chat/conversations');
       const conversations = Array.isArray(data) ? data : data.conversations ?? [];
-      return conversations.map(normalizeConversation);
+      return conversations.map(normalizeConversation).sort((left, right) => {
+        const leftPinned = left.system_key === 'lab_management' || (left.is_system && ['实验管理群', '实验管理总群'].includes(left.title || ''));
+        const rightPinned = right.system_key === 'lab_management' || (right.is_system && ['实验管理群', '实验管理总群'].includes(right.title || ''));
+        if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
+        return new Date(right.last_message_at || 0).getTime() - new Date(left.last_message_at || 0).getTime();
+      });
     },
     refetchInterval: 15_000
   });
@@ -106,17 +117,18 @@ export function useChatConversations() {
 
 export function useChatUsers() {
   return useQuery({
+    staleTime: QUERY_STALE.chatList,
     queryKey: ['chat-users'],
     queryFn: async () => {
       const data = await request<ChatUser[] | { users?: ChatUser[] }>('/chat/users');
       return Array.isArray(data) ? data : data.users ?? [];
-    },
-    staleTime: 60_000
+    },
   });
 }
 
 export function useChatThread(conversationId: string) {
   return useQuery({
+    staleTime: QUERY_STALE.chatList,
     queryKey: ['chat-messages', conversationId],
     queryFn: async (): Promise<ChatThread> => {
       const data = await request<ChatMessage[] | ChatThread>(`/chat/conversations/${conversationId}/messages`);

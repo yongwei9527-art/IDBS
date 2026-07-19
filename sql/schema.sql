@@ -180,7 +180,7 @@ CREATE TABLE IF NOT EXISTS borrow_records (
   overdue_reason_category TEXT,
   abnormal_reason_category TEXT,
   return_photos JSONB NOT NULL DEFAULT '[]'::jsonb,
-  status TEXT NOT NULL DEFAULT 'in_use', -- in_use/returned/abnormal_pending/overdue
+  status TEXT NOT NULL DEFAULT 'in_use', -- in_use/return_pending/returned/abnormal_pending/overdue
   is_overdue BOOLEAN NOT NULL DEFAULT FALSE,
   actual_start_time TIMESTAMPTZ,
   actual_end_time TIMESTAMPTZ,
@@ -189,6 +189,12 @@ CREATE TABLE IF NOT EXISTS borrow_records (
   return_reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL,
   return_reviewed_at TIMESTAMPTZ,
   return_review_note TEXT,
+  return_material_required BOOLEAN NOT NULL DEFAULT FALSE,
+  return_material_deadline TIMESTAMPTZ,
+  return_supplement_note TEXT,
+  return_supplement_photos JSONB NOT NULL DEFAULT '[]'::jsonb,
+  return_supplemented_at TIMESTAMPTZ,
+  return_material_late BOOLEAN NOT NULL DEFAULT FALSE,
   updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
   deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -341,7 +347,9 @@ CREATE TABLE IF NOT EXISTS chat_conversations (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_message_at TIMESTAMPTZ,
   last_message_preview TEXT,
-  last_message_type TEXT
+  last_message_type TEXT,
+  expires_at TIMESTAMPTZ,
+  dissolve_notified_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS chat_participants (
@@ -480,6 +488,24 @@ CREATE TABLE IF NOT EXISTS operation_logs (
   ip_address TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS priority_usage_archives (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  period_date DATE NOT NULL,
+  timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+  successful_return_count INTEGER NOT NULL DEFAULT 0,
+  successful_user_count INTEGER NOT NULL DEFAULT 0,
+  successful_device_count INTEGER NOT NULL DEFAULT 0,
+  total_usage_minutes INTEGER NOT NULL DEFAULT 0,
+  overdue_return_count INTEGER NOT NULL DEFAULT 0,
+  records JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (period_date, timezone)
+);
+
+CREATE INDEX IF NOT EXISTS idx_priority_usage_archives_period
+  ON priority_usage_archives(period_date DESC, timezone);
 
 CREATE TABLE IF NOT EXISTS export_jobs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -680,6 +706,7 @@ CREATE INDEX IF NOT EXISTS idx_borrow_records_device_time ON borrow_records(devi
 CREATE INDEX IF NOT EXISTS idx_borrow_records_user_time ON borrow_records(user_id, borrow_time, return_time);
 CREATE INDEX IF NOT EXISTS idx_borrow_records_active_due ON borrow_records(expected_return_time) WHERE status = 'in_use';
 CREATE INDEX IF NOT EXISTS idx_borrow_records_return_review ON borrow_records(status, return_time DESC) WHERE status IN ('return_pending', 'abnormal_pending');
+CREATE INDEX IF NOT EXISTS idx_borrow_records_material_deadline ON borrow_records(return_material_deadline) WHERE return_material_required = TRUE AND return_supplemented_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_users_pending_active ON users(created_at DESC) WHERE status = 'pending' AND coalesce(is_banned, FALSE) = FALSE;
 CREATE INDEX IF NOT EXISTS idx_user_activity_event_time ON user_activity_logs(event_type, created_at);
 CREATE INDEX IF NOT EXISTS idx_user_activity_openid_time ON user_activity_logs(wechat_openid, created_at);

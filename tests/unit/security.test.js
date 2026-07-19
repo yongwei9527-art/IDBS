@@ -10,19 +10,19 @@ const { postgresSslOptions } = require('../../src/lib/postgres-ssl');
 const { createAuthService } = require('../../src/services/domains/auth/auth-service');
 const { isHealthProbeRequest } = require('../../src/app/create-app');
 
-test('password hashes use scrypt and legacy SHA-256 hashes remain verifiable', () => {
+test('password hashes use scrypt and legacy SHA-256 hashes remain verifiable', async () => {
   const utils = createCryptoUtils({ crypto, tokenSecret: 'test-secret-that-is-long-enough-for-tests' });
   const password = 'correct horse battery staple';
   const salt = '0123456789abcdef0123456789abcdef';
-  const modernHash = utils.hashPassword(password, salt);
+  const modernHash = await utils.hashPassword(password, salt);
   const legacyHash = crypto.createHash('sha256').update(`${salt}:${password}`).digest('hex');
 
   assert.match(modernHash, /^[a-f0-9]{128}$/);
   assert.equal(utils.needsPasswordRehash(modernHash), false);
-  assert.equal(utils.verifyPassword(password, salt, modernHash), true);
-  assert.equal(utils.verifyPassword('wrong', salt, modernHash), false);
+  assert.equal(await utils.verifyPassword(password, salt, modernHash), true);
+  assert.equal(await utils.verifyPassword('wrong', salt, modernHash), false);
   assert.equal(utils.needsPasswordRehash(legacyHash), true);
-  assert.equal(utils.verifyPassword(password, salt, legacyHash), true);
+  assert.equal(await utils.verifyPassword(password, salt, legacyHash), true);
 });
 
 test('production runtime rejects placeholder secrets, weak passwords, and wildcard CORS', () => {

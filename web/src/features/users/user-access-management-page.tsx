@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Ban, ShieldCheck, Smartphone, UserCheck, UsersRound } from 'lucide-react';
 import { toFriendlyError } from '@/lib/friendly-error';
 import { briefDateTime } from '@/lib/time-format';
 import { Button } from '@/components/ui/button';
@@ -8,7 +7,7 @@ import { useActionDialog } from '@/components/ui/action-dialog';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { PERMISSIONS, useCapability } from '@/features/auth/permissions';
-import { OpsDataToolbar, OpsDetailDrawer, OpsEmptyState, OpsMetricCard, OpsPageHeader, OpsPermissionHint } from '@/components/ops/design-system';
+import { OpsDataToolbar, OpsDetailDrawer, OpsEmptyState, OpsPageHeader } from '@/components/ops/design-system';
 import {
   useAdminUserDetail,
   useAdminUsers,
@@ -30,9 +29,9 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 const ROLE_LABEL: Record<string, string> = {
-  user: '普通用户',
+  user: '用户',
   admin: '管理员',
-  super_admin: '最高权限管理员'
+  super_admin: '超管'
 };
 
 const DETAIL_SECTIONS = [
@@ -86,10 +85,10 @@ export function AdminUsersPage() {
     const admins = users.filter((item) => item.role === 'admin' || item.role === 'super_admin').length;
     const bound = users.filter((item) => item.wechat_bound).length;
     return [
-      { label: '用户总数', value: users.length, hint: '普通用户与管理员', tone: 'info' as const, icon: <UsersRound className="h-4 w-4" /> },
-      { label: '待审核', value: pending, hint: '需要尽快处理', tone: 'warning' as const, icon: <UserCheck className="h-4 w-4" /> },
-      { label: '管理员账号', value: admins, hint: '按授权显示后台', tone: 'default' as const, icon: <ShieldCheck className="h-4 w-4" /> },
-      { label: '微信已绑定', value: bound, hint: `${banned} 个账号封禁`, tone: banned > 0 ? 'danger' as const : 'success' as const, icon: <Smartphone className="h-4 w-4" /> }
+      { label: '全部', value: users.length, hint: '', tone: 'info' as const },
+      { label: '待审核', value: pending, hint: '', tone: 'warning' as const },
+      { label: '管理员', value: admins, hint: '', tone: 'default' as const },
+      { label: '已封禁', value: banned, hint: bound ? `微信${bound}` : '', tone: banned > 0 ? 'danger' as const : 'success' as const }
     ];
   }, [users]);
 
@@ -114,7 +113,7 @@ export function AdminUsersPage() {
   async function handleRejectUser(user: AdminUser) {
     const reason = await prompt({
       title: '驳回账号审核',
-      description: `请填写驳回 ${displayName(user)} 审核的原因，用户会看到该原因并据此修改资料。`,
+      description: `驳回 ${displayName(user)} 的原因（用户可见）`,
       placeholder: '例如：请补充真实学号或联系方式',
       defaultValue: user.disabled_reason || '',
       confirmText: '确认驳回',
@@ -125,7 +124,7 @@ export function AdminUsersPage() {
     if (reason === null) return;
     const trimmed = reason.trim();
     if (!trimmed) {
-      toast.error('驳回审核需要填写原因，方便用户修改资料。');
+      toast.error('请填写驳回原因');
       return;
     }
     setStatus.mutate(
@@ -151,7 +150,7 @@ export function AdminUsersPage() {
   async function handleUnbindWechat(user: AdminUser) {
     const ok = await confirm({
       title: '确认解绑微信',
-      description: `将解除 ${displayName(user)} 的微信绑定，用户需要重新绑定后才能使用微信相关能力。`,
+      description: `解绑 ${displayName(user)} 的微信？`,
       confirmText: '确认解绑',
       tone: 'warning'
     });
@@ -165,7 +164,7 @@ export function AdminUsersPage() {
   async function handleDelete(user: AdminUser) {
     const ok = await confirm({
       title: '确认删除用户',
-      description: `将删除用户 ${displayName(user)}。该操作不可撤销，请确认已完成数据留存。`,
+      description: `删除 ${displayName(user)}？不可恢复。`,
       confirmText: '确认删除',
       tone: 'danger'
     });
@@ -182,103 +181,92 @@ export function AdminUsersPage() {
   return (
     <div className="flex flex-col gap-4">
       <ActionDialog />
-      <OpsPageHeader
-        eyebrow="USER OPERATIONS"
-        title="用户权限中心"
-        description="审核账号、调整状态、查看用户轨迹；管理员相关操作按最高权限和授权边界自动收口。"
-        aside={
-          <OpsPermissionHint
-            title={capability.isSuperAdmin ? '最高权限模式' : '分权管理模式'}
-            permissions={capability.isSuperAdmin ? '可维护用户、管理员角色与授权。' : '管理员账号、删除和敏感授权已锁定。'}
-            className="border-white/10 bg-white/10 text-white"
-          />
-        }
-      />
+      <OpsPageHeader title="用户管理" className="ops-page-header--compact" />
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="user-admin-metrics">
         {metrics.map((item) => (
-          <OpsMetricCard key={item.label} label={item.label} value={item.value} hint={item.hint} tone={item.tone} icon={item.icon} loading={usersQuery.isLoading} />
+          <div key={item.label} className={`user-admin-metric user-admin-metric--${item.tone}`}>
+            <span className="user-admin-metric-label">{item.label}</span>
+            <span className="user-admin-metric-value">{usersQuery.isLoading ? '—' : item.value}</span>
+            {item.hint ? <span className="user-admin-metric-hint">{item.hint}</span> : null}
+          </div>
         ))}
       </div>
 
       <Card className="ops-card overflow-hidden">
         <CardContent className="space-y-4 p-4">
           <OpsDataToolbar
-            title="用户队列"
-            description="仅展示当前账号允许查看和处理的操作入口。"
-            meta={<>显示 {filteredUsers.length} / {users.length} 人</>}
+            title="用户"
+            meta={<>{filteredUsers.length}/{users.length}</>}
             filters={
-              <>
+              <div className="ops-segment-group flex flex-wrap gap-1">
                 {FILTERS.map((item) => (
                   <Button key={item.key || 'all'} size="sm" variant={statusFilter === item.key ? 'default' : 'outline'} onClick={() => setStatusFilter(item.key)}>
                     {item.label}
                   </Button>
                 ))}
-              </>
+              </div>
             }
             actions={
               <Input
                 value={keyword}
                 onChange={(event) => setKeyword(event.target.value)}
-                placeholder="搜索姓名、手机号、学号、角色"
+                placeholder="姓名 / 手机 / 学号"
                 clearable
                 onClear={() => setKeyword('')}
                 className="w-full sm:w-80"
               />
             }
           />
-          {usersQuery.isLoading && <p className="py-8 text-center text-muted-foreground">加载用户中…</p>}
+          {usersQuery.isLoading && <p className="py-8 text-center text-muted-foreground">加载中…</p>}
           {usersQuery.error && <p className="py-8 text-center text-destructive">用户加载失败：{toFriendlyError(usersQuery.error)}</p>}
-          {!usersQuery.isLoading && filteredUsers.length === 0 && <OpsEmptyState title="暂无匹配用户" description="可切换状态或清空关键词后再查看。" />}
-          <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+          {!usersQuery.isLoading && filteredUsers.length === 0 && <OpsEmptyState title="暂无用户" />}
+          <div className="user-admin-table overflow-x-auto rounded-xl border">
+            <div className="user-admin-table-head hidden min-w-[720px] md:grid">
+              <span>用户</span>
+              <span>联系方式</span>
+              <span>角色</span>
+              <span>微信</span>
+              <span>注册</span>
+              <span>状态</span>
+              <span className="text-right">操作</span>
+            </div>
             {filteredUsers.map((user) => {
               const lockedAdmin = !canOperateUser(user);
+              const statusText = user.is_banned ? '已封禁' : STATUS_LABEL[user.status] ?? user.status ?? '-';
               return (
-                <article key={user.id} className={`rounded-2xl border p-3 transition hover:-translate-y-0.5 hover:shadow-md ${selectedId === user.id ? 'border-primary bg-primary/5' : 'bg-card/80'}`}>
-                  <div className="flex items-start justify-between gap-3">
-                    <button type="button" className="min-w-0 text-left" onClick={() => setSelectedId(user.id)}>
-                      <p className="truncate text-base font-bold text-foreground">{displayName(user)}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">{user.phone || '-'} · 学号 {user.student_no || '-'}</p>
-                    </button>
-                    <span className={`badge-pill ${user.is_banned ? 'badge-danger' : statusTone(user.status)}`}>
-                      {user.is_banned ? '已封禁' : STATUS_LABEL[user.status] ?? user.status ?? '-'}
-                    </span>
+                <div
+                  key={user.id}
+                  className={['user-admin-row', selectedId === user.id ? 'user-admin-row--active' : '', lockedAdmin ? 'user-admin-row--locked' : ''].filter(Boolean).join(' ')}
+                >
+                  <button type="button" className="user-admin-cell user-admin-cell--name text-left" onClick={() => setSelectedId(user.id)}>
+                    <span className="user-admin-name">{displayName(user)}</span>
+                    <span className="user-admin-sub md:hidden">{user.phone || '-'} · {ROLE_LABEL[user.role] ?? user.role ?? '-'}</span>
+                  </button>
+                  <div className="user-admin-cell">
+                    <span className="user-admin-main">{user.phone || '-'}</span>
+                    <span className="user-admin-sub">{user.student_no || '-'}</span>
                   </div>
-                  <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
-                    <Mini label="角色" value={ROLE_LABEL[user.role] ?? user.role ?? '-'} />
-                    <Mini label="微信" value={user.wechat_bound ? '已绑定' : '未绑定'} />
-                    <Mini label="注册" value={formatDate(user.created_at)} />
+                  <div className="user-admin-cell">
+                    <span className="user-admin-main">{ROLE_LABEL[user.role] ?? user.role ?? '-'}</span>
+                    {lockedAdmin ? <span className="user-admin-sub">受保护</span> : null}
                   </div>
-                  {lockedAdmin && (
-                    <div className="mt-3 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-200">
-                      <Ban className="h-3.5 w-3.5" />管理员账号受保护
-                    </div>
-                  )}
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" onClick={() => setSelectedId(user.id)}>详情</Button>
+                  <div className="user-admin-cell">
+                    <span className="user-admin-main">{user.wechat_bound ? '已绑' : '未绑'}</span>
+                  </div>
+                  <div className="user-admin-cell">
+                    <span className="user-admin-main tabular-nums">{formatDate(user.created_at)}</span>
+                  </div>
+                  <div className="user-admin-cell">
+                    <span className={`badge-pill ${user.is_banned ? 'badge-danger' : statusTone(user.status)}`}>{statusText}</span>
+                  </div>
+                  <div className="user-admin-cell user-admin-cell--actions">
+                    <Button size="sm" variant="outline" onClick={() => setSelectedId(user.id)}>档案</Button>
                     {canApproveUsers && (user.status === 'pending' || user.status === 'rejected') && canOperateUser(user) && (
                       <Button size="sm" disabled={isMutating} onClick={() => handleSetStatus(user, 'active')}>通过</Button>
                     )}
-                    {canApproveUsers && user.status === 'pending' && canOperateUser(user) && (
-                      <Button size="sm" variant="outline" disabled={isMutating} onClick={() => handleRejectUser(user)}>驳回</Button>
-                    )}
-                    {canManageUsers && user.status !== 'disabled' && canOperateUser(user) && (
-                      <Button size="sm" variant="outline" disabled={isMutating} onClick={() => handleSetStatus(user, 'disabled')}>停用</Button>
-                    )}
-                    {canManageUsers && user.status === 'disabled' && canOperateUser(user) && (
-                      <Button size="sm" variant="outline" disabled={isMutating} onClick={() => handleSetStatus(user, 'active')}>启用</Button>
-                    )}
-                    {canManageUsers && canOperateUser(user) && (
-                      <Button size="sm" variant="outline" disabled={isMutating} onClick={() => handleSetBan(user)}>{user.is_banned ? '解封' : '封禁'}</Button>
-                    )}
-                    {canManageUsers && user.wechat_bound && canOperateUser(user) && (
-                      <Button size="sm" variant="outline" disabled={isMutating} onClick={() => handleUnbindWechat(user)}>解绑微信</Button>
-                    )}
-                    {canDeleteUser(user) && (
-                      <Button size="sm" variant="destructive" disabled={isMutating} onClick={() => handleDelete(user)}>删除</Button>
-                    )}
                   </div>
-                </article>
+                </div>
               );
             })}
           </div>
@@ -288,8 +276,33 @@ export function AdminUsersPage() {
       <OpsDetailDrawer
         open={Boolean(selectedId)}
         title={selectedUser ? displayName(selectedUser) : '用户详情'}
-        subtitle={selectedUser ? `${ROLE_LABEL[selectedUser.role] ?? selectedUser.role ?? '-'} · ${selectedUser.phone || '无手机号'}` : '查看轨迹和记录'}
+        subtitle={selectedUser ? `${ROLE_LABEL[selectedUser.role] ?? selectedUser.role ?? '-'} · ${selectedUser.phone || '-'}` : ''}
         onClose={() => setSelectedId(undefined)}
+        footer={selectedUser && canOperateUser(selectedUser) ? (
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {canApproveUsers && (selectedUser.status === 'pending' || selectedUser.status === 'rejected') ? (
+              <Button size="sm" disabled={isMutating} onClick={() => handleSetStatus(selectedUser, 'active')}>通过</Button>
+            ) : null}
+            {canApproveUsers && selectedUser.status === 'pending' ? (
+              <Button size="sm" variant="outline" disabled={isMutating} onClick={() => handleRejectUser(selectedUser)}>驳回</Button>
+            ) : null}
+            {canManageUsers && selectedUser.status !== 'disabled' ? (
+              <Button size="sm" variant="outline" disabled={isMutating} onClick={() => handleSetStatus(selectedUser, 'disabled')}>停用</Button>
+            ) : null}
+            {canManageUsers && selectedUser.status === 'disabled' ? (
+              <Button size="sm" variant="outline" disabled={isMutating} onClick={() => handleSetStatus(selectedUser, 'active')}>启用账号</Button>
+            ) : null}
+            {canManageUsers ? (
+              <Button size="sm" variant="outline" disabled={isMutating} onClick={() => handleSetBan(selectedUser)}>{selectedUser.is_banned ? '解除封禁' : '封禁账号'}</Button>
+            ) : null}
+            {canManageUsers && selectedUser.wechat_bound ? (
+              <Button size="sm" variant="outline" disabled={isMutating} onClick={() => handleUnbindWechat(selectedUser)}>解绑微信</Button>
+            ) : null}
+            {canDeleteUser(selectedUser) ? (
+              <Button size="sm" variant="destructive" disabled={isMutating} onClick={() => handleDelete(selectedUser)}>删除</Button>
+            ) : null}
+          </div>
+        ) : undefined}
       >
         {detailQuery.isLoading ? (
           <p className="py-8 text-center text-muted-foreground">详情加载中…</p>
@@ -306,41 +319,25 @@ export function AdminUsersPage() {
 }
 function UserDetailPanel({ user, detail }: { user: AdminUser; detail?: AdminUserDetail }) {
   return (
-    <div className="flex flex-col gap-4 text-sm">
-      <div className="rounded-2xl bg-gradient-to-br from-slate-900 to-slate-700 p-4 text-white shadow-sm">
-        <h2 className="text-lg font-bold">{displayName(user)}</h2>
-        <p className="mt-1 text-white/70">{ROLE_LABEL[user.role] ?? user.role ?? '-'} · {user.phone || '-'}</p>
-      </div>
-      <dl className="grid grid-cols-2 gap-3">
+    <div className="flex flex-col gap-3 text-sm">
+      <dl className="user-detail-grid">
         <Info label="状态" value={user.is_banned ? '已封禁' : STATUS_LABEL[user.status] ?? user.status ?? '-'} />
+        <Info label="角色" value={ROLE_LABEL[user.role] ?? user.role ?? '-'} />
+        <Info label="手机" value={user.phone || '-'} />
         <Info label="学号" value={user.student_no || '-'} />
-        <Info label="微信" value={user.wechat_bound ? user.wechat_nickname || user.wechat_openid_masked || '已绑定' : '未绑定'} />
+        <Info label="微信" value={user.wechat_bound ? user.wechat_nickname || '已绑' : '未绑'} />
         <Info label="最近登录" value={formatTime(user.last_login_at)} />
-        <Info label="创建时间" value={formatTime(user.created_at)} />
-        <Info label="更新时间" value={formatTime(user.updated_at)} />
+        <Info label="注册" value={formatTime(user.created_at)} />
         {(user.status === 'rejected' || user.status === 'disabled') && user.disabled_reason && (
           <Info label={user.status === 'rejected' ? '驳回原因' : '停用原因'} value={user.disabled_reason} />
         )}
       </dl>
+      <FulfillmentPanel fulfillment={detail?.fulfillment} />
       <div className="space-y-3 border-t pt-4">
         {DETAIL_SECTIONS.map((section) => {
           const rows = Array.isArray(detail?.[section.key]) ? detail?.[section.key] ?? [] : [];
           return (
-            <div key={section.key} className="rounded-2xl border bg-muted/20 p-3">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="font-semibold">{section.label}</span>
-                <span className="text-xs text-muted-foreground">{rows.length} 条</span>
-              </div>
-              {rows.length > 0 ? (
-                <div className="max-h-36 space-y-2 overflow-y-auto text-xs text-muted-foreground">
-                  {rows.slice(0, 6).map((row, index) => (
-                    <p key={index} className="truncate rounded-lg bg-background/70 px-2 py-1">{summarizeRow(row)}</p>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">暂无记录</p>
-              )}
-            </div>
+            <UserRecordSection key={section.key} sectionKey={section.key} label={section.label} rows={rows} />
           );
         })}
       </div>
@@ -348,20 +345,111 @@ function UserDetailPanel({ user, detail }: { user: AdminUser; detail?: AdminUser
   );
 }
 
+function UserRecordSection({
+  sectionKey,
+  label,
+  rows
+}: {
+  sectionKey: (typeof DETAIL_SECTIONS)[number]['key'];
+  label: string;
+  rows: Array<Record<string, unknown>>;
+}) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const visible = rows.slice(0, 12);
+  return (
+    <div className="rounded-xl border bg-muted/20 p-2.5">
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-sm font-semibold">{label}</span>
+        <span className="text-xs text-muted-foreground">{rows.length}</span>
+      </div>
+      {visible.length ? (
+        <div className="max-h-72 space-y-1.5 overflow-y-auto">
+          {visible.map((row, index) => {
+            const id = String(row.id || row.item_id || `${sectionKey}-${index}`);
+            const open = expandedId === id;
+            const summary = formatRecordSummary(sectionKey, row);
+            return (
+              <div key={id} className={`user-record-item ${open ? 'user-record-item--open' : ''}`}>
+                <button
+                  type="button"
+                  className="user-record-summary"
+                  onClick={() => setExpandedId(open ? null : id)}
+                >
+                  <span className="user-record-summary-main">{summary.title}</span>
+                  <span className="user-record-summary-meta">
+                    {summary.badge ? <span className={`badge-pill ${summary.badgeTone || 'badge-muted'}`}>{summary.badge}</span> : null}
+                    {summary.time ? <span className="user-record-time">{summary.time}</span> : null}
+                    <span className="user-record-chevron">{open ? '收起' : '详情'}</span>
+                  </span>
+                </button>
+                {open ? (
+                  <div className="user-record-detail">
+                    {formatRecordDetails(sectionKey, row).map((item) => (
+                      <div key={item.label} className="user-record-detail-row">
+                        <span>{item.label}</span>
+                        <p>{item.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+          {rows.length > visible.length ? (
+            <p className="px-1 pt-1 text-[11px] text-muted-foreground">仅显示最近 {visible.length} 条</p>
+          ) : null}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">暂无记录</p>
+      )}
+    </div>
+  );
+}
+
+function FulfillmentPanel({ fulfillment }: { fulfillment?: AdminUserDetail['fulfillment'] }) {
+  if (!fulfillment) return null;
+  const restricted = fulfillment.restriction_status === 'restricted';
+  return (
+    <section className="rounded-xl border bg-muted/15 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold">履约</h3>
+        <span className={restricted ? 'badge-pill badge-warn' : 'badge-pill badge-success'}>{restricted ? '受限' : '正常'}</span>
+      </div>
+      <div className="mt-2 grid grid-cols-4 gap-1.5 sm:grid-cols-7">
+        <Mini label="完成" value={String(fulfillment.normal_completed_count || 0)} />
+        <Mini label="取消" value={String(fulfillment.cancelled_count || 0)} />
+        <Mini label="爽约" value={String(fulfillment.no_show_count || 0)} />
+        <Mini label="逾期" value={String(fulfillment.overdue_count || 0)} />
+        <Mini label="异常" value={String(fulfillment.abnormal_return_count || 0)} />
+        <Mini label="待补" value={String(fulfillment.pending_material_count || 0)} />
+        <Mini label="未补" value={String(fulfillment.material_default_count || 0)} />
+      </div>
+      {restricted ? (
+        <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">
+          {fulfillment.restriction_reason || '需复核'}
+          {fulfillment.restriction_until ? ` · 至 ${formatTime(fulfillment.restriction_until)}` : ''}
+        </p>
+      ) : fulfillment.latest_no_show_reason ? (
+        <p className="mt-2 text-xs text-muted-foreground">近爽约：{fulfillment.latest_no_show_reason}</p>
+      ) : null}
+    </section>
+  );
+}
+
 function Info({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl bg-muted/40 p-3">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-1 truncate font-semibold">{value}</dd>
+    <div className="user-detail-item">
+      <dt>{label}</dt>
+      <dd title={value}>{value}</dd>
     </div>
   );
 }
 
 function Mini({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl bg-muted/40 px-3 py-2">
-      <p className="text-muted-foreground">{label}</p>
-      <p className="mt-1 truncate font-semibold text-foreground">{value}</p>
+    <div className="user-mini-stat">
+      <p>{label}</p>
+      <strong>{value}</strong>
     </div>
   );
 }
@@ -381,28 +469,199 @@ function formatDate(value?: string | null) {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString('zh-CN');
+  const y = date.getFullYear();
+  const m = date.getMonth() + 1;
+  const d = date.getDate();
+  const nowY = new Date().getFullYear();
+  return y === nowY ? `${m}/${d}` : `${String(y).slice(2)}/${m}/${d}`;
 }
 
 function formatTime(value?: string | null) {
   return briefDateTime(value);
 }
 
-function summarizeRow(row: Record<string, unknown>) {
-  const candidates = [
-    row.device_name,
-    row.device_code,
-    row.title,
-    row.issue_type,
-    row.status,
-    row.created_at,
-    row.start_time,
-    row.borrowed_at
-  ].filter(Boolean);
-  if (candidates.length > 0) return candidates.map((value) => String(value)).join(' · ');
-  return JSON.stringify(row);
+const REQUEST_CATEGORY_LABEL: Record<string, string> = {
+  feature: '功能建议',
+  reservation: '预约/借还',
+  device: '设备相关',
+  account: '账号/权限',
+  rule: '规则说明',
+  maintenance: '维护排查',
+  ui: '交互体验',
+  access: '访问权限',
+  safety: '安全归还',
+  other: '其他'
+};
+
+const REQUEST_PRIORITY_LABEL: Record<string, string> = {
+  low: '低',
+  normal: '普通',
+  high: '高',
+  urgent: '紧急'
+};
+
+const REQUEST_STATUS_LABEL: Record<string, string> = {
+  pending: '待确认',
+  confirmed: '已确认',
+  change_requested: '申请修改',
+  rejected: '已驳回',
+  closed: '已关闭',
+  cancelled: '已撤回'
+};
+
+const RESERVATION_STATUS_LABEL: Record<string, string> = {
+  pending: '待审核',
+  approved: '已通过',
+  rejected: '已拒绝',
+  cancelled: '已取消',
+  in_use: '使用中',
+  completed: '已完成',
+  no_show: '缺席',
+  faulted: '异常结束'
+};
+
+const RETURN_CONDITION_LABEL: Record<string, string> = {
+  normal: '正常',
+  abnormal: '异常',
+  minor_scratch: '轻微划痕',
+  temperature_unstable: '温度不稳',
+  missing_accessory: '配件缺失',
+  appearance_damage: '外观损坏',
+  operation_abnormal: '运行异常',
+  other: '其他异常'
+};
+
+const BORROW_STATUS_LABEL: Record<string, string> = {
+  in_use: '使用中',
+  returned: '已归还',
+  overdue: '逾期',
+  abnormal_pending: '异常待处理'
+};
+
+const FAULT_STATUS_LABEL: Record<string, string> = {
+  open: '待处理',
+  processing: '处理中',
+  resolved: '已解决',
+  closed: '已关闭'
+};
+
+function statusBadgeTone(status?: string) {
+  if (!status) return 'badge-muted';
+  if (['pending', 'change_requested', 'open', 'processing', 'abnormal_pending', 'overdue'].includes(status)) return 'badge-warn';
+  if (['confirmed', 'approved', 'active', 'returned', 'completed', 'resolved', 'closed'].includes(status)) return 'badge-success';
+  if (['rejected', 'cancelled', 'banned', 'no_show', 'faulted'].includes(status)) return 'badge-danger';
+  if (['in_use'].includes(status)) return 'badge-info';
+  return 'badge-muted';
 }
 
+function labelStatus(map: Record<string, string>, status?: unknown) {
+  const key = String(status || '');
+  return map[key] || key || '-';
+}
 
+function textOf(value: unknown, fallback = '-') {
+  if (value === undefined || value === null || value === '') return fallback;
+  return String(value);
+}
+
+function formatRecordSummary(sectionKey: string, row: Record<string, unknown>) {
+  if (sectionKey === 'requests') {
+    const title = textOf(row.title || '诉求');
+    const device = [row.device_name, row.device_code].filter(Boolean).map(String).join(' · ');
+    return {
+      title: device && device !== title ? `${title} · ${device}` : title,
+      badge: labelStatus(REQUEST_STATUS_LABEL, row.status),
+      badgeTone: statusBadgeTone(String(row.status || '')),
+      time: formatTime(String(row.created_at || ''))
+    };
+  }
+  if (sectionKey === 'reservations') {
+    const device = [row.device_name, row.device_code].filter(Boolean).map(String).join(' · ') || '预约';
+    return {
+      title: device,
+      badge: labelStatus(RESERVATION_STATUS_LABEL, row.status),
+      badgeTone: statusBadgeTone(String(row.status || '')),
+      time: formatTime(String(row.start_time || row.created_at || ''))
+    };
+  }
+  if (sectionKey === 'borrows') {
+    const device = [row.device_name, row.device_code].filter(Boolean).map(String).join(' · ') || '借还';
+    return {
+      title: device,
+      badge: labelStatus(BORROW_STATUS_LABEL, row.status),
+      badgeTone: statusBadgeTone(String(row.status || '')),
+      time: formatTime(String(row.borrow_time || row.borrowed_at || row.created_at || ''))
+    };
+  }
+  if (sectionKey === 'fault_reports') {
+    const device = [row.device_name, row.device_code].filter(Boolean).map(String).join(' · ') || textOf(row.issue_type, '故障');
+    return {
+      title: device,
+      badge: labelStatus(FAULT_STATUS_LABEL, row.status),
+      badgeTone: statusBadgeTone(String(row.status || '')),
+      time: formatTime(String(row.created_at || ''))
+    };
+  }
+  // activity
+  return {
+    title: textOf(row.action || row.event || row.activity_type || row.path || '操作记录'),
+    badge: '',
+    badgeTone: 'badge-muted',
+    time: formatTime(String(row.created_at || ''))
+  };
+}
+
+function formatRecordDetails(sectionKey: string, row: Record<string, unknown>): Array<{ label: string; value: string }> {
+  if (sectionKey === 'requests') {
+    return [
+      { label: '标题', value: textOf(row.title) },
+      { label: '内容', value: textOf(row.description) },
+      { label: '设备', value: [row.device_name, row.device_code].filter(Boolean).map(String).join(' · ') || '-' },
+      { label: '分类', value: REQUEST_CATEGORY_LABEL[String(row.category || '')] || textOf(row.category) },
+      { label: '优先级', value: REQUEST_PRIORITY_LABEL[String(row.priority || '')] || textOf(row.priority) },
+      { label: '状态', value: labelStatus(REQUEST_STATUS_LABEL, row.status) },
+      { label: '管理员备注', value: textOf(row.admin_note) },
+      { label: '修改说明', value: textOf(row.change_request_note) },
+      { label: '提交', value: formatTime(String(row.created_at || '')) },
+      { label: '更新', value: formatTime(String(row.updated_at || '')) }
+    ].filter((item) => item.value && item.value !== '-');
+  }
+  if (sectionKey === 'reservations') {
+    return [
+      { label: '设备', value: [row.device_name, row.device_code].filter(Boolean).map(String).join(' · ') || '-' },
+      { label: '用途', value: textOf(row.purpose) },
+      { label: '状态', value: labelStatus(RESERVATION_STATUS_LABEL, row.status) },
+      { label: '时段', value: [formatTime(String(row.start_time || '')), formatTime(String(row.end_time || ''))].filter((v) => v && v !== '—').join(' – ') || '-' },
+      { label: '批次状态', value: labelStatus(RESERVATION_STATUS_LABEL, row.batch_status) },
+      { label: '备注', value: textOf(row.admin_note || row.note) }
+    ].filter((item) => item.value && item.value !== '-');
+  }
+  if (sectionKey === 'borrows') {
+    return [
+      { label: '设备', value: [row.device_name, row.device_code].filter(Boolean).map(String).join(' · ') || '-' },
+      { label: '状态', value: labelStatus(BORROW_STATUS_LABEL, row.status) },
+      { label: '开始', value: formatTime(String(row.borrow_time || row.borrowed_at || '')) },
+      { label: '应还', value: formatTime(String(row.expected_return_time || '')) },
+      { label: '实还', value: formatTime(String(row.return_time || '')) },
+      { label: '归还情况', value: RETURN_CONDITION_LABEL[String(row.return_condition || '')] || textOf(row.return_condition) }
+    ].filter((item) => item.value && item.value !== '-');
+  }
+  if (sectionKey === 'fault_reports') {
+    return [
+      { label: '设备', value: [row.device_name, row.device_code].filter(Boolean).map(String).join(' · ') || '-' },
+      { label: '问题', value: textOf(row.issue_type || row.title) },
+      { label: '描述', value: textOf(row.description || row.detail) },
+      { label: '状态', value: labelStatus(FAULT_STATUS_LABEL, row.status) },
+      { label: '严重级别', value: textOf(row.severity) },
+      { label: '上报', value: formatTime(String(row.created_at || '')) }
+    ].filter((item) => item.value && item.value !== '-');
+  }
+  return [
+    { label: '操作', value: textOf(row.action || row.event || row.activity_type) },
+    { label: '说明', value: textOf(row.detail || row.description || row.message) },
+    { label: '路径', value: textOf(row.path) },
+    { label: '时间', value: formatTime(String(row.created_at || '')) }
+  ].filter((item) => item.value && item.value !== '-');
+}
 
 

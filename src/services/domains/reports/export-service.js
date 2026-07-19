@@ -16,7 +16,7 @@ const BUSINESS_STATUS = {
   pending: '待审核', approved: '已通过', rejected: '已驳回', cancelled: '已取消',
   in_use: '使用中', reserved: '已预约', completed: '已完成', returned: '已归还', overdue: '逾期',
   resolved: '已解决', processing: '处理中', closed: '已关闭', faulted: '异常结束',
-  active: '正常', disabled: '停用', abnormal_pending: '异常待处理', available: '可用', maintenance: '维护中', normal: '正常'
+  active: '正常', disabled: '停用', abnormal_pending: '异常待处理', return_pending: '待验收', available: '可用', maintenance: '维护中', normal: '正常', no_show: '缺席', banned: '已封禁', confirmed: '已确认', change_requested: '申请修改', minor_scratch: '轻微划痕', temperature_unstable: '温度不稳', missing_accessory: '配件缺失', appearance_damage: '外观损坏', operation_abnormal: '运行异常', abnormal: '异常', other: '其他', experiment_not_finished: '实验尚未结束', awaiting_result: '等待样品结果', forgot_return: '忘记归还', high: '高', medium: '中', low: '低', urgent: '紧急', critical: '紧急'
 };
 
 const EXPORT_ACTION_LABEL = {
@@ -146,9 +146,26 @@ function friendlyExportError(error) {
 
 function normalizeExportRows(type, rows = []) {
   if (type === 'usage') return rows.map((item) => ({ 设备编号: item.device_code, 设备名称: item.device_name, 使用人: item.user_name, 手机号: item.user_phone, 借出时间: formatExportTime(item.borrow_time), 预计归还: formatExportTime(item.expected_return_time), 归还时间: formatExportTime(item.return_time), 使用分钟: item.duration_minutes || 0, 是否逾期: item.is_overdue ? '是' : '否', 归还状态: statusText(item.return_condition || item.record_status || item.status), 归还说明: item.return_note || '' }));
+  if (type === 'successful_usage') return rows.map((item) => ({
+    '\u8bb0\u5f55\u7f16\u53f7': item.id,
+    '\u8bbe\u5907\u7f16\u53f7': item.device_code,
+    '\u8bbe\u5907\u540d\u79f0': item.device_name,
+    '\u4f7f\u7528\u4eba': item.user_name,
+    '\u624b\u673a\u53f7': item.user_phone,
+    '\u5b66\u5de5\u53f7': item.user_student_no || '',
+    '\u501f\u51fa\u65f6\u95f4': formatExportTime(item.borrow_time || item.actual_start_time),
+    '\u5b9e\u9645\u5f52\u8fd8\u65f6\u95f4': formatExportTime(item.return_time || item.actual_end_time),
+    '\u4f7f\u7528\u5206\u949f': item.duration_minutes || 0,
+    '\u662f\u5426\u903e\u671f': item.is_overdue ? '\u662f' : '\u5426',
+    '\u5f52\u8fd8\u72b6\u6001': '\u6210\u529f\u5f52\u8fd8',
+    '\u5f52\u8fd8\u8bf4\u660e': item.return_note || '',
+    '\u5f52\u8fd8\u590d\u6838\u65f6\u95f4': formatExportTime(item.return_reviewed_at),
+    '\u5f52\u6863\u6587\u4ef6\u5939': item.return_archive_folder || '',
+    '\u5f52\u6863\u56fe\u7247\u6570\u91cf': photoCount(item.return_archive_photos || item.return_photos)
+  }));
   if (type === 'returns') return rows.map((item) => {
     const archivePhotos = item.return_archive_photos || item.return_photos;
-    return { 设备编号: item.device_code, 设备名称: item.device_name, 使用人: item.user_name, 手机号: item.user_phone, 学工号: item.user_student_no || '', 借出时间: formatExportTime(item.borrow_time || item.actual_start_time), 应归还时间: formatExportTime(item.expected_return_time), 实际归还时间: formatExportTime(item.return_time || item.actual_end_time), 使用分钟: item.duration_minutes || 0, 是否逾期: item.is_overdue ? '是' : '否', 归还状态: statusText(item.return_condition || item.status), 归还说明: item.return_note || '', 归档文件夹: item.return_archive_folder || '', 图片数量: photoCount(archivePhotos), 图片路径: photoListText(archivePhotos) };
+    return { 设备编号: item.device_code, 设备名称: item.device_name, 使用人: item.user_name, 手机号: item.user_phone, 学工号: item.user_student_no || '', 借出时间: formatExportTime(item.borrow_time || item.actual_start_time), 应归还时间: formatExportTime(item.expected_return_time), 实际归还时间: formatExportTime(item.return_time || item.actual_end_time), 使用分钟: item.duration_minutes || 0, 是否逾期: item.is_overdue ? '是' : '否', 归还状态: statusText(item.return_condition || item.status), 归还说明: item.return_note || '', 补充说明: item.return_supplement_note || '', 补充时间: formatExportTime(item.return_supplemented_at), 是否超时补充: item.return_material_late ? '是' : '否', 归档文件夹: item.return_archive_folder || '', 图片数量: photoCount(archivePhotos), 图片路径: photoListText(archivePhotos), 补充图片: photoListText(item.return_supplement_photos) };
   });
   if (type === 'reservations') return rows.map((item) => ({ 设备编号: item.device_code, 设备名称: item.device_name, 预约人: item.user_name, 手机号: item.user_phone, 开始时间: formatExportTime(item.start_time), 结束时间: formatExportTime(item.end_time), 状态: statusText(item.status), 用途: item.purpose || '', 审批备注: item.admin_note || '' }));
   if (type === 'faults') return rows.map((item) => ({ 设备编号: item.device_code, 设备名称: item.device_name, 上报人: item.user_name, 手机号: item.user_phone, 类型: localizeExportText(item.issue_type), 等级: localizeExportText(item.severity), 状态: statusText(item.status), 描述: item.description || '', 处理备注: item.admin_note || '', 上报时间: formatExportTime(item.created_at), 完成时间: formatExportTime(item.resolved_at) }));
@@ -177,6 +194,7 @@ function createExportService(context = {}) {
 
   const EXPORT_PERMISSION_RULES = {
     usage: { all: ['stats.export'] },
+    successful_usage: { all: ['stats.export'], any: ['return.export', 'return.view', 'return.confirm', 'return.image_review'] },
     returns: { all: ['stats.export'], any: ['return.export', 'return.view', 'return.confirm', 'return.image_review'] },
     reservations: { all: ['stats.export'], any: ['reservation.view', 'reservation.approve', 'reservation.change_plan'] },
     faults: { all: ['stats.export'], any: ['device.view', 'device.manage', 'fault.manage'] },
@@ -241,6 +259,63 @@ function createExportService(context = {}) {
       if (released) removed += 1;
     }
     return removed;
+  }
+
+  async function archiveDailySuccessfulUsage(payload = {}) {
+    const timezone = String(payload.timezone || 'Asia/Shanghai').slice(0, 80);
+    const suppliedDate = String(payload.date || '');
+    const dateParts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(new Date(Date.now() - 24 * 60 * 60 * 1000));
+    const part = (name) => dateParts.find((item) => item.type === name)?.value || '';
+    const periodDate = /^\d{4}-\d{2}-\d{2}$/.test(suppliedDate)
+      ? suppliedDate
+      : `${part('year')}-${part('month')}-${part('day')}`;
+    const archive = await queryOne(`
+      with completed_records as (
+        select b.id, b.user_id, b.device_id, b.borrow_time,
+          coalesce(b.return_time, b.actual_end_time) as return_time,
+          coalesce(b.duration_minutes, 0) as duration_minutes,
+          coalesce(b.is_overdue, false) as is_overdue,
+          d.device_code, d.name as device_name, u.name as user_name, u.student_no as user_student_no
+        from borrow_records b
+        left join devices d on d.id = b.device_id
+        left join users u on u.id = b.user_id
+        where b.status = 'returned'
+          and b.deleted_at is null
+          and (coalesce(b.return_time, b.actual_end_time) at time zone $2)::date = $1::date
+      ), summary as (
+        select count(*)::int as successful_return_count,
+          count(distinct user_id)::int as successful_user_count,
+          count(distinct device_id)::int as successful_device_count,
+          coalesce(sum(duration_minutes), 0)::int as total_usage_minutes,
+          count(*) filter (where is_overdue)::int as overdue_return_count,
+          coalesce(jsonb_agg(jsonb_build_object(
+            'record_id', id, 'device_code', device_code, 'device_name', device_name,
+            'user_name', user_name, 'user_student_no', user_student_no,
+            'borrow_time', borrow_time, 'return_time', return_time,
+            'duration_minutes', duration_minutes, 'is_overdue', is_overdue
+          ) order by return_time desc), '[]'::jsonb) as records
+        from completed_records
+      )
+      insert into priority_usage_archives (
+        period_date, timezone, successful_return_count, successful_user_count,
+        successful_device_count, total_usage_minutes, overdue_return_count, records, created_at, updated_at
+      )
+      select $1::date, $2, successful_return_count, successful_user_count,
+        successful_device_count, total_usage_minutes, overdue_return_count, records, now(), now()
+      from summary
+      on conflict (period_date, timezone) do update set
+        successful_return_count = excluded.successful_return_count,
+        successful_user_count = excluded.successful_user_count,
+        successful_device_count = excluded.successful_device_count,
+        total_usage_minutes = excluded.total_usage_minutes,
+        overdue_return_count = excluded.overdue_return_count,
+        records = excluded.records,
+        updated_at = now()
+      returning *
+    `, [periodDate, timezone]);
+    return archive;
   }
 
   async function adminCreateExportJob(payload = {}, token) {
@@ -347,7 +422,7 @@ function createExportService(context = {}) {
     return ok({ jobs: (rows || []).map(serializeExportJob) });
   }
 
-  return { adminCreateExportJob, adminGetExportJobDownload, adminListExportJobs, adminRunNextExportJob };
+  return { adminCreateExportJob, adminGetExportJobDownload, adminListExportJobs, adminRunNextExportJob, archiveDailySuccessfulUsage };
 }
 
 module.exports = { createExportService, csvCell, exportRowsToCsv, normalizeExportRows, localizeExportText };

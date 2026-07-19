@@ -16,11 +16,19 @@ function formatZodError(err) {
   return issues;
 }
 
+function firstZodMessage(err) {
+  const msg = String(err?.issues?.[0]?.message || '').trim();
+  // Prefer explicit Chinese schema messages over generic validation titles.
+  if (/[\u4e00-\u9fa5]/.test(msg)) return msg;
+  return '';
+}
+
 function parse(schema, value, label) {
   const result = schema.safeParse(value);
   if (!result.success) {
     const detail = formatZodError(result.error);
-    throw new AppError(`${label || '参数'}校验失败`, {
+    const friendly = firstZodMessage(result.error);
+    throw new AppError(friendly || `${label || '参数'}校验失败`, {
       status: 422,
       code: 2002,
       data: { issues: detail }

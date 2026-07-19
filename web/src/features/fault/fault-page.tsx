@@ -460,7 +460,7 @@ export function FaultPage() {
           ['已确认需求', stats.confirmedRequests]
         ].map(([label, value]) => (
           <div key={String(label)} className="ops-stat-card px-4 py-3">
-            <p className="text-2xl font-black tabular-nums">{value}</p>
+            <p className="text-2xl font-semibold tabular-nums">{value}</p>
             <p className="text-xs text-muted-foreground">{label}</p>
           </div>
         ))}
@@ -513,8 +513,8 @@ export function FaultPage() {
         </div>
 
         <div className="space-y-5">
-          <section className="ops-card p-4">
-            <h2 className="text-base font-black">我的故障</h2>
+          <section className="ops-card fault-record-section p-4">
+            <h2 className="text-base font-semibold">我的故障</h2>
             {faultsLoading ? <p className="py-6 text-center text-sm text-muted-foreground">加载故障记录…</p> : null}
             {faultsError ? <p className="py-6 text-center text-sm text-destructive">加载失败：{toFriendlyError(faultsError)}</p> : null}
             {!faultsLoading && !faultsError && faults.length === 0 ? <EmptyState>暂无故障记录</EmptyState> : null}
@@ -523,8 +523,8 @@ export function FaultPage() {
             </div>
           </section>
 
-          <section className="ops-card p-4">
-            <h2 className="text-base font-black">我的需求</h2>
+          <section className="ops-card fault-record-section p-4">
+            <h2 className="text-base font-semibold">我的需求</h2>
             {requestsLoading ? <p className="py-6 text-center text-sm text-muted-foreground">加载需求记录…</p> : null}
             {requestsError ? <p className="py-6 text-center text-sm text-destructive">加载失败：{toFriendlyError(requestsError)}</p> : null}
             {!requestsLoading && !requestsError && requests.length === 0 ? <EmptyState>暂无需求记录</EmptyState> : null}

@@ -20,22 +20,22 @@
   async function ensureActiveAssignee(userId) {
     if (!userId) return null;
     const user = await getById('users', userId);
-    if (!user) return fail('Maintenance assignee does not exist', 404, 3004);
-    if (user.status !== 'active' || user.is_banned) return fail('Maintenance assignee must be active and not banned', 409, 3001);
+    if (!user) return fail('维护负责人不存在', 404, 3004);
+    if (user.status !== 'active' || user.is_banned) return fail('维护负责人须为正常且未封禁账号', 409, 3001);
     return user;
   }
 
   async function validateWorkOrderLinks({ deviceId, planId, faultReportId, assignedTo }) {
     if (planId) {
       const plan = await getById('device_maintenance_plans', planId);
-      if (!plan) return fail('Maintenance plan does not exist', 404, 3004);
-      if (plan.device_id !== deviceId) return fail('Maintenance plan does not belong to this device', 409, 3001);
-      if (plan.status === 'archived') return fail('Archived maintenance plans cannot create work orders', 409, 3001);
+      if (!plan) return fail('维护计划不存在', 404, 3004);
+      if (plan.device_id !== deviceId) return fail('维护计划不属于该设备', 409, 3001);
+      if (plan.status === 'archived') return fail('已归档的维护计划不能创建工单', 409, 3001);
     }
     if (faultReportId) {
       const fault = await getById('device_fault_reports', faultReportId);
-      if (!fault) return fail('Fault report does not exist', 404, 3004);
-      if (fault.device_id !== deviceId) return fail('Fault report does not belong to this device', 409, 3001);
+      if (!fault) return fail('故障单不存在', 404, 3004);
+      if (fault.device_id !== deviceId) return fail('故障单不属于该设备', 409, 3001);
     }
     const assignee = await ensureActiveAssignee(assignedTo);
     if (assignee?.ok === false) return assignee;
@@ -151,8 +151,8 @@
     const workOrder = await getById('device_maintenance_work_orders', id);
     if (!workOrder) return fail('\u7ef4\u62a4\u5de5\u5355\u4e0d\u5b58\u5728', 404, 3004);
     const status = String(payload.status || workOrder.status);
-    if (!workOrderStatuses.has(status)) return fail('Invalid maintenance status', 400, 2001);
-    if (['completed', 'cancelled'].includes(workOrder.status) && status !== workOrder.status) return fail('Completed maintenance work orders cannot be reopened', 409, 3001);
+    if (!workOrderStatuses.has(status)) return fail('维护状态无效', 400, 2001);
+    if (['completed', 'cancelled'].includes(workOrder.status) && status !== workOrder.status) return fail('已完成的维护工单不可重新打开', 409, 3001);
     const assigneeChanged = payload.assigned_to !== undefined || payload.assignedTo !== undefined;
     const assignedTo = !assigneeChanged ? workOrder.assigned_to : (String(payload.assigned_to ?? payload.assignedTo ?? '').trim() || null);
     if (assigneeChanged) {
@@ -236,7 +236,7 @@
         const changed = await client.query(`update device_maintenance_windows set status='active', updated_at=$1 where id=$2 and status='scheduled'`, [now, window.id]);
         if (!changed.rowCount) continue;
         await client.query(`update devices set status='maintenance', allow_reservation=false, updated_at=$1 where id=$2`, [now, window.device_id]);
-        await log('activate_maintenance_window', { message: 'Maintenance window activated automatically', window_id: window.id, work_order_id: window.work_order_id }, { role: 'system' }, window.device_id, window.id, (sql, params) => client.query(sql, params));
+        await log('activate_maintenance_window', { message: '维护窗口已自动生效', window_id: window.id, work_order_id: window.work_order_id }, { role: 'system' }, window.device_id, window.id, (sql, params) => client.query(sql, params));
         result.activated += 1;
       }
       const overdue = await client.query(`select w.id, w.device_id, w.title, o.id as work_order_id, o.assigned_to, o.created_by
@@ -246,10 +246,10 @@
         for (const userId of new Set([window.assigned_to, window.created_by].filter(Boolean))) {
           const exists = await client.query(`select 1 from user_notifications where user_id=$1 and type='maintenance_window_overdue' and related_id=$2 limit 1`, [userId, window.id]);
           if (exists.rowCount) continue;
-          const written = await createUserNotification({ user_id: userId, type: 'maintenance_window_overdue', title: 'Maintenance window overdue', content: 'Maintenance window ' + (window.title || '') + ' has passed its scheduled end time and still requires attention.', related_type: 'maintenance_window', related_id: window.id, device_id: window.device_id }, (sql, params) => client.query(sql, params));
+          const written = await createUserNotification({ user_id: userId, type: 'maintenance_window_overdue', title: '维护窗口已逾期', content: 'Maintenance window ' + (window.title || '') + ' has passed its scheduled end time and still requires attention.', related_type: 'maintenance_window', related_id: window.id, device_id: window.device_id }, (sql, params) => client.query(sql, params));
           if (written) result.overdue_notifications += 1;
         }
-        await log('maintenance_window_overdue', { message: 'Maintenance window overdue', window_id: window.id, work_order_id: window.work_order_id }, { role: 'system' }, window.device_id, window.id, (sql, params) => client.query(sql, params));
+        await log('maintenance_window_overdue', { message: '维护窗口已逾期', window_id: window.id, work_order_id: window.work_order_id }, { role: 'system' }, window.device_id, window.id, (sql, params) => client.query(sql, params));
       }
     });
     return result;

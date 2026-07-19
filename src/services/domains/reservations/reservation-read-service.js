@@ -156,9 +156,15 @@ function createReservationReadService(context = {}) {
       select b.*,
         count(ri.id)::int as item_count,
         count(distinct ri.device_id)::int as device_count,
-        count(distinct (ri.start_time at time zone 'Asia/Shanghai')::date)::int as date_count
+        count(distinct (ri.start_time at time zone 'Asia/Shanghai')::date)::int as date_count,
+        string_agg(distinct d.name, '、') as device_names,
+        min(ri.start_time) as first_start_time,
+        max(ri.end_time) as last_end_time,
+        count(*) filter (where ri.status='approved')::int as approved_count,
+        count(*) filter (where ri.status='in_use')::int as in_use_count
       from reservation_batches b
-      left join reservation_items ri on ri.batch_id = b.id
+      left join reservation_items ri on ri.batch_id = b.id and ri.deleted_at is null
+      left join devices d on d.id = ri.device_id
       where b.user_id = $1
       group by b.id
       order by b.created_at desc
@@ -261,9 +267,9 @@ function createReservationReadService(context = {}) {
   }
 
   function approvalActionLabel(action) {
-    if (action === 'reject_or_hold') return '建议暂缓/拒绝';
-    if (action === 'manual_review') return '建议人工复核';
-    return '低风险，可通过';
+    if (action === 'reject_or_hold') return '建议暂缓';
+    if (action === 'manual_review') return '需人工复核';
+    return '可过';
   }
 
   function slotText(slotKey) {
@@ -370,7 +376,7 @@ function createReservationReadService(context = {}) {
     const maxDemand = Math.max(0, ...(demandRows || []).map((row) => Number(row.count || 0)));
     const userHistory = await queryOne(`
       select
-        (select count(*)::int from reservation_items where user_id = $1 and created_at >= now() - interval '90 days' and status in ('no_show','cancelled','rejected')) as reservation_exceptions,
+        (select count(*)::int from reservation_items where user_id = $1 and start_time >= now() - interval '90 days' and status in ('no_show','cancelled','rejected')) as reservation_exceptions,
         (select count(*)::int from borrow_records where user_id = $1 and borrow_time >= now() - interval '90 days' and (is_overdue = true or status in ('overdue','abnormal_pending') or (return_condition is not null and return_condition <> 'normal'))) as borrow_exceptions,
         (select count(*)::int from device_fault_reports where user_id = $1 and created_at >= now() - interval '90 days') as fault_reports
     `, [batch.user_id]) || { reservation_exceptions: 0, borrow_exceptions: 0, fault_reports: 0 };
@@ -385,35 +391,33 @@ function createReservationReadService(context = {}) {
         action_url: '/admin/reservations'
       };
       if (!item.allow_reservation || ['maintenance', 'disabled', 'abnormal_pending'].includes(item.device_status)) {
-        riskItems.push(approvalItem('danger', 'device_unavailable', `设备 ${item.device_code || ''} 当前状态不可预约，建议拒绝或先处理设备状态。`, {
+        riskItems.push(approvalItem('danger', 'device_unavailable', `${item.device_code || '设备'}不可约`, {
           ...base,
           device_status: item.device_status,
           allow_reservation: !!item.allow_reservation,
-          evidence: [`设备状态：${item.device_status || '未知'}`, `允许预约：${item.allow_reservation ? '是' : '否'}`]
+          evidence: [item.device_status || '未知', item.allow_reservation ? '可约' : '不可约']
         }));
       }
       const metric = deviceMetrics.get(String(item.device_id)) || {};
       const deviceRiskScore = Number(metric.risk_score || 0);
       if (deviceRiskScore >= 70 || Number(metric.open_fault_count || 0) > 0 || Number(metric.high_fault_count || 0) > 0) {
-        riskItems.push(approvalItem(deviceRiskScore >= 70 ? 'danger' : 'warning', 'device_risk_score', `设备 ${item.device_code || ''} 近 30 天风险分 ${deviceRiskScore}，建议审批前确认故障和维护状态。`, {
+        riskItems.push(approvalItem(deviceRiskScore >= 70 ? 'danger' : 'warning', 'device_risk_score', `${item.device_code || '设备'}风险${deviceRiskScore}`, {
           ...base,
           risk_score: deviceRiskScore,
           evidence: [
-            `故障 ${Number(metric.fault_count || 0)} 次`,
-            `高严重度 ${Number(metric.high_fault_count || 0)} 次`,
-            `未处理 ${Number(metric.open_fault_count || 0)} 次`,
-            `逾期 ${Number(metric.overdue_count || 0)} 次`,
-            `异常归还 ${Number(metric.abnormal_return_count || 0)} 次`
+            `故障${Number(metric.fault_count || 0)}`,
+            `未处理${Number(metric.open_fault_count || 0)}`,
+            `逾期${Number(metric.overdue_count || 0)}`
           ]
         }));
       }
       const demandCount = demandMap.get(`${item.start_weekday || ''}:${item.slot_key || 'custom'}`) || 0;
       const isPeak = demandCount >= 3 && (maxDemand <= 0 || demandCount / maxDemand >= 0.65);
       if (isPeak) {
-        insightItems.push(approvalItem('info', 'peak_slot', `该申请命中近 90 天高峰：周 ${item.start_weekday || '—'} ${slotText(item.slot_key)}，历史预约 ${demandCount} 次。`, {
+        insightItems.push(approvalItem('info', 'peak_slot', `高峰 周${item.start_weekday || '—'} ${slotText(item.slot_key)} · ${demandCount}次`, {
           ...base,
           demand_count: demandCount,
-          evidence: ['高峰时段不一定拒绝，但建议优先检查冲突和归还窗口。']
+          evidence: ['高峰时段']
         }));
       }
       const conflictRows = await query(`
@@ -429,14 +433,14 @@ function createReservationReadService(context = {}) {
         limit 5
       `, [item.device_id, batchId, item.start_time, item.end_time, activeReservationStatus]);
       for (const conflict of conflictRows || []) {
-        riskItems.push(approvalItem(conflict.status === 'approved' || conflict.status === 'in_use' ? 'danger' : 'warning', 'time_conflict', `设备 ${item.device_code || ''} 在该时段已有${conflict.status === 'pending' ? '待审批' : '已占用'}预约。`, {
+        riskItems.push(approvalItem(conflict.status === 'approved' || conflict.status === 'in_use' ? 'danger' : 'warning', 'time_conflict', `${item.device_code || '设备'}时段冲突`, {
           ...base,
           conflict_item_id: conflict.id,
           conflict_batch_id: conflict.batch_id,
           conflict_status: conflict.status,
           conflict_start_time: conflict.start_time,
           conflict_end_time: conflict.end_time,
-          evidence: [`冲突状态：${conflict.status}`, `冲突申请人：${conflict.user_name || '—'}`]
+          evidence: [conflict.user_name || '—', conflict.status]
         }));
       }
       const borrowRows = await query(`
@@ -451,11 +455,11 @@ function createReservationReadService(context = {}) {
         limit 5
       `, [item.device_id, item.start_time, item.end_time, ['in_use', 'abnormal_pending', 'overdue']]);
       for (const borrow of borrowRows || []) {
-        riskItems.push(approvalItem('danger', 'borrow_conflict', `设备 ${item.device_code || ''} 在该时段可能仍处于借用/异常未归还状态。`, {
+        riskItems.push(approvalItem('danger', 'borrow_conflict', `${item.device_code || '设备'}仍在借用`, {
           ...base,
           borrow_record_id: borrow.id,
           borrow_status: borrow.status,
-          evidence: [`借用状态：${borrow.status}`, `借用人：${borrow.user_name || '—'}`]
+          evidence: [borrow.user_name || '—', borrow.status]
         }));
       }
     }
@@ -467,20 +471,22 @@ function createReservationReadService(context = {}) {
       limit 5
     `, [batch.user_id, ['in_use', 'abnormal_pending', 'overdue']]);
     for (const borrow of unfinishedBorrowRows || []) {
-      riskItems.push(approvalItem(borrow.status === 'overdue' || borrow.status === 'abnormal_pending' ? 'danger' : 'warning', 'user_unfinished_borrow', `申请人存在未完成借用记录（${borrow.status}），建议审批前确认归还情况。`, {
+      riskItems.push(approvalItem(borrow.status === 'overdue' || borrow.status === 'abnormal_pending' ? 'danger' : 'warning', 'user_unfinished_borrow', `未完成借用`, {
         borrow_record_id: borrow.id,
         borrow_status: borrow.status,
+        borrow_time: borrow.borrow_time,
+        expected_return_time: borrow.expected_return_time,
         evidence: [`借用开始：${borrow.borrow_time || '—'}`, `预计归还：${borrow.expected_return_time || '—'}`]
       }));
     }
     const userExceptionCount = Number(userHistory.reservation_exceptions || 0) + Number(userHistory.borrow_exceptions || 0);
     if (userExceptionCount > 0) {
-      riskItems.push(approvalItem(userExceptionCount >= 3 ? 'warning' : 'info', 'user_history', `申请人近 90 天有 ${userExceptionCount} 条预约/借还异常记录，建议结合用途和历史沟通判断。`, {
+      riskItems.push(approvalItem(userExceptionCount >= 3 ? 'warning' : 'info', 'user_history', `近90天异常${userExceptionCount}`, {
         user_id: batch.user_id,
         evidence: [
-          `预约取消/拒绝/缺席：${Number(userHistory.reservation_exceptions || 0)} 条`,
-          `借还逾期/异常：${Number(userHistory.borrow_exceptions || 0)} 条`,
-          `故障上报：${Number(userHistory.fault_reports || 0)} 条`
+          `预约异常${Number(userHistory.reservation_exceptions || 0)}`,
+          `借还异常${Number(userHistory.borrow_exceptions || 0)}`,
+          `故障${Number(userHistory.fault_reports || 0)}`
         ]
       }));
     }
@@ -500,11 +506,11 @@ function createReservationReadService(context = {}) {
       confidence: pendingItems.length ? Math.max(55, Math.min(95, 70 + allSignals.length * 4)) : 50,
       signal_counts: { danger: dangerCount, warning: warningCount, info: infoCount },
       summary: riskLevel === 'safe'
-        ? `智能审批建议：${approvalActionLabel(action)}。未发现明显冲突，可安全审批。`
-        : `智能审批建议：${approvalActionLabel(action)}。发现 ${dangerCount} 条高风险、${warningCount} 条需复核信号，请确认后再处理。`,
+        ? approvalActionLabel(action)
+        : `${approvalActionLabel(action)} · 高风险${dangerCount} · 需复核${warningCount}`,
       recommendation: riskLevel === 'safe'
-        ? '未发现设备占用、状态异常或用户未完成借用；可按常规流程通过。'
-        : '请优先查看高风险设备、时段冲突、未归还记录和用户历史异常，再决定通过、拒绝或联系申请人。',
+        ? '可正常审批'
+        : '优先核对冲突、未归还与异常记录',
       items: allSignals.sort((a, b) => Number(b.score || 0) - Number(a.score || 0))
     };
     return ok({ batch, items: reservations, reservations, approval_logs: approvalLogs || [], approval_risk: approvalRisk });

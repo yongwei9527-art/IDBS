@@ -3,6 +3,12 @@
 const MAX_REPORT_PUSH_ROWS = 25;
 const MAX_WECHAT_TEXT_LENGTH = 1800;
 
+function conditionText(value) {
+  const map = { normal: '正常', abnormal: '异常', minor_scratch: '轻微划痕', temperature_unstable: '温度不稳', missing_accessory: '配件缺失', appearance_damage: '外观损坏', operation_abnormal: '运行异常', other: '其他异常', in_use: '使用中', returned: '已归还', overdue: '逾期', abnormal_pending: '异常待处理', return_pending: '待验收', completed: '已完成' };
+  const key = String(value || '');
+  return map[key] || key;
+}
+
 function createWechatPushService(context = {}) {
   const {
     assertText,
@@ -236,9 +242,9 @@ function createWechatPushService(context = {}) {
       lines.push(`   借出：${formatDateTimeForTimezone(row.borrow_time, timeZone)}`);
       lines.push(`   归还：${row.return_time ? formatDateTimeForTimezone(row.return_time, timeZone) : '未归还'}`);
       lines.push(`   时长：${duration}`);
-      lines.push(`   状态：${row.record_status || '-'}`);
+      lines.push(`   状态：${conditionText(row.record_status) || '-'}`);
       if (row.return_condition && row.return_condition !== 'normal') {
-        lines.push(`   异常：${row.return_condition}`);
+        lines.push(`   异常：${conditionText(row.return_condition)}`);
       }
       lines.push('');
     });

@@ -49,3 +49,13 @@ A terminal work-order update with `restore_available=true` returns a `recovery` 
 A user-submitted return is a handover request, not an immediate availability change. The record enters `return_pending` for a normal return or `abnormal_pending` for an abnormal return; the device remains unavailable until an authorised operator reviews it through `GET /api/v5/admin/return-tasks` and `PATCH /api/v5/admin/return-tasks/:id/review`. A successful normal acceptance writes a `receive_records` audit record and restores the device to `available`. Marking a return abnormal keeps the device blocked for fault and maintenance handling.
 
 The same task queue also includes `in_use` borrow records past `expected_return_time`. Treat overdue borrow, pending acceptance, and abnormal return counts as operational tasks; do not force a device to available outside the review flow.
+
+
+## Database backup
+
+Daily full logical backups are produced by `npm run db:backup` (see `docs/production-security-checklist.md`).
+
+- Install Linux cron: `bash scripts/install-backup-schedule.sh`
+- Verify latest dump: `npm run db:backup:verify`
+- Default retention: 14 days (`BACKUP_RETENTION_DAYS`)
+- Do not treat business CSV exports as a substitute for database backups.

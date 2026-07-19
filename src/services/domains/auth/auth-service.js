@@ -15,16 +15,17 @@ function createAuthService(context = {}) {
     queryOne,
     verifyPassword,
     verifySecret,
-    userAccessMessage
+    userAccessMessage,
+    recordUserEvent
   } = context;
 
   async function upgradeStoredPassword(table, idColumn, id, password, salt) {
-    const upgradedHash = hashPassword(password, salt);
+    const upgradedHash = await hashPassword(password, salt);
     await query(`update ${table} set password_hash = $1 where ${idColumn} = $2`, [upgradedHash, id]);
   }
 
   async function upgradeAdminPassword(password, salt) {
-    const upgradedHash = hashPassword(password, salt);
+    const upgradedHash = await hashPassword(password, salt);
     await query(`
       insert into system_configs (config_key, config_value, description, updated_at)
       values ('admin_password_hash', $1, 'Admin password hash', now())
@@ -36,7 +37,7 @@ function createAuthService(context = {}) {
     const password = assertText(payload.password, 'password', 100);
     const adminAuth = await getAdminAuthConfig();
     if (adminAuth.has_custom_admin_password) {
-      if (!verifyPassword(password, adminAuth.admin_password_salt, adminAuth.admin_password_hash)) {
+      if (!(await verifyPassword(password, adminAuth.admin_password_salt, adminAuth.admin_password_hash))) {
         return fail('管理员密码不正确。', 401, 1001);
       }
       if (needsPasswordRehash(adminAuth.admin_password_hash)) {
@@ -58,13 +59,49 @@ function createAuthService(context = {}) {
     const phone = assertPhone(payload.phone);
     const password = assertPassword(payload.password);
     const user = await queryOne('select * from users where phone = $1 limit 1', [phone]);
-    if (!user || !verifyPassword(password, user.password_salt, user.password_hash)) {
+    if (!user || !(await verifyPassword(password, user.password_salt, user.password_hash))) {
+      if (typeof recordUserEvent === 'function') {
+        await recordUserEvent({
+          user_id: user?.id || null,
+          user_name: user?.name || '',
+          phone,
+          event_type: 'login_failed',
+          device_type: context.deviceType || '',
+          client_key: context.clientKey || '',
+          ip_address: context.ip || '',
+          remark: user ? 'bad_password' : 'unknown_phone'
+        }).catch(() => {});
+      }
       return fail('手机号或密码不正确。', 401, 1001);
     }
     if (user.is_banned) {
+      if (typeof recordUserEvent === 'function') {
+        await recordUserEvent({
+          user_id: user.id,
+          user_name: user.name,
+          phone,
+          event_type: 'login_denied',
+          device_type: context.deviceType || '',
+          client_key: context.clientKey || '',
+          ip_address: context.ip || '',
+          remark: 'banned'
+        }).catch(() => {});
+      }
       return fail(userAccessMessage(user), 403, 1003);
     }
     if (user.status !== 'active') {
+      if (typeof recordUserEvent === 'function') {
+        await recordUserEvent({
+          user_id: user.id,
+          user_name: user.name,
+          phone,
+          event_type: 'login_denied',
+          device_type: context.deviceType || '',
+          client_key: context.clientKey || '',
+          ip_address: context.ip || '',
+          remark: user.status || 'inactive'
+        }).catch(() => {});
+      }
       return fail(userAccessMessage(user), 403, 1003);
     }
     if (needsPasswordRehash(user.password_hash)) {

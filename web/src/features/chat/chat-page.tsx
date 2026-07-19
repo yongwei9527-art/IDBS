@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { MessageSquare } from 'lucide-react';
+import { MessageSquare, Pin } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -22,17 +22,22 @@ function ConvItem({ c }: { c: ChatConversation }) {
   const nav = useNavigate();
   const preview = c.last_message_preview || '暂无消息';
   const time = c.last_message_at ? new Date(c.last_message_at).toLocaleString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '';
+  const pinned = c.system_key === 'lab_management' || (c.is_system && ['实验管理群', '实验管理总群'].includes(c.title || ''));
   return (
     <button
       onClick={() => nav({ to: `/chat/${c.id}`, search: preserveChatContextSearch() } as any)}
-      className="ops-list-item flex w-full items-start gap-3 p-3 text-left"
+      className={`ops-list-item flex w-full items-start gap-3 p-3 text-left ${pinned ? 'border-primary/35 bg-primary/[0.05]' : ''}`}
     >
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted">
         <MessageSquare className="h-4 w-4 text-muted-foreground" />
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <p className="truncate text-sm font-medium">{c.title || '未命名'}</p>
+          <p className="flex min-w-0 items-center gap-1.5 truncate text-sm font-medium">
+            {pinned ? <Pin className="h-3.5 w-3.5 shrink-0 text-primary" /> : null}
+            <span className="truncate">{c.title || '未命名'}</span>
+            {pinned ? <span className="badge-pill badge-info shrink-0">置顶</span> : null}
+          </p>
           {time && <p className="shrink-0 text-xs tabular-nums text-muted-foreground">{time}</p>}
         </div>
         <div className="mt-0.5 flex items-center gap-2">
@@ -45,6 +50,11 @@ function ConvItem({ c }: { c: ChatConversation }) {
           {c.type === 'group' && (
             <span className="shrink-0 text-[10px] text-muted-foreground">{c.participants?.length || 0}人</span>
           )}
+          {c.is_temporary_group && c.remaining_label ? (
+            <span className="shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+              {c.remaining_label}
+            </span>
+          ) : null}
         </div>
       </div>
     </button>

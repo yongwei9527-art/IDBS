@@ -39,7 +39,6 @@ function NotFoundPage() {
   return (
     <div className="flex min-h-svh items-center justify-center bg-muted p-6">
       <div className="w-full max-w-md rounded-[var(--radius-lg)] border bg-card p-6 text-center shadow-sm">
-        <p className="text-xs font-black uppercase tracking-wider text-primary">IDBS 5.0</p>
         <h1 className="mt-2 text-2xl font-bold">页面不存在</h1>
         <p className="mt-2 text-sm text-muted-foreground">这个地址没有对应的新版本页面，可能是链接过期或路径输入有误。</p>
         <div className="mt-5 flex flex-wrap justify-center gap-2">

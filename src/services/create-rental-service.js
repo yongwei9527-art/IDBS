@@ -1,4 +1,4 @@
-﻿const { AppError } = require('../lib/app-error');
+const { AppError } = require('../lib/app-error');
 const { verifyJwt } = require('../lib/auth');
 const path = require('path');
 const {
@@ -16,6 +16,18 @@ const {
   assertText
 } = require('./core/validation');
 const { createCryptoUtils } = require('./core/crypto-utils');
+const {
+  RESERVATION_SLOT_PRESETS,
+  DEFAULT_RESERVATION_SLOT_KEYS,
+  parseDates,
+  normalizeReservationSlotOptions,
+  getReservationSlotPreset,
+  reservationSlotTimesMatch,
+  normalizeReservationSlotKeys,
+  withReservationSlotOptions,
+  buildReservationSlotsFromKeys,
+  assertNoOverlappingSlots
+} = require('./core/reservation-slot-utils');
 const {
   compactDateTimeRangeForTimezone,
   durationMinutes,
@@ -101,14 +113,6 @@ function createRentalService(options) {
     { key: 'fault', label: '设备维修员', description: '设备故障、维修处理、异常恢复与现场检查' },
     { key: 'usage', label: '值班管理员（紧急联系）', description: '紧急情况、现场协助、无法归类的问题' }
   ];
-  const RESERVATION_SLOT_PRESETS = [
-    { key: 'morning', label: '上午 8:00-12:00', start: '08:00', end: '12:00', type: 'base' },
-    { key: 'afternoon', label: '下午 12:00-17:00', start: '12:00', end: '17:00', type: 'base' },
-    { key: 'evening', label: '傍晚 17:00-22:00', start: '17:00', end: '22:00', type: 'base' },
-    { key: 'night', label: '夜间 22:00-次日 8:00', start: '22:00', end: '08:00', crosses_midnight: true, type: 'base' },
-    { key: 'daytime', label: '白天 8:00-22:00（14小时）', start: '08:00', end: '22:00', type: 'shortcut' }
-  ];
-  const DEFAULT_RESERVATION_SLOT_KEYS = RESERVATION_SLOT_PRESETS.map((item) => item.key);
   function uuid() { return crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex'); }
 
   function authTokenFromReq(req) {
@@ -117,162 +121,6 @@ function createRentalService(options) {
     return req.body?.token || req.query?.token || '';
   }
 
-  function parseDates(startTime, endTime) {
-    const start = new Date(startTime);
-    const end = new Date(endTime);
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-      throw new AppError('时间格式不正确。', { status: 400, code: 2001 });
-    }
-    if (end <= start) {
-      throw new AppError('结束时间必须晚于开始时间。', { status: 400, code: 2001 });
-    }
-    if (start < new Date(Date.now() - 5 * 60_000)) {
-      throw new AppError('不能预约已过去的时间段。', { status: 400, code: 3001 });
-    }
-    return { start, end };
-  }
-
-  function normalizeSlotTimeText(value, fallback = '') {
-    const text = String(value || '').trim();
-    const match = text.match(/^(\d{1,2}):(\d{2})(?::\d{2})?/);
-    if (!match) return fallback;
-    const hour = Number(match[1]);
-    const minute = Number(match[2]);
-    if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return fallback;
-    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-  }
-
-  function normalizeReservationSlotOption(item) {
-    const raw = typeof item === 'string' ? { key: item } : (item || {});
-    const rawKey = raw.key || raw.slot_key;
-    const preset = RESERVATION_SLOT_PRESETS.find((slot) => slot.key === rawKey) || {};
-    const key = String(rawKey || preset.key || '').trim();
-    if (!key || !RESERVATION_SLOT_PRESETS.some((slot) => slot.key === key)) return null;
-    const start = normalizeSlotTimeText(raw.start || raw.start_time, preset.start);
-    const end = normalizeSlotTimeText(raw.end || raw.end_time, preset.end);
-    return {
-      ...preset,
-      key,
-      label: String(raw.label || preset.label || key).trim().slice(0, 80),
-      start,
-      end,
-      crosses_midnight: raw.crosses_midnight === true || raw.crosses_day === true || (start && end && end <= start),
-      type: raw.type || preset.type || 'base'
-    };
-  }
-
-  function normalizeReservationSlotOptions(value, fallback = RESERVATION_SLOT_PRESETS) {
-    let raw = value;
-    if (typeof value === 'string') {
-      try {
-        raw = JSON.parse(value);
-      } catch (_) {
-        raw = value.split(',');
-      }
-    }
-    const list = Array.isArray(raw) ? raw : [];
-    const unique = [];
-    for (const item of list) {
-      const option = normalizeReservationSlotOption(item);
-      if (option && !unique.some((slot) => slot.key === option.key)) unique.push(option);
-    }
-    return unique.length ? unique : fallback.map(normalizeReservationSlotOption).filter(Boolean);
-  }
-
-  function getReservationSlotPreset(key, devices = []) {
-    for (const device of devices || []) {
-      const option = normalizeReservationSlotOptions(device.reservation_slot_keys, []).find((item) => item.key === key);
-      if (option) return option;
-    }
-    return RESERVATION_SLOT_PRESETS.find((item) => item.key === key) || null;
-  }
-
-  function reservationSlotTimesMatch(first = {}, second = {}) {
-    const left = normalizeReservationSlotOption(first);
-    const right = normalizeReservationSlotOption(second);
-    if (!left || !right) return false;
-    return left.key === right.key
-      && left.start === right.start
-      && left.end === right.end
-      && Boolean(left.crosses_midnight) === Boolean(right.crosses_midnight);
-  }
-
-  function normalizeReservationSlotKeys(value, fallback = DEFAULT_RESERVATION_SLOT_KEYS) {
-    const valid = normalizeReservationSlotOptions(value, []).map((slot) => slot.key);
-    return valid.length ? valid : [...fallback];
-  }
-
-  function withReservationSlotOptions(device = {}) {
-    const reservationSlotOptions = normalizeReservationSlotOptions(device.reservation_slot_keys);
-    const reservationSlotKeys = reservationSlotOptions.map((slot) => slot.key);
-    return {
-      ...device,
-      reservation_slot_keys: reservationSlotKeys,
-      reservation_slot_options: reservationSlotOptions
-    };
-  }
-
-  function addDaysToDateText(dateText, days) {
-    const [year, month, day] = dateText.split('-').map(Number);
-    const date = new Date(Date.UTC(year, month - 1, day + days));
-    return date.toISOString().slice(0, 10);
-  }
-
-  function slotToDateRange(dateText, slot) {
-    const endDate = slot.crosses_midnight ? addDaysToDateText(dateText, 1) : dateText;
-    return {
-      key: slot.key,
-      label: slot.label,
-      ...parseDates(`${dateText}T${slot.start}:00+08:00`, `${endDate}T${slot.end}:00+08:00`)
-    };
-  }
-
-  function assertNoOverlappingSlots(slots) {
-    const sorted = [...slots].sort((a, b) => a.start - b.start);
-    for (let index = 1; index < sorted.length; index += 1) {
-      if (sorted[index].start < sorted[index - 1].end) {
-        throw new AppError('选择的时间段存在重叠，请重新选择。', { status: 400, code: 2001 });
-      }
-    }
-  }
-
-  function buildReservationSlotsFromKeys(payload, devices = []) {
-    const dateTexts = parseReservationDates(payload.reservation_dates || payload.reservationDates || payload.reservation_date || payload.reservationDate);
-    if (!dateTexts.length) {
-      throw new AppError('请选择预约日期。', { status: 400, code: 2001 });
-    }
-
-    const slotKeys = normalizeReservationSlotKeys(payload.slot_keys || payload.slotKeys, []);
-    if (!slotKeys.length) {
-      throw new AppError('请选择预约时间段。', { status: 400, code: 2001 });
-    }
-
-    for (const device of devices || []) {
-      const allowedKeys = normalizeReservationSlotKeys(device.reservation_slot_keys);
-      const blockedKey = slotKeys.find((key) => !allowedKeys.includes(key));
-      if (blockedKey) {
-        throw new AppError(`设备 ${device.device_code || ''} 不支持所选时间段，请重新选择。`, { status: 409, code: 3001 });
-      }
-    }
-
-    for (const key of slotKeys) {
-      const configuredSlots = (devices || [])
-        .map((device) => normalizeReservationSlotOptions(device.reservation_slot_keys, []).find((slot) => slot.key === key))
-        .filter(Boolean);
-      const firstSlot = configuredSlots[0];
-      const incompatibleSlot = firstSlot && configuredSlots.find((slot) => !reservationSlotTimesMatch(firstSlot, slot));
-      if (incompatibleSlot) {
-        throw new AppError(`所选设备的 ${key} 时间段不一致，请分开预约。`, { status: 409, code: 3001 });
-      }
-    }
-
-    const slots = [];
-    for (const dateText of dateTexts) {
-      slots.push(...slotKeys.map((key) => slotToDateRange(dateText, getReservationSlotPreset(key, devices))));
-    }
-    assertNoOverlappingSlots(slots);
-    return slots;
-  }
 
   function parseReservationDates(value) {
     const raw = Array.isArray(value)
@@ -1143,6 +991,7 @@ function createRentalService(options) {
     const type = String(payload.type || 'usage').trim();
     const exportPermissionRules = {
       usage: { all: ['stats.export'] },
+      successful_usage: { all: ['stats.export'], any: ['return.export', 'return.view', 'return.confirm', 'return.image_review'] },
       returns: { all: ['stats.export'], any: ['return.export', 'return.view', 'return.confirm', 'return.image_review'] },
       reservations: { all: ['stats.export'], any: ['reservation.view', 'reservation.approve', 'reservation.change_plan'] },
       faults: { all: ['stats.export'], any: ['device.view', 'fault.manage', 'return.view', 'return.confirm', 'return.image_review'] },
@@ -1169,6 +1018,24 @@ function createRentalService(options) {
     if (type === 'usage') {
       const result = await usageStats(payload, token);
       return ok({ type, rows: result.rows || [], summary: result.summary || {} });
+    }
+    if (type === 'successful_usage') {
+      if (userId) { params.push(userId); clauses.push(`b.user_id = $${params.length}`); }
+      if (deviceId) { params.push(deviceId); clauses.push(`b.device_id = $${params.length}`); }
+      clauses.push(`b.status = 'returned'`);
+      clauses.push('b.deleted_at is null');
+      addRange('coalesce(b.return_time, b.actual_end_time)');
+      const rows = await query(`
+        select b.*, d.device_code, d.name as device_name,
+          u.name as user_name, u.phone as user_phone, u.student_no as user_student_no
+        from borrow_records b
+        left join devices d on d.id = b.device_id
+        left join users u on u.id = b.user_id
+        ${whereSql()}
+        order by coalesce(b.return_time, b.actual_end_time) desc
+        limit 5000
+      `, params);
+      return ok({ type, rows: rows || [] });
     }
     if (type === 'returns') {
       if (userId) { params.push(userId); clauses.push(`b.user_id = $${params.length}`); }
@@ -1290,12 +1157,12 @@ function createRentalService(options) {
   const { adminCreateDevice, adminGetDeviceDetail, adminSetDeviceAvailable, adminUpdateDevice } = deviceAdminService;
 
   const exportService = createExportService({ adminExportData, effectiveRolePermissions, fail, log, nowIso, ok, query, queryOne, requireAdminRole, safeFilename, uploadDir, uuid, withTransaction });
-  const { adminCreateExportJob, adminGetExportJobDownload, adminListExportJobs, adminRunNextExportJob } = exportService;
+  const { adminCreateExportJob, adminGetExportJobDownload, adminListExportJobs, adminRunNextExportJob, archiveDailySuccessfulUsage } = exportService;
 
   const dashboardService = createDashboardService({ currentReservationDateCondition, ok, query, queryOne, requireAdminRole });
   const { adminDashboard } = dashboardService;
 
-  const authService = createAuthService({ adminPassword, assertPassword, assertPhone, assertText, fail, finalizeUserLogin, getAdminAuthConfig, hashPassword, makeToken, needsPasswordRehash, ok, query, queryOne, verifyPassword, verifySecret, userAccessMessage });
+  const authService = createAuthService({ adminPassword, assertPassword, assertPhone, assertText, fail, finalizeUserLogin, getAdminAuthConfig, hashPassword, makeToken, needsPasswordRehash, ok, query, queryOne, recordUserEvent, verifyPassword, verifySecret, userAccessMessage });
   const { adminLogin, loginUser, registerUser } = authService;
 
   const adminSystemService = createAdminSystemService({
@@ -1347,7 +1214,7 @@ function createRentalService(options) {
     resolveServiceAuth,
     withTransaction
   });
-  const { addChatParticipants, addUserToManagementGroup, bootstrapSystem, canSubscribeChatChannel, createChatConversation, dissolveChatConversation, leaveChatConversation, listChatConversations, listChatMessages, listChatUsers, markChatConversationRead, removeChatParticipant, removeUserFromManagementGroup, resolveRealtimePrincipal, sendChatMessage, streamChatEvents } = chatService;
+  const { addChatParticipants, addUserToManagementGroup, bootstrapSystem, canSubscribeChatChannel, cleanupExpiredTemporaryGroups, createChatConversation, dissolveChatConversation, leaveChatConversation, listChatConversations, listChatMessages, listChatUsers, markChatConversationRead, removeChatParticipant, removeUserFromManagementGroup, resolveRealtimePrincipal, sendChatMessage, streamChatEvents } = chatService;
 
   const wechatService = createWechatService({
     assertPhone,
@@ -1431,7 +1298,7 @@ function createRentalService(options) {
     uuid,
     withTransaction
   });
-  const { adminListFaultReports, adminListUserRequests, adminResolveFaultReport, adminReviewUserRequest, cancelUserRequest, createUserRequest, listMyFaultReports, listMyUserRequests, reportDeviceFault, requestUserRequestChange, updateUserRequest } = faultRequestService;
+  const { adminListFaultReports, adminListUserRequests, adminNotifyAffectedFaultUsers, adminResolveFaultReport, adminReviewUserRequest, cancelUserRequest, createUserRequest, listMyFaultReports, listMyUserRequests, reportDeviceFault, requestUserRequestChange, updateUserRequest } = faultRequestService;
 
   const maintenanceService = createMaintenanceService({
     assertText, checkConflictInTransaction, createUserNotification, fail, getById, lockDeviceSchedule, log, nowIso, ok, parseBoolean, query, requireAdminRole, uuid, withTransaction
@@ -1494,6 +1361,7 @@ function createRentalService(options) {
   const borrowReturnService = createBorrowReturnService({
     appendUsageLog,
     assertText,
+    createUserNotification,
     durationMinutes,
     fail,
     getById,
@@ -1511,18 +1379,16 @@ function createRentalService(options) {
     uuid,
     withTransaction
   });
-  const { adminListReturnTasks, adminReviewReturn, extendBorrow, startUse, submitReturn } = borrowReturnService;
+  const { adminListReturnTasks, adminReviewReturn, autoStartDueReservations, extendBorrow, precheckBorrowExtension, startReservationBatch, startUse, submitReturn, supplementReturnMaterials } = borrowReturnService;
 
-  const reservationReminderService = createReservationReminderService({ createUserNotification, nowIso, query, uuid });
+  const reservationReminderService = createReservationReminderService({ autoStartDueReservations, createUserNotification, nowIso, query, uuid });
   const { runReservationReminderLifecycle } = reservationReminderService;
 
   // v5 桥接：把 JWT payload 转 2.x makeToken，供 v5 路由复用 2.x service 方法。
   // auth: { sub, scope, role, perms, name }
 
 
-  return { runReservationReminderLifecycle, adminAnalyticsDeviceUsage, adminListReturnTasks, adminReviewReturn, adminCreateMaintenancePlan, adminCreateMaintenanceWorkOrder, adminListMaintenancePlans, adminListMaintenanceWorkOrders, adminMaintenanceOverview, adminUpdateMaintenancePlan, adminUpdateMaintenanceWorkOrder, adminAnalyticsFaults, adminAnalyticsIntelligence, adminAnalyticsOverview, adminAnalyticsTimeHeatmap, adminListIntelligenceActionLogs, adminUpdateIntelligenceAction, adminApproveReservation, adminApproveReservationBatch, adminBulkApproveReservations, adminChangeReservationPlan, adminMarkReservationNoShow, adminReviewReservationCancellation, adminCreateDevice, adminCreateExportJob, adminGetExportJobDownload, adminDashboard, adminDeleteUser, adminExportData, adminGetActivitySummary, adminGetDeviceDetail, adminGetReservationBatch, adminGetSecurityConfig, adminGetUserDetail, adminListDevices, adminListExportJobs, adminListReservationBatches, adminListReservations, adminListRoles, adminListUsers, adminLogin, adminOperationLogs, adminOptions, adminPermissions, adminPreviewDailyUsageReport, adminRunNextExportJob, adminSendDailyUsageReport, adminRevokeRole, adminSetDeviceAvailable, adminSetUserBan, adminSetUserStatus, adminUnbindWechat, adminUpdateDevice, adminUpdateSecurityConfig, adminUpsertRole, adminUserRoles, adminListFaultReports, adminResolveFaultReport, adminListUserRequests, adminReviewUserRequest, addChatParticipants, authTokenFromReq, bindWechatAccount, bootstrapSystem, buildWechatReply, canSubscribeChatChannel, cancelReservation, cancelReservationItem, cancelUserRequest, createChatConversation, createLoginChallenge, createReservation, createUserRequest, dissolveChatConversation, leaveChatConversation, getCalendarDay, getCalendarEvents, getReportConfig, getDeviceDetail, getDeviceTimeSlots, getLoginChallengeStatus, getProfile, getReservationBatch, getReservationSlotOptions, getSystemNotice, getStaffContacts, handleWechatMessage, listChatConversations, listChatMessages, listChatUsers, listDevices, listMyNotifications, listMyFaultReports, listMyUserRequests, listReservationBatches, loginUser, markChatConversationRead, markMyNotificationsRead, myRecords, precheckReservation, registerUser, removeChatParticipant, reportDeviceFault, requestUserRequestChange, resolveRealtimePrincipal, safeFilename, sendChatMessage, sendWechatCustomMessage, shouldBlockIpAccess, extendBorrow, startUse, streamChatEvents, submitReturn, pushDailyUsageReport, runMaintenanceWindowLifecycle, updateUserRequest, usageStats, verifyWechatHandshake };
+  return { runReservationReminderLifecycle, archiveDailySuccessfulUsage, adminAnalyticsDeviceUsage, adminListReturnTasks, adminReviewReturn, adminCreateMaintenancePlan, adminCreateMaintenanceWorkOrder, adminListMaintenancePlans, adminListMaintenanceWorkOrders, adminMaintenanceOverview, adminUpdateMaintenancePlan, adminUpdateMaintenanceWorkOrder, adminAnalyticsFaults, adminAnalyticsIntelligence, adminAnalyticsOverview, adminAnalyticsTimeHeatmap, adminListIntelligenceActionLogs, adminUpdateIntelligenceAction, adminApproveReservation, adminApproveReservationBatch, adminBulkApproveReservations, adminChangeReservationPlan, adminMarkReservationNoShow, adminReviewReservationCancellation, adminCreateDevice, adminCreateExportJob, adminGetExportJobDownload, adminDashboard, adminDeleteUser, adminExportData, adminGetActivitySummary, adminGetDeviceDetail, adminGetReservationBatch, adminGetSecurityConfig, adminGetUserDetail, adminListDevices, adminListExportJobs, adminListReservationBatches, adminListReservations, adminListRoles, adminListUsers, adminLogin, adminOperationLogs, adminOptions, adminPermissions, adminPreviewDailyUsageReport, adminRunNextExportJob, adminSendDailyUsageReport, adminRevokeRole, adminSetDeviceAvailable, adminSetUserBan, adminSetUserStatus, adminUnbindWechat, adminUpdateDevice, adminUpdateSecurityConfig, adminUpsertRole, adminUserRoles, adminListFaultReports, adminNotifyAffectedFaultUsers, adminResolveFaultReport, adminListUserRequests, adminReviewUserRequest, addChatParticipants, authTokenFromReq, bindWechatAccount, bootstrapSystem, buildWechatReply, canSubscribeChatChannel, cleanupExpiredTemporaryGroups, cancelReservation, cancelReservationItem, cancelUserRequest, createChatConversation, createLoginChallenge, createReservation, createUserRequest, dissolveChatConversation, leaveChatConversation, getCalendarDay, getCalendarEvents, getReportConfig, getDeviceDetail, getDeviceTimeSlots, getLoginChallengeStatus, getProfile, getReservationBatch, getReservationSlotOptions, getSystemNotice, getStaffContacts, handleWechatMessage, listChatConversations, listChatMessages, listChatUsers, listDevices, listMyNotifications, listMyFaultReports, listMyUserRequests, listReservationBatches, loginUser, markChatConversationRead, markMyNotificationsRead, myRecords, precheckBorrowExtension, precheckReservation, registerUser, removeChatParticipant, reportDeviceFault, requestUserRequestChange, resolveRealtimePrincipal, safeFilename, sendChatMessage, sendWechatCustomMessage, shouldBlockIpAccess, autoStartDueReservations, extendBorrow, startReservationBatch, startUse, streamChatEvents, submitReturn, supplementReturnMaterials, pushDailyUsageReport, runMaintenanceWindowLifecycle, updateUserRequest, usageStats, verifyWechatHandshake };
 }
 
 module.exports = { createRentalService };
-
-

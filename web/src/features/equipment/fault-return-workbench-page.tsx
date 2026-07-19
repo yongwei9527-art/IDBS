@@ -3,14 +3,13 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { MessageSquare } from 'lucide-react';
 import { toast } from 'sonner';
-import { useAdminFaults, useResolveFault, type AdminFaultRow } from '@/features/platform/operations-api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useAdminFaults, useNotifyFaultAffectedUsers, useResolveFault, type AdminFaultRow } from '@/features/platform/operations-api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { buildChatSearch } from '@/features/chat/chat-context';
 import { useCapability } from '@/features/auth/permissions';
 import { toFriendlyError } from '@/lib/friendly-error';
-import { OpsEmptyState, OpsMetricCard, OpsPageHeader, OpsPermissionHint } from '@/components/ops/design-system';
+import { OpsEmptyState, OpsPageHeader, OpsPermissionHint } from '@/components/ops/design-system';
 
 const STATUS_LABEL: Record<string, string> = { pending: '待处理', processing: '处理中', resolved: '已解决', closed: '已关闭' };
 const STATUS_TONE: Record<string, string> = { pending: 'badge-warn', processing: 'badge-info', resolved: 'badge-success', closed: 'badge-muted' };
@@ -40,6 +39,36 @@ function normalizePhotos(value: AdminFaultRow['photos']): string[] {
   return [];
 }
 
+function adviceText(report: AdminFaultRow) {
+  if (report.auto_action === 'cancel_future') return '停约并通知';
+  if (report.auto_action === 'maintenance') return '维护巡检';
+  return '转处理';
+}
+
+function impactText(report: AdminFaultRow) {
+  const using = report.active_borrow?.user_name
+    ? `使用中 ${report.active_borrow.user_name}`
+    : '空闲';
+  const today = Number(report.today_reservation_count || 0);
+  const future = Number(report.future_reservation_count || 0);
+  const parts = [using];
+  if (today > 0) parts.push(`今${today}`);
+  if (future > 0) parts.push(`后${future}`);
+  if (today === 0 && future === 0) parts.push('无预约');
+  return parts.join(' · ');
+}
+
+function briefDescription(report: AdminFaultRow, max = 36) {
+  const type = String(report.issue_type || '').trim();
+  const desc = String(report.description || '').trim();
+  if (!desc) return type || '故障';
+  if (!type) return desc.length > max ? `${desc.slice(0, max)}…` : desc;
+  let body = desc;
+  if (body.startsWith(type)) body = body.slice(type.length).replace(/^[：:\s]+/, '');
+  if (!body) return type;
+  return body.length > max ? `${body.slice(0, max)}…` : body;
+}
+
 export function AdminFaultsPage() {
   const nav = useNavigate();
   const capability = useCapability();
@@ -47,35 +76,47 @@ export function AdminFaultsPage() {
   const [status, setStatus] = useState(initialParams.get('status') ?? '');
   const [deviceCode, setDeviceCode] = useState(initialParams.get('device_code') ?? initialParams.get('device') ?? '');
   const [notes, setNotes] = useState<Record<string, string>>({});
+  const [expandedId, setExpandedId] = useState('');
   const { data, isLoading, error } = useAdminFaults(status || undefined, deviceCode || undefined);
   const reports = data?.reports ?? [];
   const resolve = useResolveFault();
+  const notifyAffected = useNotifyFaultAffectedUsers();
   const canManage = capability.canManageFaults;
 
-  const metrics = useMemo(() => {
+  const stats = useMemo(() => {
     const count = (key: string) => reports.filter((item) => item.status === key).length;
-    return [
-      { label: '当前列表', value: reports.length, hint: deviceCode ? `设备 ${deviceCode}` : '全部设备' },
-      { label: '待处理', value: count('pending'), hint: '需要尽快分派' },
-      { label: '处理中', value: count('processing'), hint: '维护中或跟进中' },
-      { label: '已闭环', value: count('resolved') + count('closed'), hint: '解决/关闭' }
-    ];
-  }, [deviceCode, reports]);
+    return {
+      total: reports.length,
+      pending: count('pending'),
+      processing: count('processing'),
+      closed: count('resolved') + count('closed')
+    };
+  }, [reports]);
 
   function updateNote(id: string, value: string) {
     setNotes((current) => ({ ...current, [id]: value }));
   }
-
 
   function handleUpdate(report: AdminFaultRow, nextStatus: 'processing' | 'resolved' | 'closed', options: { setAvailable?: boolean; keepMaintenance?: boolean } = {}) {
     const adminNote = resolveNote(notes, report).trim();
     resolve.mutate(
       { id: report.id, status: nextStatus, admin_note: adminNote, set_available: options.setAvailable, keep_maintenance: options.keepMaintenance },
       {
-        onSuccess: () => toast.success(`故障已${nextStatus === 'processing' ? '标记为处理中' : nextStatus === 'closed' ? '关闭' : '标记为已解决'}`),
+        onSuccess: () => toast.success(nextStatus === 'processing' ? '已转处理中' : nextStatus === 'closed' ? '已关闭' : '已解决'),
         onError: (e) => toast.error(`操作失败：${toFriendlyError(e)}`)
       }
     );
+  }
+
+  function handleNotifyAffected(report: AdminFaultRow) {
+    notifyAffected.mutate(report.id, {
+      onSuccess: (result: { current_user_notified?: boolean; future_reservation_count?: number }) => {
+        const current = result.current_user_notified ? '当前使用人' : '';
+        const future = Number(result.future_reservation_count ?? report.future_reservation_count ?? 0) > 0 ? '后续预约用户' : '';
+        toast.success('已通知' + ([current, future].filter(Boolean).join('和') || '受影响用户'));
+      },
+      onError: (error) => toast.error('通知失败：' + toFriendlyError(error))
+    });
   }
 
   function openChat(report: AdminFaultRow) {
@@ -87,144 +128,156 @@ export function AdminFaultsPage() {
       deviceName: report.device_name,
       type: 'fault',
       faultId: report.id,
-      issueType: report.issue_type,
-      description: report.description,
-      status: report.status,
-      title: `故障沟通：${report.device_code || report.device_name || report.issue_type}`
+      title: `故障沟通：${report.device_code || report.device_name || '设备'}`,
+      detail: report.description || report.issue_type || ''
     });
     nav({ to: '/chat', search } as any);
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <OpsPageHeader
-        eyebrow="IDBS 5.0 · 故障与归还闭环"
-        title="故障处理与设备恢复"
-        description="集中处理设备故障、异常归还、维修备注和恢复开放动作；恢复设备会影响后续预约排期，未授权管理员仅可查看。"
-        aside={
-          <div className="space-y-3 text-sm text-white/72">
-            <p className="font-black text-white">处理边界</p>
-            <p>故障处理需要设备维护、故障管理或归还复核权限；解决并恢复会同步影响设备可预约状态。</p>
-          </div>
-        }
-      />
+    <div className="ops-page-stack fault-workbench-page">
+      <OpsPageHeader title="故障处置" className="ops-page-header--compact" />
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {metrics.map((item, index) => (
-          <OpsMetricCard
-            key={item.label}
-            label={item.label}
-            value={item.value}
-            hint={item.hint}
-            tone={index === 1 ? 'warning' : index === 2 ? 'info' : index === 3 ? 'success' : 'default'}
-            loading={isLoading}
-          />
-        ))}
-      </div>
+      {(!canManage && !capability.canViewFaults) ? (
+        <OpsPermissionHint permissions="当前账号未被授予故障查看或处理权限。" />
+      ) : null}
 
-      <Card className="ops-card">
-        <CardHeader className="gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <CardTitle className="text-base">筛选与定位</CardTitle>
-            <p className="mt-1 text-sm text-muted-foreground">按状态或设备定位。</p>
-          </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Input value={deviceCode} onChange={(event) => setDeviceCode(event.target.value)} placeholder="设备编码，如 DEMO-HPLC-001" clearable onClear={() => setDeviceCode('')} />
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3 p-4 pt-0">
-          <div className="flex flex-wrap gap-2">
-            {STATUS_FILTERS.map((s) => (
-              <Button key={s || 'all'} size="sm" variant={status === s ? 'default' : 'outline'} onClick={() => setStatus(s)}>
-                {s ? STATUS_LABEL[s] ?? s : '全部'}
+      <section className="fault-workbench-panel">
+        <div className="fault-workbench-toolbar">
+          <div className="ops-segment-group flex flex-wrap gap-1">
+            {STATUS_FILTERS.map((item) => (
+              <Button key={item || 'all'} size="sm" variant={status === item ? 'default' : 'outline'} onClick={() => setStatus(item)}>
+                {item ? STATUS_LABEL[item] : '全部'}
               </Button>
             ))}
           </div>
-          {!canManage && (
-            <OpsPermissionHint title="只读模式" permissions="当前账号未开通故障处理或设备维护权限">
-              处理故障需要相应授权；未授权管理员不会看到处理按钮，后端接口也会拒绝越权。
-            </OpsPermissionHint>
-          )}
-        </CardContent>
-      </Card>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              value={deviceCode}
+              onChange={(event) => setDeviceCode(event.target.value.trim())}
+              placeholder="设备编号"
+              className="h-8 w-36"
+              clearable
+            />
+            <span className="text-xs text-muted-foreground">
+              共 {stats.total} · 待处理 {stats.pending} · 处理中 {stats.processing} · 已闭环 {stats.closed}
+            </span>
+          </div>
+        </div>
 
-      {isLoading && <p className="py-8 text-center text-muted-foreground">加载故障记录中…</p>}
-      {error && <p className="py-8 text-center text-destructive">加载失败：{toFriendlyError(error)}</p>}
-      {!isLoading && reports.length === 0 && <OpsEmptyState title="暂无匹配故障记录" description="可切换状态或设备编码后继续查看。" />}
+        {isLoading ? <p className="p-8 text-center text-sm text-muted-foreground">加载中…</p> : null}
+        {error ? <p className="p-8 text-center text-sm text-destructive">加载失败：{toFriendlyError(error)}</p> : null}
+        {!isLoading && !error && reports.length === 0 ? (
+          <OpsEmptyState title="暂无故障单" description="" />
+        ) : null}
 
-      <div className="grid gap-3 xl:grid-cols-2 2xl:grid-cols-3">
-        {reports.map((report) => {
-          const note = resolveNote(notes, report);
-          const photos = normalizePhotos(report.photos);
-          const canProcess = report.status === 'pending';
-          const canResolve = report.status === 'pending' || report.status === 'processing';
-          return (
-            <Card key={report.id} className="ops-card overflow-hidden">
-              <CardHeader className="p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <CardTitle className="text-base">{report.device_code || '-'} · {report.device_name || report.issue_type}</CardTitle>
-                    <p className="mt-1 text-sm text-muted-foreground">{report.device_location || '位置未填写'} · {formatTime(report.created_at)}</p>
+        <div className="fault-workbench-list">
+          {reports.map((report) => {
+            const note = resolveNote(notes, report);
+            const photos = normalizePhotos(report.photos);
+            const canProcess = report.status === 'pending';
+            const canResolve = report.status === 'pending' || report.status === 'processing';
+            const expanded = expandedId === report.id;
+            return (
+              <article key={report.id} className={`fault-workbench-row ${expanded ? 'fault-workbench-row--open' : ''}`}>
+                <div className="fault-workbench-main">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="truncate text-sm font-semibold">
+                        {report.device_code || '-'} · {report.device_name || report.issue_type || '故障'}
+                      </h3>
+                      <span className={`badge-pill ${STATUS_TONE[report.status] ?? 'badge-muted'}`}>{STATUS_LABEL[report.status] ?? report.status}</span>
+                      <span className="badge-pill badge-muted">{SEVERITY_LABEL[String(report.severity || '')] ?? (report.severity ? String(report.severity) : '普通')}</span>
+                    </div>
+                    <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">
+                      {formatTime(report.created_at)} · {String(report.user_name || '-')}{report.location ? ` · ${report.location}` : ''}
+                    </p>
+                    <p className="mt-1 line-clamp-1 text-sm text-foreground">
+                      <span className="font-medium">{report.issue_type || '故障'}</span>
+                      {report.description ? <span className="text-muted-foreground"> · {briefDescription(report)}</span> : null}
+                    </p>
+                    <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">
+                      {impactText(report)}
+                      <span className="mx-1 opacity-40">|</span>
+                      {adviceText(report)}
+                    </p>
                   </div>
-                  <span className={`badge-pill ${STATUS_TONE[report.status] ?? 'badge-muted'}`}>{STATUS_LABEL[report.status] ?? report.status}</span>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3 p-4 pt-0">
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <Mini label="上报人" value={report.user_name || '-'} />
-                  <Mini label="联系方式" value={report.user_phone || '-'} />
-                  <Mini label="严重程度" value={SEVERITY_LABEL[report.severity || ''] ?? report.severity ?? '-'} />
-                </div>
-                <div className="rounded-2xl bg-muted/30 p-3 text-sm">
-                  <p className="font-semibold">{report.issue_type}</p>
-                  <p className="mt-2 whitespace-pre-wrap text-muted-foreground">{report.description || '-'}</p>
-                </div>
-                {photos.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
-                    {photos.map((url, idx) => (
-                      <a key={`${url}-${idx}`} href={url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-xl border bg-muted">
-                        <img src={url} alt={`故障照片 ${idx + 1}`} className="h-20 w-20 object-cover" />
-                      </a>
-                    ))}
+
+                  <div className="fault-workbench-actions">
+                    <Button size="sm" variant="ghost" onClick={() => setExpandedId(expanded ? '' : report.id)}>
+                      {expanded ? '收起' : '处理'}
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => openChat(report)}>
+                      <MessageSquare className="h-3.5 w-3.5" /> 沟通
+                    </Button>
+                    {canManage && canResolve ? (
+                      <Button size="sm" disabled={resolve.isPending} onClick={() => handleUpdate(report, 'resolved', { setAvailable: true })}>
+                        解决恢复
+                      </Button>
+                    ) : null}
                   </div>
-                )}
-                {canManage ? (
-                  <label className="block text-sm">
-                    <span className="text-muted-foreground">处理备注</span>
-                    <textarea
-                      value={note}
-                      onChange={(event) => updateNote(report.id, event.target.value)}
-                      rows={3}
-                      placeholder="记录处理过程、维修结果、是否恢复开放等"
-                      className="mt-1 w-full rounded-2xl border bg-card px-3 py-2 text-sm"
-                    />
-                  </label>
+                </div>
+
+                {expanded ? (
+                  <div className="fault-workbench-expand">
+                    {report.description ? (
+                      <p className="text-sm leading-6 text-foreground">{report.description}</p>
+                    ) : null}
+                    {report.active_borrow?.user_name ? (
+                      <p className="text-xs text-muted-foreground">
+                        使用中：{report.active_borrow.user_name}
+                        {report.active_borrow.user_phone ? ` ${report.active_borrow.user_phone}` : ''}
+                      </p>
+                    ) : null}
+                    {(Number(report.today_reservation_count || 0) > 0 || Number(report.future_reservation_count || 0) > 0) ? (
+                      <p className="text-xs text-muted-foreground">
+                        预约影响：今日 {Number(report.today_reservation_count || 0)} · 后续 {Number(report.future_reservation_count || 0)}
+                      </p>
+                    ) : null}
+                    {photos.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {photos.map((url, idx) => (
+                          <a key={`${url}-${idx}`} href={url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded border">
+                            <img src={url} alt={`故障照片 ${idx + 1}`} className="h-14 w-14 object-cover" />
+                          </a>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    {canManage ? (
+                      <label className="block text-xs text-muted-foreground">
+                        处理备注
+                        <textarea
+                          value={note}
+                          onChange={(event) => updateNote(report.id, event.target.value)}
+                          rows={2}
+                          placeholder="记录处理过程、维修结果、是否恢复开放等"
+                          className="mt-1 w-full rounded-md border bg-card px-3 py-2 text-sm text-foreground"
+                        />
+                      </label>
+                    ) : null}
+
+                    <div className="flex flex-wrap gap-1.5">
+                      {canManage && (report.active_borrow?.user_name || Number(report.future_reservation_count || 0) > 0) ? (
+                        <Button size="sm" variant="outline" disabled={notifyAffected.isPending} onClick={() => handleNotifyAffected(report)}>通知用户</Button>
+                      ) : null}
+                      {canManage && canProcess ? (
+                        <Button size="sm" variant="outline" disabled={resolve.isPending} onClick={() => handleUpdate(report, 'processing', { keepMaintenance: true })}>转处理并停约</Button>
+                      ) : null}
+                      {canManage && canResolve ? (
+                        <Button size="sm" variant="outline" disabled={resolve.isPending} onClick={() => handleUpdate(report, 'resolved', { keepMaintenance: true })}>解决·维护</Button>
+                      ) : null}
+                      {canManage && report.status !== 'closed' ? (
+                        <Button size="sm" variant="outline" disabled={resolve.isPending} onClick={() => handleUpdate(report, 'closed', { keepMaintenance: true })}>关闭</Button>
+                      ) : null}
+                    </div>
+                  </div>
                 ) : null}
-                <div className="flex flex-wrap gap-2">
-                  <Button size="sm" variant="outline" onClick={() => openChat(report)}>
-                    <MessageSquare className="mr-1 h-4 w-4" /> 沟通
-                  </Button>
-                  {canManage && canProcess && <Button size="sm" variant="outline" disabled={resolve.isPending} onClick={() => handleUpdate(report, 'processing', { keepMaintenance: true })}>转处理中</Button>}
-                  {canManage && canResolve && <Button size="sm" disabled={resolve.isPending} onClick={() => handleUpdate(report, 'resolved', { setAvailable: true })}>解决并恢复</Button>}
-                  {canManage && canResolve && <Button size="sm" variant="outline" disabled={resolve.isPending} onClick={() => handleUpdate(report, 'resolved', { keepMaintenance: true })}>解决但维护</Button>}
-                  {canManage && report.status !== 'closed' && <Button size="sm" variant="outline" disabled={resolve.isPending} onClick={() => handleUpdate(report, 'closed', { keepMaintenance: true })}>关闭</Button>}
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 }
-
-function Mini({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl bg-muted/30 p-3 text-sm">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="mt-1 truncate font-semibold">{value}</p>
-    </div>
-  );
-}
-
-

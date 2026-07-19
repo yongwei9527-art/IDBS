@@ -121,8 +121,8 @@ function LifecyclePanel({ status }: { status?: string }) {
         const done = activeIndex < 0 ? index === 0 : index < activeIndex;
         return (
           <div key={String(step) + '-' + index} className={['rounded-2xl border p-3 text-sm', current ? 'border-primary bg-primary/10 text-primary' : done ? 'bg-muted/40 text-foreground' : 'bg-background text-muted-foreground'].join(' ')}>
-            <p className="text-xs font-black">{index + 1}</p>
-            <p className="mt-1 font-black">{step}</p>
+            <p className="text-xs font-semibold">{index + 1}</p>
+            <p className="mt-1 font-semibold">{step}</p>
           </div>
         );
       })}
@@ -269,22 +269,20 @@ export function DeviceDetailPage() {
               <div className="grid gap-3 md:grid-cols-4">
                 <OpsMetricCard label="生命周期" value={lifecycleLabel(device.status)} hint={riskText(device.status, device.allow_reservation)} tone={riskLevel(device.status, device.allow_reservation) === 'low' ? 'success' : riskLevel(device.status, device.allow_reservation) === 'medium' ? 'warning' : 'danger'} />
                 <OpsMetricCard label="近期预约" value={detail.reservations.length} hint="待使用或进行中" tone="info" />
-                <OpsMetricCard label="14天占用" value={detail.occupancy_14_days.length} hint="可辅助判断热度" />
-                <OpsMetricCard label="故障记录" value={detail.recent_fault_reports.length} hint="异常越多越需维护" tone={detail.recent_fault_reports.length ? 'warning' : 'success'} />
+                <OpsMetricCard label="14天占用" value={detail.occupancy_14_days.length} hint="近两周占用" />
+                <OpsMetricCard label="故障记录" value={detail.recent_fault_reports.length} hint="近期上报" tone={detail.recent_fault_reports.length ? 'warning' : 'success'} />
               </div>
 
-              <section className="rounded-3xl border bg-muted/20 p-4">
+              <section className="rounded-xl border bg-muted/20 p-4">
                 <OpsSectionHeader
-                  eyebrow="Lifecycle"
                   title="设备生命周期"
-                  description="设备从入库、预约、使用、归还检查到维护归档的当前位置。"
                   action={<OpsRiskBadge level={riskLevel(device.status, device.allow_reservation)} />}
                 />
                 <div className="mt-4"><LifecyclePanel status={device.status} /></div>
               </section>
 
-              <section className="rounded-3xl border bg-background/70 p-4">
-                <OpsSectionHeader title="开放预约时段" description="页面用色块代替长时间文本，悬停可查看完整信息。" action={<OpsBadge tone={device.allow_reservation === false ? 'warning' : 'success'}>{device.allow_reservation === false ? '暂停预约' : '开放预约'}</OpsBadge>} />
+              <section className="rounded-xl border bg-background/70 p-4">
+                <OpsSectionHeader title="开放预约时段" description="悬停查看完整时段。" action={<OpsBadge tone={device.allow_reservation === false ? 'warning' : 'success'}>{device.allow_reservation === false ? '暂停预约' : '开放预约'}</OpsBadge>} />
                 <div className="mt-3"><SlotBlocks device={device} /></div>
               </section>
 

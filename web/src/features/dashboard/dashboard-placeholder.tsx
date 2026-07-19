@@ -25,7 +25,7 @@ export function DashboardPlaceholder() {
       <div className="flex items-center justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold">后台总览</h1>
-          <p className="text-sm text-muted-foreground">IDBS 5.0 工作台</p>
+          <p className="text-sm text-muted-foreground">设备预约与运营处理</p>
         </div>
         <Button variant="outline" onClick={() => dashboard.refetch()} disabled={dashboard.isFetching}>
           <RefreshCw className="mr-2 h-4 w-4" />

@@ -80,13 +80,14 @@ test('5.0 manifests, schema baseline, migration and CI gate stay aligned', () =>
     'public/v5/index.html',
     'web/vite.config.ts',
     'web/index.html',
-    'web/src/features/system/system-configuration-page.tsx',
-    'web/src/features/dashboard/dashboard-placeholder.tsx'
+    'web/src/features/system/system-configuration-page.tsx'
   ]) {
     const source = read(uiPath);
     assert.match(source, /(?:IDBS\s*)?5\.0/);
     assert.doesNotMatch(source, /IDBS\s*[234](?:\.0)?|[34]\.0\s*閺呴缚鍏樻潻鎰儉/);
   }
+  const dashboardSource = read('web/src/features/dashboard/dashboard-placeholder.tsx');
+  assert.doesNotMatch(dashboardSource, /IDBS\s*[234](?:\.0)?|[34]\.0\s*閺呴缚鍏樻潻鎰儉/);
 });
 
 test('automatic migration discovery never executes rollback scripts', () => {

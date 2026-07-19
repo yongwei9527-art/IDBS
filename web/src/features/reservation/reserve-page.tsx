@@ -168,7 +168,7 @@ export function ReservePage() {
 
       <div className="rounded-2xl border border-amber-300/50 bg-amber-50/70 px-4 py-3 text-sm text-amber-950 dark:border-amber-400/25 dark:bg-amber-950/20 dark:text-amber-100">
         <p className="font-semibold">预约提醒</p>
-        <p className="mt-1 text-xs leading-5">请在预约当天前取消；开始 15 分钟仍未使用，可被记录为爽约。近 90 天累计 2 次爽约将暂停新预约，需联系实验室管理员复核。</p>
+        <p className="mt-1 text-xs leading-5">开始前 1 天可自行取消；当天取消需管理员审批。预约开始前 30 分钟会提醒；近 90 天累计 2 次爽约将暂停新预约。</p>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(340px,0.75fr)]">

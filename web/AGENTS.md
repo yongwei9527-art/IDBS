@@ -33,3 +33,10 @@
 - `src/features/` — 按域分组的页面与 `*-api.ts` hook
 - `src/routes.tsx` — 手写路由树
 - `src/main.tsx` — provider 树（QueryClient → AuthProvider → WsProvider → Toaster + RouterProvider）
+
+
+## 优化约定（2026-07）
+
+- 路由常量统一从 `src/lib/app-paths.ts` 引入，减少散落字符串。
+- React Query 默认与域 staleTime 见 `src/lib/query-defaults.ts`。
+- 新增 ESLint/Prettier 配置：`npm run lint` / `npm run format`（需安装 web 开发依赖）。

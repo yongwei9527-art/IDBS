@@ -53,11 +53,15 @@ refresh. New clients must not send a refresh token in JSON.
 - `POST /api/v5/reservation-batches/precheck` - validate a proposed reservation batch.
 - `POST /api/v5/reservation-batches` - create a reservation batch.
 - `GET /api/v5/reservation-batches/me` - list the current user's batches.
+- `POST /api/v5/reservation-batches/:id/start-use` - start every currently eligible approved item in a reservation batch; future items remain waiting.
 - `GET /api/v5/reservation-batches/:id` - read a current-user batch.
 - `PATCH /api/v5/reservation-items/:id/cancel` - cancel one reservation item.
 - `GET /api/v5/my-records` - list the current user's borrowing records.
 - `POST /api/v5/borrow-records` - start a borrowing record.
+- `POST /api/v5/borrow-records/:recordId/extend/precheck` - precheck a default or manually selected extension and return explicit conflict reasons.
+- `PATCH /api/v5/borrow-records/:recordId/extend` - extend an active borrowing record after the server repeats the precheck.
 - `PUT /api/v5/borrow-records/:recordId/return` - submit a return.
+- `PATCH /api/v5/borrow-records/:recordId/return-supplement` - add requested photos or notes to an abnormal return; records whether the one-hour deadline was missed.
 - `GET /api/v5/fault-reports` - list the current user's fault reports.
 - `POST /api/v5/fault-reports` - submit a fault report.
 - `GET /api/v5/user-requests` - list the current user's service requests.
@@ -125,10 +129,13 @@ by the server. Do not infer authorization only from a visible menu item.
 - `PATCH /api/v5/admin/reservation-batches/:id/approval` - review a batch.
 - `PATCH /api/v5/admin/reservation-items/:id/approval` - review an item.
 - `PATCH /api/v5/admin/reservation-items/:id/plan` - update an item plan.
+- `PATCH /api/v5/admin/reservation-items/:id/cancel-review` - approve or reject a same-day cancellation request.
+- `PATCH /api/v5/admin/reservation-items/:id/no-show` - confirm a no-show and record its reason category.
 - `GET /api/v5/admin/fault-reports` - fault-report work queue.
 - `GET /api/v5/admin/return-tasks` - overdue borrow, pending handover acceptance, and abnormal return work queue.
 - `PATCH /api/v5/admin/return-tasks/:id/review` - accept a normal return or retain an abnormal return; records a handover receipt and only restores availability after acceptance.
 - `PATCH /api/v5/admin/fault-reports/:id/resolve` - resolve a fault report.
+- `POST /api/v5/admin/fault-reports/:id/notify-affected` - notify the current borrower and affected future reservation users.
 - `GET /api/v5/admin/user-requests` - service-request work queue.
 - `PATCH /api/v5/admin/user-requests/:id/review` - review a service request.
 

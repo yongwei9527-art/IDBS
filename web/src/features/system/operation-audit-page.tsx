@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { CompactId, formatCompactId } from '@/components/ui/compact-id';
 import { useCapability } from '@/features/auth/permissions';
 import { toFriendlyError } from '@/lib/friendly-error';
+import { OpsBadge, OpsPageHeader } from '@/components/ops/design-system';
 
 const RISK_ACTIONS = new Set(['update_security_config', 'grant_admin_role', 'upsert_admin_role', 'revoke_admin_role', 'delete_user', 'set_user_status', 'set_device_available']);
 
@@ -351,30 +352,12 @@ export function AdminAuditPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <section className="ops-hero p-6 md:p-8">
-        <div className="relative grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px] xl:items-end">
-          <div>
-            <p className="text-xs font-black uppercase tracking-[0.24em] text-white/60">IDBS 5.0 · 审计追踪</p>
-            <h1 className="mt-2 text-3xl font-black tracking-tight text-white md:text-4xl">操作审计与风险追踪</h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-white/70">
-              筛风险、看详情、导出日志。
-            </p>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            {[
-              ['命中日志', stats.total],
-              ['高风险', stats.risk],
-              ['操作人', stats.actors],
-              ['动作类型', stats.actions]
-            ].map(([label, value]) => (
-              <div key={String(label)} className="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur">
-                <p className="text-xs text-white/55">{label}</p>
-                <p className="mt-1 text-2xl font-black tabular-nums text-white">{value}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+            <OpsPageHeader title="操作审计" className="ops-page-header--compact">
+        <OpsBadge tone="muted">日志 {stats.total}</OpsBadge>
+        <OpsBadge tone="danger">高风险 {stats.risk}</OpsBadge>
+        <OpsBadge tone="info">操作人 {stats.actors}</OpsBadge>
+        <OpsBadge tone="default">动作 {stats.actions}</OpsBadge>
+      </OpsPageHeader>
 
       <Card className="ops-card">
         <CardHeader>
@@ -461,7 +444,7 @@ export function AdminAuditPage() {
                   </div>
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="font-black">{actionLabel(log.action)}</h2>
+                      <h2 className="font-semibold">{actionLabel(log.action)}</h2>
                       <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">已本地化</span>
                     </div>
                     <p className="mt-2 text-sm text-muted-foreground"><TargetSummary log={log} /></p>

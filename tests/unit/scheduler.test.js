@@ -98,3 +98,33 @@ test('daily report grace window crosses midnight without changing the job day', 
   assert.equal(pushes, 1);
   assert.match(claimedKey, /2026-07-11-23-59-UTC/);
 });
+
+
+test('daily scheduler preserves the successful usage summary even when message push is disabled', async () => {
+  const now = new Date();
+  let archives = 0;
+  let pushes = 0;
+  const scheduler = scheduleDailyUsageReport({
+    service: {
+      getReportConfig: async () => ({
+        admin_report_enabled: false,
+        admin_report_timezone: 'UTC',
+        admin_report_hour: now.getUTCHours(),
+        admin_report_minute: now.getUTCMinutes()
+      }),
+      archiveDailySuccessfulUsage: async ({ timezone }) => { archives += timezone === 'UTC' ? 1 : 0; },
+      pushDailyUsageReport: async () => { pushes += 1; }
+    },
+    db: {
+      claimScheduledJob: async () => true,
+      completeScheduledJob: async () => {}
+    },
+    nowProvider: () => now,
+    logger: { log() {}, error() {} }
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  scheduler.stop();
+
+  assert.equal(archives, 1);
+  assert.equal(pushes, 0);
+});

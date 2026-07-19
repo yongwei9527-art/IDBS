@@ -66,7 +66,7 @@
       ['public_show_reserver_phone', 'public_show_reserver_phone', 'Whether public users can see reserver phone', true],
       ['public_show_reserver_student_no', 'public_show_reserver_student_no', 'Whether public users can see reserver student number', true],
       ['site_domain', 'site_domain', 'Configured public access domain'],
-      ['system_notice_enabled', 'system_notice_enabled', 'Whether login notice popup is enabled', true],
+      ['system_notice_enabled', 'system_notice_enabled', 'Whether the user announcement is enabled', true],
       ['admin_report_enabled', 'admin_report_enabled', 'Whether daily usage report push is enabled', true],
       ['admin_report_hour', 'admin_report_hour', 'Daily report push hour'],
       ['admin_report_minute', 'admin_report_minute', 'Daily report push minute'],
@@ -86,17 +86,17 @@
     let noticeChanged = false;
     if (Object.prototype.hasOwnProperty.call(payload, 'system_notice_title')) {
       noticeChanged = true;
-      await saveSystemConfig('system_notice_title', String(payload.system_notice_title || '').trim().slice(0, 120) || DEFAULT_SECURITY_CONFIG.system_notice_title, 'Login notice popup title');
+      await saveSystemConfig('system_notice_title', String(payload.system_notice_title || '').trim().slice(0, 120) || DEFAULT_SECURITY_CONFIG.system_notice_title, 'User announcement title');
     }
     if (Object.prototype.hasOwnProperty.call(payload, 'system_notice_content')) {
       noticeChanged = true;
-      await saveSystemConfig('system_notice_content', String(payload.system_notice_content || '').trim().slice(0, 3000) || DEFAULT_SECURITY_CONFIG.system_notice_content, 'Login notice popup content');
+      await saveSystemConfig('system_notice_content', String(payload.system_notice_content || '').trim().slice(0, 3000) || DEFAULT_SECURITY_CONFIG.system_notice_content, 'User announcement content');
     }
     if (Object.prototype.hasOwnProperty.call(payload, 'system_notice_enabled')) {
       noticeChanged = true;
     }
     if (noticeChanged) {
-      await saveSystemConfig('system_notice_version', String(Date.now()), 'Login notice popup version');
+      await saveSystemConfig('system_notice_version', String(Date.now()), 'User announcement version');
     }
     if (String(payload.new_admin_password || '').trim()) {
       const password = assertText(payload.new_admin_password, 'new_admin_password', 100);
@@ -108,7 +108,7 @@
       }
       const salt = crypto.randomBytes(16).toString('hex');
       await saveSystemConfig('admin_password_salt', salt, 'Admin password salt');
-      await saveSystemConfig('admin_password_hash', hashPassword(password, salt), 'Admin password hash');
+      await saveSystemConfig('admin_password_hash', await hashPassword(password, salt), 'Admin password hash');
     }
     if (Object.prototype.hasOwnProperty.call(payload, 'staff_contacts')) {
       await saveSystemConfig('staff_contacts', JSON.stringify(normalizeStaffContacts(payload.staff_contacts)), 'Public staff contact cards for user support');
@@ -296,7 +296,6 @@
 }
 
 module.exports = { createAdminSystemService };
-
 
 
 

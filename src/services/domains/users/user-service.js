@@ -59,8 +59,8 @@
     const userId = assertText(params.user_id || params.id, 'user_id', 60);
     const user = await getById('users', userId);
     if (!user) return fail('用户不存在。', 404, 3004);
-    const reservations = await query(`
-      select ri.*, ri.id as item_id, coalesce(ri.reservation_id, ri.id) as id,
+    const reservations = await query(
+      `select ri.*, ri.id as item_id, coalesce(ri.reservation_id, ri.id) as id,
         b.purpose, b.status as batch_status,
         d.device_code, d.name as device_name,
         u.name as user_name, u.phone as user_phone, u.student_no as user_student_no
@@ -70,27 +70,68 @@
       join users u on u.id = ri.user_id
       where ri.user_id = $1
       order by ri.created_at desc
-      limit 50
-    `, [userId]);
+      limit 50`,
+      [userId]
+    );
     const borrows = await addNamesToBorrowRows(await query('select * from borrow_records where user_id = $1 order by borrow_time desc limit 50', [userId]));
-    const faultReports = await query(`
-      select f.*, d.device_code, d.name as device_name
+    const faultReports = await query(
+      `select f.*, d.device_code, d.name as device_name
       from device_fault_reports f
       left join devices d on d.id = f.device_id
       where f.user_id = $1
       order by f.created_at desc
-      limit 50
-    `, [userId]);
-    const requests = await query(`
-      select r.*, d.device_code, d.name as device_name
+      limit 50`,
+      [userId]
+    );
+    const requests = await query(
+      `select r.*, d.device_code, d.name as device_name
       from user_requests r
       left join devices d on d.id = r.device_id
       where r.user_id = $1
       order by r.created_at desc
-      limit 50
-    `, [userId]);
+      limit 50`,
+      [userId]
+    );
     const activity = await query('select * from user_activity_logs where user_id = $1 order by created_at desc limit 20', [userId]);
-    return ok({ user: safeUser(user), reservations, borrows, fault_reports: faultReports || [], requests: requests || [], activity: activity || [] });
+    const [fulfillmentRow] = await query(
+      `select
+        (select count(*)::int from borrow_records br where br.user_id = $1 and br.status = 'returned' and coalesce(br.is_overdue, false) = false and coalesce(br.return_condition, 'normal') = 'normal') as normal_completed_count,
+        (select count(*)::int from reservation_items ri where ri.user_id = $1 and ri.status = 'cancelled') as cancelled_count,
+        (select count(*)::int from reservation_items ri where ri.user_id = $1 and ri.status = 'no_show') as no_show_count,
+        (select count(*)::int from reservation_items ri where ri.user_id = $1 and ri.status = 'no_show' and ri.start_time >= now() - interval '90 days') as recent_no_show_count,
+        (select min(ri.start_time) from reservation_items ri where ri.user_id = $1 and ri.status = 'no_show' and ri.start_time >= now() - interval '90 days') as earliest_recent_no_show_at,
+        (select no_show_reason_category from reservation_items ri where ri.user_id = $1 and ri.status = 'no_show' order by ri.start_time desc limit 1) as latest_no_show_reason,
+        (select count(*)::int from borrow_records br where br.user_id = $1 and (br.status = 'overdue' or coalesce(br.is_overdue, false) = true)) as overdue_count,
+        (select count(*)::int from borrow_records br where br.user_id = $1 and (br.status = 'abnormal_pending' or coalesce(br.return_condition, 'normal') <> 'normal')) as abnormal_return_count,
+        (select count(*)::int from borrow_records br where br.user_id = $1 and br.return_material_required = true and br.return_supplemented_at is null) as pending_material_count,
+        (select count(*)::int from borrow_records br where br.user_id = $1 and (br.return_material_late = true or (br.return_material_required = true and br.return_supplemented_at is null and br.return_material_deadline < now()))) as material_default_count`,
+      [userId]
+    );
+    const recentNoShowCount = Number(fulfillmentRow?.recent_no_show_count || 0);
+    const noShowRestrictionUntil = recentNoShowCount >= 2 && fulfillmentRow?.earliest_recent_no_show_at
+      ? new Date(new Date(fulfillmentRow.earliest_recent_no_show_at).getTime() + 90 * 24 * 60 * 60_000).toISOString()
+      : null;
+    const restriction = user.is_banned
+      ? { status: 'restricted', reason: '账号已被封禁', until: null }
+      : user.status === 'disabled'
+        ? { status: 'restricted', reason: user.disabled_reason || '账号已被停用', until: null }
+        : noShowRestrictionUntil
+          ? { status: 'restricted', reason: '近 90 天累计 2 次爽约', until: noShowRestrictionUntil }
+          : { status: 'normal', reason: null, until: null };
+    const fulfillment = {
+      normal_completed_count: Number(fulfillmentRow?.normal_completed_count || 0),
+      cancelled_count: Number(fulfillmentRow?.cancelled_count || 0),
+      no_show_count: Number(fulfillmentRow?.no_show_count || 0),
+      overdue_count: Number(fulfillmentRow?.overdue_count || 0),
+      abnormal_return_count: Number(fulfillmentRow?.abnormal_return_count || 0),
+      pending_material_count: Number(fulfillmentRow?.pending_material_count || 0),
+      material_default_count: Number(fulfillmentRow?.material_default_count || 0),
+      latest_no_show_reason: fulfillmentRow?.latest_no_show_reason || null,
+      restriction_status: restriction.status,
+      restriction_reason: restriction.reason,
+      restriction_until: restriction.until
+    };
+    return ok({ user: safeUser(user), fulfillment, reservations, borrows, fault_reports: faultReports || [], requests: requests || [], activity: activity || [] });
   }
 
   async function adminListUsers(_, token) {

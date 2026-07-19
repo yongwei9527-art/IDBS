@@ -8,7 +8,8 @@ function scheduleDailyUsageReport({ service, db, intervalMs = 30_000, retryWindo
 
     try {
       const reportConfig = await service.getReportConfig();
-      if (!reportConfig.admin_report_enabled) return;
+      const shouldArchivePriorityUsage = typeof service.archiveDailySuccessfulUsage === 'function';
+      if (!reportConfig.admin_report_enabled && !shouldArchivePriorityUsage) return;
 
       const timeZone = reportConfig.admin_report_timezone || 'Asia/Shanghai';
       const now = nowProvider();
@@ -34,10 +35,11 @@ function scheduleDailyUsageReport({ service, db, intervalMs = 30_000, retryWindo
         : true;
       if (!claimed) return;
       try {
-        await service.pushDailyUsageReport({ timezone: timeZone });
+        if (shouldArchivePriorityUsage) await service.archiveDailySuccessfulUsage({ timezone: timeZone });
+        if (reportConfig.admin_report_enabled) await service.pushDailyUsageReport({ timezone: timeZone });
         await db?.completeScheduledJob?.(jobKey, 'success');
         lastRunKey = runKey;
-        logger.log?.('Daily usage report push executed');
+        logger.log?.('Daily usage priority archive and report push executed');
       } catch (error) {
         await db?.completeScheduledJob?.(jobKey, 'failed', error.message || String(error));
         throw error;

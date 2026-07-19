@@ -1,6 +1,6 @@
 import { useNavigate } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, CalendarDays, Clock, MessageSquare, MonitorSmartphone, UserRound } from 'lucide-react';
+import { ArrowLeft, Clock, MessageSquare, MonitorSmartphone, UserRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CompactId } from '@/components/ui/compact-id';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,6 +8,7 @@ import { buildChatSearch } from '@/features/chat/chat-context';
 import { compactTimeRange, fullDateTimeRange } from '@/lib/time-format';
 import { getCalendarDay, type CalendarEvent } from './reservation-api';
 import { toFriendlyError } from '@/lib/friendly-error';
+import { OpsBadge, OpsPageHeader } from '@/components/ops/design-system';
 
 const STATUS_LABEL: Record<string, string> = {
   pending: '待审核',
@@ -123,21 +124,10 @@ export function CalendarDetailPage() {
         <ArrowLeft className="h-4 w-4" /> 返回日历
       </button>
 
-      <section className="ops-hero p-5 md:p-6">
-        <div className="relative z-10 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-          <div>
-            <p className="text-xs font-black uppercase tracking-wider text-white/70">DAY DETAIL</p>
-            <h1 className="mt-1 flex items-center gap-2 text-3xl font-bold text-white">
-              <CalendarDays className="h-7 w-7" />{date} 使用详情
-            </h1>
-            <p className="mt-2 text-sm text-white/72">看当天设备占用。</p>
-          </div>
-          <div className="grid grid-cols-2 gap-2 text-center text-sm text-white">
-            <div className="rounded-2xl bg-white/12 px-4 py-3"><b>{events.length}</b><span className="ml-1 text-white/62">安排</span></div>
-            <div className="rounded-2xl bg-white/12 px-4 py-3"><b>{deviceCount}</b><span className="ml-1 text-white/62">设备</span></div>
-          </div>
-        </div>
-      </section>
+            <OpsPageHeader title={date + ' 使用详情'} className="ops-page-header--compact">
+        <OpsBadge tone="info">安排 {events.length}</OpsBadge>
+        <OpsBadge tone="muted">设备 {deviceCount}</OpsBadge>
+      </OpsPageHeader>
 
       {isLoading && <Card className="ops-card"><CardContent className="py-8 text-center text-muted-foreground">加载中…</CardContent></Card>}
       {error && <Card className="ops-card"><CardContent className="py-8 text-center text-destructive">加载失败：{toFriendlyError(error)}</CardContent></Card>}
