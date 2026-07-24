@@ -1,4 +1,4 @@
-﻿import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { friendlyApiMessage, request, tokenStore } from '@/lib/api';
 import { QUERY_STALE } from '@/lib/query-defaults';
 
@@ -971,23 +971,35 @@ export function useUpdateSecurityConfig() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-security-config'] })
   });
 }
-export function useAdminRoles() {
-  return useQuery({ queryKey: ['admin-roles'],
-    staleTime: QUERY_STALE.systemConfig, queryFn: () => request<SystemRolesData>('/admin/system/roles') });
+export function useAdminRoles(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['admin-roles'],
+    staleTime: QUERY_STALE.systemConfig,
+    enabled: options?.enabled ?? true,
+    queryFn: () => request<SystemRolesData>('/admin/system/roles')
+  });
 }
 export function useUpsertRole() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (vars: { user_id: string; role_key: string; permissions?: string[]; note?: string }) =>
       request('/admin/system/roles', { method: 'PUT', body: JSON.stringify(vars) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-roles'] })
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['admin-roles'] });
+      qc.invalidateQueries({ queryKey: ['admin-users'] });
+      if (vars?.user_id) qc.invalidateQueries({ queryKey: ['admin-user-detail', vars.user_id] });
+    }
   });
 }
 export function useRevokeRole() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (userId: string) => request(`/admin/system/roles/${userId}`, { method: 'DELETE' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-roles'] })
+    onSuccess: (_data, userId) => {
+      qc.invalidateQueries({ queryKey: ['admin-roles'] });
+      qc.invalidateQueries({ queryKey: ['admin-users'] });
+      if (userId) qc.invalidateQueries({ queryKey: ['admin-user-detail', userId] });
+    }
   });
 }
 

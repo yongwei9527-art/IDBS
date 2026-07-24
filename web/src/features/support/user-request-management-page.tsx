@@ -1,4 +1,4 @@
-import { briefDateTime } from '@/lib/time-format';
+﻿import { briefDateTime } from '@/lib/time-format';
 import { useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { MessageSquare } from 'lucide-react';
@@ -83,10 +83,6 @@ function requestAgeInfo(row: AdminUserRequestRow) {
   else if (hours >= 72) tone = 'danger';
   else if (hours >= 24) tone = 'warn';
   return { label, hours, tone };
-}
-
-function requestAge(row: AdminUserRequestRow) {
-  return requestAgeInfo(row).label;
 }
 
 function matchesText(row: AdminUserRequestRow, keyword: string) {

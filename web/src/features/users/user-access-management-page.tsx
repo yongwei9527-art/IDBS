@@ -9,12 +9,15 @@ import { Input } from '@/components/ui/input';
 import { PERMISSIONS, useCapability } from '@/features/auth/permissions';
 import { OpsDataToolbar, OpsDetailDrawer, OpsEmptyState, OpsPageHeader } from '@/components/ops/design-system';
 import {
+  useAdminRoles,
   useAdminUserDetail,
   useAdminUsers,
   useDeleteUser,
+  useRevokeRole,
   useSetUserBan,
   useSetUserStatus,
   useUnbindUserWechat,
+  useUpsertRole,
   type AdminUser,
   type AdminUserDetail
 } from '@/features/platform/operations-api';
@@ -59,11 +62,14 @@ export function AdminUsersPage() {
   const [statusFilter, setStatusFilter] = useState(initialStatus);
   const [selectedId, setSelectedId] = useState<string>();
   const usersQuery = useAdminUsers();
+  const rolesQuery = useAdminRoles({ enabled: capability.isSuperAdmin });
   const detailQuery = useAdminUserDetail(selectedId);
   const setStatus = useSetUserStatus();
   const setBan = useSetUserBan();
   const unbindWechat = useUnbindUserWechat();
   const deleteUser = useDeleteUser();
+  const upsertRole = useUpsertRole();
+  const revokeRole = useRevokeRole();
 
   const users = usersQuery.data ?? [];
   const filteredUsers = useMemo(() => {
@@ -93,11 +99,22 @@ export function AdminUsersPage() {
   }, [users]);
 
   const selectedUser = detailQuery.data?.user ?? users.find((user) => user.id === selectedId);
-  const isMutating = setStatus.isPending || setBan.isPending || unbindWechat.isPending || deleteUser.isPending;
+  const isMutating = setStatus.isPending || setBan.isPending || unbindWechat.isPending || deleteUser.isPending || upsertRole.isPending || revokeRole.isPending;
   const canApproveUsers = capability.canAny([PERMISSIONS.USER_APPROVE, PERMISSIONS.USER_MANAGE]);
   const canManageUsers = capability.can(PERMISSIONS.USER_MANAGE);
   const canOperateUser = (user: AdminUser) => (capability.isSuperAdmin || user.role === 'user');
   const canDeleteUser = (user: AdminUser) => canManageUsers && capability.isSuperAdmin && user.role !== 'super_admin';
+  const canManageRoles = capability.isSuperAdmin;
+  const canGrantAdmin = (user: AdminUser) => (
+    canManageRoles
+    && user.role === 'user'
+    && user.status === 'active'
+    && !user.is_banned
+  );
+  const canRevokeAdmin = (user: AdminUser) => (
+    canManageRoles
+    && user.role === 'admin'
+  );
 
 
   function handleSetStatus(user: AdminUser, status: string) {
@@ -175,6 +192,63 @@ export function AdminUsersPage() {
         if (selectedId === user.id) setSelectedId(undefined);
       },
       onError: (error) => toast.error(`删除失败：${toFriendlyError(error)}`)
+    });
+  }
+
+  async function handleGrantAdmin(user: AdminUser) {
+    if (!canGrantAdmin(user)) {
+      toast.error('仅可对正常状态的普通用户授予管理员权限。');
+      return;
+    }
+    const ok = await confirm({
+      title: '设为管理员',
+      description: `将 ${displayName(user)} 设为管理员？默认授予实验室主管权限，可在系统配置中继续细化权限矩阵。`,
+      confirmText: '确认授予',
+      tone: 'warning'
+    });
+    if (!ok) return;
+    if (rolesQuery.isLoading) {
+      toast.error('管理员权限模板加载中，请稍后再试。');
+      return;
+    }
+    if (rolesQuery.isError) {
+      toast.error(`管理员权限模板加载失败：${toFriendlyError(rolesQuery.error)}`);
+      return;
+    }
+    const defaultPermissions = rolesQuery.data?.role_defaults?.admin ?? [];
+    if (!defaultPermissions.length) {
+      toast.error('未获取到管理员默认权限模板，请改到系统配置页授权。');
+      return;
+    }
+    upsertRole.mutate(
+      {
+        user_id: user.id,
+        role_key: 'admin',
+        permissions: defaultPermissions.filter((item) => item !== '*'),
+        note: '用户管理页快捷授予管理员'
+      },
+      {
+        onSuccess: () => toast.success(`已将 ${displayName(user)} 设为管理员`),
+        onError: (error) => toast.error(`授予管理员失败：${toFriendlyError(error)}`)
+      }
+    );
+  }
+
+  async function handleRevokeAdmin(user: AdminUser) {
+    if (!canRevokeAdmin(user)) {
+      toast.error('仅可撤销普通管理员权限，超级管理员需先完成权限交接。');
+      return;
+    }
+    const ok = await confirm({
+      title: '撤销管理员权限',
+      description: `撤销 ${displayName(user)} 的管理员权限？撤销后将恢复为普通用户，并失去后台管理入口。`,
+      confirmText: '确认撤销',
+      tone: 'danger'
+    });
+    if (!ok) return;
+    revokeRole.mutate(user.id, {
+      onSuccess: () => toast.success(`已撤销 ${displayName(user)} 的管理员权限`),
+      onError: (error) => toast.error(`撤销管理员失败：${toFriendlyError(error)}`)
     });
   }
 
@@ -278,25 +352,31 @@ export function AdminUsersPage() {
         title={selectedUser ? displayName(selectedUser) : '用户详情'}
         subtitle={selectedUser ? `${ROLE_LABEL[selectedUser.role] ?? selectedUser.role ?? '-'} · ${selectedUser.phone || '-'}` : ''}
         onClose={() => setSelectedId(undefined)}
-        footer={selectedUser && canOperateUser(selectedUser) ? (
+        footer={selectedUser && (canOperateUser(selectedUser) || canGrantAdmin(selectedUser) || canRevokeAdmin(selectedUser) || canDeleteUser(selectedUser)) ? (
           <div className="flex flex-wrap items-center justify-end gap-2">
-            {canApproveUsers && (selectedUser.status === 'pending' || selectedUser.status === 'rejected') ? (
+            {canOperateUser(selectedUser) && canApproveUsers && (selectedUser.status === 'pending' || selectedUser.status === 'rejected') ? (
               <Button size="sm" disabled={isMutating} onClick={() => handleSetStatus(selectedUser, 'active')}>通过</Button>
             ) : null}
-            {canApproveUsers && selectedUser.status === 'pending' ? (
+            {canOperateUser(selectedUser) && canApproveUsers && selectedUser.status === 'pending' ? (
               <Button size="sm" variant="outline" disabled={isMutating} onClick={() => handleRejectUser(selectedUser)}>驳回</Button>
             ) : null}
-            {canManageUsers && selectedUser.status !== 'disabled' ? (
+            {canOperateUser(selectedUser) && canManageUsers && selectedUser.status !== 'disabled' ? (
               <Button size="sm" variant="outline" disabled={isMutating} onClick={() => handleSetStatus(selectedUser, 'disabled')}>停用</Button>
             ) : null}
-            {canManageUsers && selectedUser.status === 'disabled' ? (
+            {canOperateUser(selectedUser) && canManageUsers && selectedUser.status === 'disabled' ? (
               <Button size="sm" variant="outline" disabled={isMutating} onClick={() => handleSetStatus(selectedUser, 'active')}>启用账号</Button>
             ) : null}
-            {canManageUsers ? (
+            {canOperateUser(selectedUser) && canManageUsers ? (
               <Button size="sm" variant="outline" disabled={isMutating} onClick={() => handleSetBan(selectedUser)}>{selectedUser.is_banned ? '解除封禁' : '封禁账号'}</Button>
             ) : null}
-            {canManageUsers && selectedUser.wechat_bound ? (
+            {canOperateUser(selectedUser) && canManageUsers && selectedUser.wechat_bound ? (
               <Button size="sm" variant="outline" disabled={isMutating} onClick={() => handleUnbindWechat(selectedUser)}>解绑微信</Button>
+            ) : null}
+            {canGrantAdmin(selectedUser) ? (
+              <Button size="sm" variant="outline" disabled={isMutating} onClick={() => handleGrantAdmin(selectedUser)}>设为管理员</Button>
+            ) : null}
+            {canRevokeAdmin(selectedUser) ? (
+              <Button size="sm" variant="outline" disabled={isMutating} onClick={() => handleRevokeAdmin(selectedUser)}>撤销权限</Button>
             ) : null}
             {canDeleteUser(selectedUser) ? (
               <Button size="sm" variant="destructive" disabled={isMutating} onClick={() => handleDelete(selectedUser)}>删除</Button>
