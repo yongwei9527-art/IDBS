@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext, type ReactNode } from 'react';
-import { tokenStore, API_BASE } from './api';
+import { tokenStore, getApiBase } from './api';
 
 interface WsContextType {
   connected: boolean;
@@ -18,7 +18,9 @@ const WsCtx = createContext<WsContextType>({
 });
 
 function buildUrl(): string {
-  return location.origin.replace(/^http/, 'ws') + API_BASE + '/ws';
+  const apiBase = getApiBase();
+  const httpBase = apiBase.startsWith('http') ? apiBase : location.origin + apiBase;
+  return httpBase.replace(/^http/, 'ws') + '/ws';
 }
 
 export function WsProvider({ children }: { children: ReactNode }) {
@@ -76,9 +78,19 @@ export function WsProvider({ children }: { children: ReactNode }) {
       if (tokenStore.get()) doConnect();
       else if (wsRef.current) wsRef.current.close(1000, 'signed out');
     };
-    window.addEventListener('idbs:auth-changed', handleAuthChanged);
+    const handleOriginChanged = () => {
+      if (wsRef.current) {
+        wsRef.current.onclose = null;
+        wsRef.current.close(1000, 'api origin changed');
+        wsRef.current = null;
+      }
+      if (tokenStore.get()) doConnect();
+    };
+    window.addEventListener('laboratory-management-system:auth-changed', handleAuthChanged);
+    window.addEventListener('laboratory-management-system:api-origin-changed', handleOriginChanged);
     return () => {
-      window.removeEventListener('idbs:auth-changed', handleAuthChanged);
+      window.removeEventListener('laboratory-management-system:auth-changed', handleAuthChanged);
+      window.removeEventListener('laboratory-management-system:api-origin-changed', handleOriginChanged);
       clearTimeout(reconnectTimer.current);
       authenticatedRef.current = false;
       if (wsRef.current) { wsRef.current.onclose = null; wsRef.current.close(); }

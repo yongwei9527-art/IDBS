@@ -1,6 +1,6 @@
-# IDBS 全量升级基线
+# 实验室管理系统 全量升级基线
 
-> **Historical record.** Current IDBS 5.0 release material is [v5-release.md](./v5-release.md) and [v5-api-contract.md](./v5-api-contract.md).
+> **Historical record.** Current 实验室管理系统 5.0 release material is [v5-release.md](./v5-release.md) and [v5-api-contract.md](./v5-api-contract.md).
 
 更新时间：2026-07-03
 
@@ -17,7 +17,7 @@
 ## 推荐执行顺序
 
 1. 备份旧数据库和上传文件。
-2. 停止 IDBS 服务，避免升级期间继续写入。
+2. 停止 实验室管理系统 服务，避免升级期间继续写入。
 3. 在本地或临时库验证 `sql/schema.sql` 可以完整初始化。
 4. 使用 `npm run db:reset-schema` 重建目标数据库结构。
 5. 初始化管理员、系统配置和必要演示/基础数据。
@@ -26,7 +26,7 @@
 
 ## 巡检要求
 
-IDBS 2.0 不再把缺失的升级表或字段视为可兼容状态。`npm run doctor` 会把缺少核心表、核心字段、核心视图或预约排他约束判定为失败。
+实验室管理系统 2.0 不再把缺失的升级表或字段视为可兼容状态。`npm run doctor` 会把缺少核心表、核心字段、核心视图或预约排他约束判定为失败。
 
 如果巡检失败，请先确认已备份数据，再使用全量基线重建命令。
 
@@ -35,13 +35,13 @@ IDBS 2.0 不再把缺失的升级表或字段视为可兼容状态。`npm run do
 本命令会删除并重建 `public` schema，必须先确认备份。
 
 ```bash
-RESET_IDBS_SCHEMA=1 npm run db:reset-schema
+RESET_LABORATORY_MANAGEMENT_SYSTEM_SCHEMA=1 npm run db:reset-schema
 ```
 
 如果目标不是本地数据库，还需要显式确认：
 
 ```bash
-RESET_IDBS_SCHEMA=1 ALLOW_PRODUCTION_SCHEMA_RESET=1 npm run db:reset-schema
+RESET_LABORATORY_MANAGEMENT_SYSTEM_SCHEMA=1 ALLOW_PRODUCTION_SCHEMA_RESET=1 npm run db:reset-schema
 ```
 
 ## 后续开发方向

@@ -3,7 +3,7 @@ const { Pool } = require('pg');
 const { postgresSslOptions } = require('../src/lib/postgres-ssl');
 require('dotenv').config();
 
-const connectionString = process.env.DATABASE_URL || 'postgresql://idbs_user:generated-by-installer@127.0.0.1:5432/idbs';
+const connectionString = process.env.DATABASE_URL || 'postgresql://laboratory_management_system_user:generated-by-installer@127.0.0.1:5432/laboratory_management_system';
 
 function hashPassword(password, salt) {
   return crypto.scryptSync(String(password), String(salt), 64, {

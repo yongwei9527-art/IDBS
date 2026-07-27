@@ -18,6 +18,7 @@
     parseReservationGroups: parseGroups = () => [],
     parseReservationSlots,
     query,
+    realtimePublisher = async () => 0,
     requireAdminRole,
     requireUser,
     reservationDateText,
@@ -34,6 +35,19 @@
 
   function noShowRestrictionReason(count) {
     return `\u8fd1 90 \u5929\u5df2\u6709 ${count} \u6b21\u723d\u7ea6\uff0c\u6682\u65f6\u65e0\u6cd5\u63d0\u4ea4\u65b0\u7684\u9884\u7ea6\u3002`;
+  }
+
+  async function publishReservationEvent(type, payload = {}) {
+    const channel = 'reservations:admin';
+    try {
+      await realtimePublisher(channel, {
+        type,
+        channel,
+        payload: { ...payload, server_time: nowIso() }
+      });
+    } catch (error) {
+      console.warn('Reservation realtime publish failed:', error.message || error);
+    }
   }
 
   async function createReservation(payload, token) {
@@ -111,6 +125,14 @@
           }
         }
       }
+    });
+    await publishReservationEvent('reservation_created', {
+      batch_id: batchId,
+      user_id: user.id,
+      user_name: user.name || '',
+      status: 'pending',
+      item_count: created.length,
+      reservation_item_ids: created.map((row) => row.id)
     });
     return ok({ message: `已提交 ${created.length} 条预约，等待审核`, batch_id: batchId, reservations: created });
   }
@@ -236,11 +258,13 @@
       const now = nowIso();
       await query(`update reservation_items set status = $1, cancel_previous_status = $2, cancel_requested_at = $3, cancel_request_note = $4, cancel_reviewed_by = null, cancel_reviewed_at = null, cancel_review_note = null, updated_at = $3 where id = $5`, ['cancel_requested', reservationItem.status, now, reason || null, reservationItem.id]);
       await log('request_same_day_reservation_cancellation', { message: '\u63d0\u4ea4\u5f53\u65e5\u53d6\u6d88\u7533\u8bf7', reason }, user, reservationItem.device_id, reservationItem.id);
+      await publishReservationEvent('reservation_changed', { batch_id: reservationItem.batch_id, item_id: reservationItem.id, user_id: user.id, status: 'cancel_requested', action: 'cancel_requested' });
       return ok({ message: '\u5df2\u63d0\u4ea4\u5f53\u65e5\u53d6\u6d88\u7533\u8bf7\uff0c\u7b49\u5f85\u7ba1\u7406\u5458\u5ba1\u6838\u3002', status: 'cancel_requested' });
     }
     if (!canCancelReservation(reservationItem)) return fail('\u5f53\u524d\u9884\u7ea6\u4e0d\u80fd\u53d6\u6d88\u3002', 409, 3001);
     if (reservationItem.id && reservationItem.batch_id) await query('update reservation_items set status = $1, updated_at = $2 where id = $3', ['cancelled', nowIso(), reservationItem.id]);
     await log('cancel_reservation', 'Cancelled reservation before reservation day', user, reservationItem.device_id, reservationItem.id);
+    await publishReservationEvent('reservation_changed', { batch_id: reservationItem.batch_id, item_id: reservationItem.id, user_id: user.id, status: 'cancelled', action: 'cancelled' });
     return ok({ message: '\u9884\u7ea6\u5df2\u53d6\u6d88\u3002', status: 'cancelled' });
   }
 
@@ -263,6 +287,7 @@
       if (item.reservation_id && approved) await client.query('update reservations set status=$1, updated_at=$2 where id=$3', ['cancelled', now, item.reservation_id]);
       await log('review_same_day_reservation_cancellation', { message: approved ? '\u5df2\u540c\u610f\u5f53\u65e5\u53d6\u6d88' : '\u5df2\u62d2\u7edd\u5f53\u65e5\u53d6\u6d88', approved, review_note: note }, admin, item.device_id, item.id, (sql, params = []) => client.query(sql, params));
     });
+    await publishReservationEvent('reservation_changed', { batch_id: item.batch_id, item_id: item.id, user_id: item.user_id, status: nextStatus, action: approved ? 'cancel_approved' : 'cancel_rejected' });
     return ok({ message: approved ? '\u5df2\u540c\u610f\u5f53\u65e5\u53d6\u6d88\u7533\u8bf7\u3002' : '\u5df2\u62d2\u7edd\u5f53\u65e5\u53d6\u6d88\u7533\u8bf7\uff0c\u9884\u7ea6\u4fdd\u6301\u539f\u72b6\u6001\u3002', status: nextStatus });
   }
 
@@ -300,6 +325,7 @@
         device_codes: changedReservations.map((row) => row.device_code).filter(Boolean)
       }, admin, null, batchId, txQuery);
     });
+    await publishReservationEvent('reservation_changed', { batch_id: batchId, status: nextStatus, action: approved ? 'batch_approved' : 'batch_rejected' });
     return ok({ message: approved ? '已通过本次预约' : '已拒绝本次预约' });
   }
 
@@ -329,6 +355,7 @@
           end_time: reservationItem.end_time
         }, admin, reservationItem.device_id, reservationItem.id, txQuery);
       });
+      await publishReservationEvent('reservation_changed', { batch_id: reservationItem.batch_id, item_id: reservationItem.id, user_id: reservationItem.user_id, status: 'approved', action: 'item_approved' });
       return ok({ message: '已通过预约' });
     }
     await withTransaction(async (client) => {
@@ -346,6 +373,7 @@
         end_time: reservationItem.end_time
       }, admin, reservationItem.device_id, reservationItem.id, txQuery);
     });
+    await publishReservationEvent('reservation_changed', { batch_id: reservationItem.batch_id, item_id: reservationItem.id, user_id: reservationItem.user_id, status: 'rejected', action: 'item_rejected' });
     return ok({ message: '已拒绝预约' });
   }
 
@@ -373,6 +401,7 @@
       }
       await log('mark_reservation_no_show', { reservation_item_id: reservationItem.id, reservation_id: reservationItem.reservation_id || null, reason_category: reasonCategory, admin_note: adminNote }, admin, reservationItem.device_id, reservationItem.id, txQuery);
     });
+    await publishReservationEvent('reservation_changed', { batch_id: reservationItem.batch_id, item_id: reservationItem.id, user_id: reservationItem.user_id, status: 'no_show', action: 'no_show' });
     return ok({ message: '\u5df2\u6807\u8bb0\u723d\u7ea6\u3002', status: 'no_show', reason_category: reasonCategory });
   }
   async function adminBulkApproveReservations(payload, token) {

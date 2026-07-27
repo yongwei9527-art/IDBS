@@ -1,4 +1,4 @@
-﻿-- IDBS 5.0: user return submission must be accepted by operations before a device returns to service.
+-- 实验室管理系统 5.0: user return submission must be accepted by operations before a device returns to service.
 ALTER TABLE borrow_records
   ADD COLUMN IF NOT EXISTS return_reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS return_reviewed_at TIMESTAMPTZ,

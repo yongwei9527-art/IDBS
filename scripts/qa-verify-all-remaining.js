@@ -1,4 +1,4 @@
-﻿const { chromium } = require('playwright');
+const { chromium } = require('playwright');
 
 async function loginApi(body) {
   const res = await fetch('http://127.0.0.1:3000/api/v5/auth/login', {
@@ -67,7 +67,7 @@ async function loginApi(body) {
   await page.evaluate(async () => {
     const res = await fetch('/api/v5/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '13900000010', password: '123456' }) });
     const j = await res.json();
-    localStorage.setItem('idbs.access_token', j.data.access_token);
+    localStorage.setItem('laboratory-management-system.access_token', j.data.access_token);
   });
   await page.goto('http://127.0.0.1:3000/v5/admin/users', { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(1000);
@@ -75,7 +75,7 @@ async function loginApi(body) {
   if (await notice.count()) await notice.first().click().catch(() => {});
   console.log('duty /admin/users ->', page.url());
   const usersApi = await page.evaluate(async () => {
-    const res = await fetch('/api/v5/admin/users', { headers: { Authorization: 'Bearer ' + localStorage.getItem('idbs.access_token') } });
+    const res = await fetch('/api/v5/admin/users', { headers: { Authorization: 'Bearer ' + localStorage.getItem('laboratory-management-system.access_token') } });
     const j = await res.json().catch(() => ({}));
     return { status: res.status, message: j.message };
   });

@@ -146,14 +146,14 @@ function createDb(options = {}) {
       const source = crypto.randomUUID();
       const client = await activePool.connect();
       const handler = (event) => {
-        if (event.channel !== 'idbs_realtime' || !event.payload) return;
+        if (event.channel !== 'laboratory_management_system_realtime' || !event.payload) return;
         try {
           const envelope = JSON.parse(event.payload);
           if (envelope.source !== source) onMessage(envelope.message);
         } catch (_) {}
       };
       client.on('notification', handler);
-      await client.query('listen idbs_realtime');
+      await client.query('listen laboratory_management_system_realtime');
       return {
         async publish(message) {
           let safeMessage = message;
@@ -170,11 +170,11 @@ function createDb(options = {}) {
             };
             serialized = JSON.stringify({ source, message: safeMessage });
           }
-          await activePool.query("select pg_notify('idbs_realtime', $1)", [serialized]);
+          await activePool.query("select pg_notify('laboratory_management_system_realtime', $1)", [serialized]);
         },
         async close() {
           client.off('notification', handler);
-          await client.query('unlisten idbs_realtime').catch(() => {});
+          await client.query('unlisten laboratory_management_system_realtime').catch(() => {});
           client.release();
         }
       };

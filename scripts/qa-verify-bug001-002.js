@@ -1,4 +1,4 @@
-﻿const { chromium } = require('playwright');
+const { chromium } = require('playwright');
 
 async function loginApi(body) {
   const res = await fetch('http://127.0.0.1:3000/api/v5/auth/login', {
@@ -35,15 +35,15 @@ async function loginApi(body) {
       body: JSON.stringify({ phone: '13800000001', password: '123456' })
     });
     const j = await res.json();
-    localStorage.setItem('idbs.access_token', j.data.access_token);
+    localStorage.setItem('laboratory-management-system.access_token', j.data.access_token);
   });
   await page.goto('http://127.0.0.1:3000/v5/devices', { waitUntil: 'networkidle' });
   await page.waitForTimeout(700);
   const notice = page.getByRole('button', { name: /我已了解/ });
   if (await notice.count()) await notice.click();
   await page.evaluate(() => {
-    localStorage.removeItem('idbs.access_token');
-    localStorage.removeItem('idbs.refresh_token');
+    localStorage.removeItem('laboratory-management-system.access_token');
+    localStorage.removeItem('laboratory-management-system.refresh_token');
   });
   await page.goto('http://127.0.0.1:3000/v5/calendar', { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(900);

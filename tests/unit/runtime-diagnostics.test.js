@@ -4,10 +4,10 @@ const { getReadinessStatus, getRuntimeDiagnostics } = require('../../src/lib/run
 
 const config = {
   nodeEnv: 'development',
-  adminPassword: 'IDBS_strong_admin_2026',
-  tokenSecret: 'IDBS_token_secret_at_least_32_characters_2026',
-  databaseUrl: 'postgresql://example.invalid/idbs',
-  corsOrigin: 'https://idbs.example.edu',
+  adminPassword: 'LABORATORY_MANAGEMENT_SYSTEM_strong_admin_2026',
+  tokenSecret: 'LABORATORY_MANAGEMENT_SYSTEM_token_secret_at_least_32_characters_2026',
+  databaseUrl: 'postgresql://example.invalid/laboratory_management_system',
+  corsOrigin: 'https://laboratory_management_system.example.edu',
   port: 3000,
   authRateLimitMax: 10,
   authRateLimitWindowMs: 60_000,

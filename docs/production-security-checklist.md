@@ -1,4 +1,4 @@
-# IDBS 5.0 生产安全与备份检查清单
+# 实验室管理系统 5.0 生产安全与备份检查清单
 
 面向实验室部署：在内网或公网发布前，按本清单逐项确认。  
 目标：权限可用、数据可恢复、基础滥用可挡、公网风险可控。
@@ -51,17 +51,23 @@ npm run doctor
 
 ## 三、反向代理与网络（公网强烈建议）
 
-使用仓库模板：`deploy/nginx.idbs.conf`（已含基础限流与安全头建议）。
+使用仓库模板：`deploy/nginx.laboratory-management-system.conf`（已含基础限流与安全头建议）。
 
 最低要求：
 
 1. **只暴露 80/443**，Node 只监听 127.0.0.1:3000  
-2. **TLS 证书**（Let’s Encrypt 等）  
+2. **TLS 证书**（Let’s Encrypt 等；有域名时强烈建议开启）
 3. `client_max_body_size 20m;`  
 4. 传递 `X-Forwarded-For` / `X-Forwarded-Proto`  
 5. WebSocket：`/api/v5/ws`  
 6. **不要**把 `/uploads/exports` 直接静态公开（导出走鉴权接口）  
 7. 云厂商安全组：仅 22（管理网段）、80/443  
+
+部署方式：
+
+- 有域名：推荐 `https://你的域名/`，`CORS_ORIGIN=https://localhost,https://你的域名`。
+- 无域名：可临时使用 `http://服务器公网IP/`，`CORS_ORIGIN=https://localhost,http://服务器公网IP`；不建议长期公网运行。
+- 如果 APK 也要访问后端，务必保留 `https://localhost`，这是 Capacitor WebView 的来源。
 
 防 DDoS 说明：
 
@@ -106,10 +112,10 @@ powershell -ExecutionPolicy Bypass -File scripts/backup-database.ps1
 
 ```bash
 # custom 格式
-pg_restore --clean --if-exists --no-owner --no-acl -d "$DATABASE_URL" backups/db/idbs-YYYYMMDDTHHMMSSZ.dump
+pg_restore --clean --if-exists --no-owner --no-acl -d "$DATABASE_URL" backups/db/laboratory-management-system-YYYYMMDDTHHMMSSZ.dump
 
 # plain SQL
-psql "$DATABASE_URL" -f backups/db/idbs-YYYYMMDDTHHMMSSZ.sql
+psql "$DATABASE_URL" -f backups/db/laboratory-management-system-YYYYMMDDTHHMMSSZ.sql
 ```
 
 **每季度至少做一次恢复演练**，确认备份可用，不只“看起来生成了文件”。
@@ -145,7 +151,7 @@ npm run doctor
 
 - [ ] `NODE_ENV=production`  
 - [ ] 强 `ADMIN_PASSWORD` / `TOKEN_SECRET`  
-- [ ] `CORS_ORIGIN` 为正式 HTTPS 域名  
+- [ ] `CORS_ORIGIN` 已按部署方式配置：有域名为 `https://localhost,https://正式域名`；无域名临时为 `https://localhost,http://公网IP`
 - [ ] `TRUST_PROXY=true`（有 Nginx）  
 - [ ] 完成 `npm run db:migrate`  
 - [ ] `npm run doctor` 无 FAIL  
@@ -177,6 +183,6 @@ npm run doctor
 - `scripts/backup-database.sh`  
 - `scripts/backup-database.ps1`  
 - `scripts/install-backup-schedule.sh`  
-- `deploy/nginx.idbs.conf`  
+- `deploy/nginx.laboratory-management-system.conf`
 - `.env.example`  
 - `docs/production-security-checklist.md`（本文）

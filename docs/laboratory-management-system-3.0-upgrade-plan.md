@@ -1,12 +1,12 @@
-# IDBS 3.0 大升级方案
+# 实验室管理系统 3.0 大升级方案
 
-> **Historical record.** Current IDBS 5.0 release material is [v5-release.md](./v5-release.md) and [v5-api-contract.md](./v5-api-contract.md).
+> **Historical record.** Current 实验室管理系统 5.0 release material is [v5-release.md](./v5-release.md) and [v5-api-contract.md](./v5-api-contract.md).
 
 更新时间：2026-07-04
 
 ## 总目标
 
-把 IDBS 从"Node + 原生静态页 → 设备预约借还系统"升级为"React + shadcn/ui 前端 + 精简后端 + 干净数据库"的现代化设备管理平台。一次性大重构，不兼容旧前端代码，旧数据通过迁移脚本导入。聊天功能保留并升级。
+把 实验室管理系统 从"Node + 原生静态页 → 设备预约借还系统"升级为"React + shadcn/ui 前端 + 精简后端 + 干净数据库"的现代化设备管理平台。一次性大重构，不兼容旧前端代码，旧数据通过迁移脚本导入。聊天功能保留并升级。
 
 ## 设计参考
 
@@ -257,7 +257,7 @@ web/
   - `package.json` 新增脚本：`db:migrate-2-to-3`、`:export`、`:import`。
   - 验证：`node scripts/migrate-2-to-3.js --check` 无源库时友好退出；根 `npm run check` 全绿（62 JS + 7 inline + 无乱码）。
 - **3.0 视觉与交互层补强**：
-  - `public/css/formal.css` 新增 IDBS 3.0 覆盖层：shadcn 风格 neutral 背景、1px 边框、低阴影卡片、紧凑数据表、sticky 表头、柔和 header/sidebar、统一 focus ring 与按钮/Toast/空状态。
+  - `public/css/formal.css` 新增 实验室管理系统 3.0 覆盖层：shadcn 风格 neutral 背景、1px 边框、低阴影卡片、紧凑数据表、sticky 表头、柔和 header/sidebar、统一 focus ring 与按钮/Toast/空状态。
   - `public/js/ui.js` 新增 Element Plus Input 风格增强：自动包装输入框、前缀图标、clearable 清空按钮、密码显示/隐藏、动态渲染表单自动增强。
   - 根 `package.json` 新增 `v5:typecheck`、`v5:build`、`v5:selftest`，统一 3.0 验证入口。
   - 验证：`cmd /c npm run v5:typecheck`、`cmd /c npm run v5:build`、`cmd /c npm run v5:selftest`、`cmd /c npm run check` 全部通过。
@@ -288,6 +288,6 @@ web/
   - 目标是降低单入口 JS chunk 体积，消除 500KB 以上 chunk 警告，并提升浏览器长期缓存命中率；避免过细 vendor 拆分造成循环 chunk 警告。
   - 验证：`cmd /c npm run v5:typecheck && npm run v5:build && npm run v5:selftest && npm run check` 通过；构建输出最大 chunk 为 `vendor` 约 399.72KB、`vendor-charts` 约 347.08KB，已低于 500KB 警告阈值且无循环 chunk 警告。
 - **第五轮 Element Plus Overview 风格适配（旧版后台）**：
-  - 基于 `http://127.0.0.1:3000/admin.html#overview` 旧版后台总览，在不引入 Vue/Element Plus 依赖的前提下，选取适合 IDBS 的组件模式：Alert、Skeleton、Statistic、Progress、Descriptions。
+  - 基于 `http://127.0.0.1:3000/admin.html#overview` 旧版后台总览，在不引入 Vue/Element Plus 依赖的前提下，选取适合 实验室管理系统 的组件模式：Alert、Skeleton、Statistic、Progress、Descriptions。
   - `public/js/admin-workbench.js`：总览加载改为骨架屏；新增运营健康度评分、进度条、部分接口失败 Alert、运营摘要 Descriptions；KPI 卡加入轻量图标语义。
   - `public/css/formal.css`：新增 Element Plus inspired 的总览 hero、health progress、alert、stat card、descriptions、skeleton 响应式样式。

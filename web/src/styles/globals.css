@@ -1,4 +1,4 @@
-﻿@tailwind base;
+@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
@@ -232,7 +232,7 @@
     background: hsl(156 30% 96% / 0.5);
   }
 
-  /* IDBS 5.0 智能运营版：统一页面密度、驾驶舱卡片和图表质感 */
+  /* 实验室管理系统 5.0 智能运营版：统一页面密度、驾驶舱卡片和图表质感 */
   .ops-layout-shell {
     background:
       radial-gradient(circle at 8% 0%, hsl(156 42% 62% / 0.16), transparent 30%),
@@ -448,7 +448,7 @@
   }
 }
 
-/* IDBS 5.0 editorial refinement: quiet material surfaces, deliberate spacing, no decorative gradients. */
+/* 实验室管理系统 5.0 editorial refinement: quiet material surfaces, deliberate spacing, no decorative gradients. */
 @layer components {
   :root {
     --background: 42 24% 96%;

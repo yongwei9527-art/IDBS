@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 
-// IDBS 5.0 canonical web build and deployment base.
+// 实验室管理系统 5.0 canonical web build and deployment base.
 const V5_BASE = '/v5/';
 const API_PROXY_TARGET = process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:3000';
 

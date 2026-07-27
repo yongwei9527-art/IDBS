@@ -58,5 +58,5 @@ CREATE INDEX IF NOT EXISTS idx_users_pending_active
   WHERE status = 'pending' AND coalesce(is_banned, FALSE) = FALSE;
 
 INSERT INTO system_configs (config_key, config_value, description, updated_at)
-VALUES ('schema_v5_applied_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), 'IDBS 5.0 release baseline timestamp', now())
+VALUES ('schema_v5_applied_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), '实验室管理系统 5.0 release baseline timestamp', now())
 ON CONFLICT (config_key) DO UPDATE SET config_value = EXCLUDED.config_value, updated_at = now();

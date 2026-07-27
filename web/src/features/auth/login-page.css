@@ -57,7 +57,7 @@
 
 .login-brand-row p {
   margin: 4px 0 0;
-  color: #8f959e;
+  color: #646a73;
   font-size: 13px;
   line-height: 1.5;
   letter-spacing: 0;
@@ -117,6 +117,13 @@
   box-shadow: 0 0 0 2px rgb(22 119 255 / .12) !important;
 }
 
+.login-field-hint {
+  color: #646a73;
+  font-size: 12px;
+  line-height: 1.5;
+  letter-spacing: 0;
+}
+
 .login-error {
   margin: 0;
   border: 1px solid #ffccc7;
@@ -155,7 +162,7 @@
 
 .login-tip {
   margin: 20px 0 0;
-  color: #8f959e;
+  color: #646a73;
   font-size: 12px;
   text-align: center;
   line-height: 1.6;
@@ -166,4 +173,77 @@
   .login-shell { padding: 20px 16px; }
   .login-card { padding: 28px 20px 22px; }
   .login-title { font-size: 20px; margin-bottom: 18px; }
+}
+
+@media (min-width: 700px) and (max-height: 720px) {
+  .login-shell {
+    align-items: start;
+    padding: 16px 24px;
+  }
+
+  .login-card { padding: 24px 40px 22px; }
+  .login-divider { margin: 16px 0; }
+  .login-title { margin-bottom: 16px; }
+  .login-form { gap: 12px; }
+  .login-field { gap: 6px; }
+  .login-submit { margin-top: 0; }
+  .login-tip { margin-top: 14px; }
+}
+/* APK/WebView login compaction. */
+html[data-runtime-surface="apk"] .login-shell {
+  min-height: 100dvh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  place-items: center;
+  padding: max(1rem, env(safe-area-inset-top, 0px)) max(1rem, env(safe-area-inset-right, 0px)) max(1rem, env(safe-area-inset-bottom, 0px)) max(1rem, env(safe-area-inset-left, 0px));
+}
+
+html[data-runtime-surface="apk"] .login-card {
+  width: min(100%, 25rem);
+  padding: clamp(1.35rem, 5vw, 2rem);
+  border-radius: 1rem;
+}
+
+html[data-runtime-surface="apk"] .login-brand-row {
+  gap: .75rem;
+}
+
+html[data-runtime-surface="apk"] .login-logo {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: .85rem;
+}
+
+html[data-runtime-surface="apk"] .login-title {
+  margin-bottom: 1rem;
+  font-size: clamp(1.2rem, 5vw, 1.45rem);
+}
+
+html[data-runtime-surface="apk"] .login-form {
+  gap: .8rem;
+}
+
+html[data-runtime-surface="apk"] .login-input,
+html[data-runtime-surface="apk"] .login-submit {
+  height: 2.75rem !important;
+  font-size: 16px !important;
+}
+
+@media (orientation: landscape) and (max-height: 720px) {
+  html[data-runtime-surface="apk"] .login-shell {
+    place-items: start center;
+    padding-top: max(.65rem, env(safe-area-inset-top, 0px));
+  }
+
+  html[data-runtime-surface="apk"] .login-card {
+    padding: 1rem 1.35rem;
+  }
+
+  html[data-runtime-surface="apk"] .login-divider {
+    margin: .75rem 0;
+  }
+
+  html[data-runtime-surface="apk"] .login-tip {
+    margin-top: .75rem;
+  }
 }

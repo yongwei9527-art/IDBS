@@ -1,4 +1,4 @@
-﻿<#
+<#
   修复本机 Windows PostgreSQL 旧库对象 owner 不一致导致的升级失败。
   安全行为：
   - 临时仅允许 127.0.0.1 使用 postgres 账号访问指定数据库；
@@ -8,9 +8,9 @@
   - 不 drop、不 truncate、不 reset、不清空业务数据。
 #>
 param(
-  [string]$DatabaseName = 'idbs',
+  [string]$DatabaseName = 'laboratory_management_system',
   [string]$PostgresUser = 'postgres',
-  [string]$AppDbUser = 'idbs_user',
+  [string]$AppDbUser = 'laboratory_management_system_user',
   [string]$ServiceName = 'postgresql-x64-16',
   [string]$DataDir = 'C:\Program Files\PostgreSQL\16\data',
   [string]$PgCtl = 'C:\Program Files\PostgreSQL\16\bin\pg_ctl.exe'
@@ -79,7 +79,7 @@ New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
 $Backup = Join-Path $BackupDir "pg_hba.conf.$Stamp.bak"
 Copy-Item -LiteralPath $Hba -Destination $Backup -Force
 $Original = Get-Content -Raw -Encoding UTF8 -LiteralPath $Hba
-$Marker = "# IDBS temporary local owner repair $Stamp"
+$Marker = "# 实验室管理系统 temporary local owner repair $Stamp"
 $TrustLine = "host    $DatabaseName    $PostgresUser    127.0.0.1/32    trust"
 
 try {
@@ -90,14 +90,14 @@ try {
 
   Push-Location $Repo
   try {
-    $env:IDBS_APP_DB_USER = $AppDbUser
+    $env:LABORATORY_MANAGEMENT_SYSTEM_APP_DB_USER = $AppDbUser
     $env:DATABASE_URL = "postgresql://$PostgresUser@127.0.0.1:5432/$DatabaseName"
     npm.cmd run db:transfer-owner
     if ($LASTEXITCODE -ne 0) { throw 'db:transfer-owner 执行失败' }
     npm.cmd run db:upgrade-schema
     if ($LASTEXITCODE -ne 0) { throw 'db:upgrade-schema 执行失败' }
     Remove-Item Env:\DATABASE_URL -ErrorAction SilentlyContinue
-    Remove-Item Env:\IDBS_APP_DB_USER -ErrorAction SilentlyContinue
+    Remove-Item Env:\LABORATORY_MANAGEMENT_SYSTEM_APP_DB_USER -ErrorAction SilentlyContinue
     npm.cmd run doctor
     if ($LASTEXITCODE -ne 0) { throw 'doctor 自检仍未通过' }
   } finally {
@@ -106,7 +106,7 @@ try {
 }
 finally {
   Remove-Item Env:\DATABASE_URL -ErrorAction SilentlyContinue
-  Remove-Item Env:\IDBS_APP_DB_USER -ErrorAction SilentlyContinue
+  Remove-Item Env:\LABORATORY_MANAGEMENT_SYSTEM_APP_DB_USER -ErrorAction SilentlyContinue
   if (Test-Path -LiteralPath $Backup) {
     Copy-Item -LiteralPath $Backup -Destination $Hba -Force
     Grant-PostgresConfigReadAccess -TargetPath $Hba

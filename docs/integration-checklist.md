@@ -1,6 +1,6 @@
-# IDBS 5.0 Integration Checklist
+# 实验室管理系统 5.0 Integration Checklist
 
-Use this checklist for every IDBS **5.0.0** integration. The canonical client
+Use this checklist for every 实验室管理系统 **5.0.0** integration. The canonical client
 contract is [v5-api-contract.md](./v5-api-contract.md). `/api/v5` and `/v5/`
 are stable compatibility paths; they are the required paths for new clients.
 
@@ -18,7 +18,7 @@ are stable compatibility paths; they are the required paths for new clients.
 
 - [ ] New calls use `/api/v5`, not the legacy `/api/*` compatibility router.
 - [ ] Protected calls send `Authorization: Bearer <access-token>`.
-- [ ] Refresh uses the `idbs.refresh_token` HttpOnly cookie via
+- [ ] Refresh uses the `laboratory-management-system.refresh_token` HttpOnly cookie via
   `POST /api/v5/auth/refresh`; the refresh token is never read from JavaScript,
   passed in a URL, or written to logs.
 - [ ] The integration handles `401`, `403`, `409`, `422`, `429`, and `5xx` from

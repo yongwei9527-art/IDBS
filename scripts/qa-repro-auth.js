@@ -1,4 +1,4 @@
-﻿const {chromium}=require('playwright');
+const {chromium}=require('playwright');
 (async()=>{
   const b=await chromium.launch({headless:true});
   const p=await b.newPage();
@@ -12,7 +12,7 @@
   await p.goto('http://127.0.0.1:3000/v5/login');
   await p.evaluate(async()=>{
     const res=await fetch('/api/v5/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:'13800000001',password:'123456'})});
-    const j=await res.json(); localStorage.setItem('idbs.access_token', j.data.access_token);
+    const j=await res.json(); localStorage.setItem('laboratory-management-system.access_token', j.data.access_token);
   });
   await p.goto('http://127.0.0.1:3000/v5/devices',{waitUntil:'networkidle'});
   await p.waitForTimeout(800);
@@ -20,7 +20,7 @@
   const btn=p.getByRole('button',{name:/我已了解/});
   if(await btn.count()) await btn.click();
   console.log('on devices', p.url());
-  await p.evaluate(()=>{localStorage.removeItem('idbs.access_token'); localStorage.removeItem('idbs.refresh_token');});
+  await p.evaluate(()=>{localStorage.removeItem('laboratory-management-system.access_token'); localStorage.removeItem('laboratory-management-system.refresh_token');});
   // trigger by navigation client-side: click calendar
   await p.goto('http://127.0.0.1:3000/v5/calendar',{waitUntil:'domcontentloaded'});
   await p.waitForTimeout(1000);
@@ -42,7 +42,7 @@
   // user pages sample after login+dismiss
   await p.evaluate(async()=>{
     const res=await fetch('/api/v5/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:'13800000001',password:'123456'})});
-    const j=await res.json(); localStorage.setItem('idbs.access_token', j.data.access_token);
+    const j=await res.json(); localStorage.setItem('laboratory-management-system.access_token', j.data.access_token);
   });
   for (const r of ['/devices','/reserve','/calendar','/me/reservations','/borrow','/faults','/notifications','/chat','/support/contacts']){
     await p.goto('http://127.0.0.1:3000/v5'+r,{waitUntil:'domcontentloaded'});

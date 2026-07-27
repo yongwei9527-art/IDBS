@@ -7,7 +7,7 @@ const { discoverMigrationFiles, isForwardMigrationFile } = require('../../script
 const root = path.resolve(__dirname, '..', '..');
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8');
 
-test('5.0 manifests, schema baseline, migration and CI gate stay aligned', () => {
+test('product manifests, 5.0 schema baseline, migration and CI gate stay aligned', () => {
   const rootPackage = JSON.parse(read('package.json'));
   const webPackage = JSON.parse(read('web/package.json'));
   const schema = read('sql/schema.sql');
@@ -18,8 +18,8 @@ test('5.0 manifests, schema baseline, migration and CI gate stay aligned', () =>
   const upgrader = read('scripts/upgrade-schema.js');
   const workflow = read('.github/workflows/check.yml');
 
-  assert.equal(rootPackage.version, '5.0.0');
-  assert.equal(webPackage.version, '5.0.0');
+  assert.equal(rootPackage.version, webPackage.version);
+  assert.match(rootPackage.version, /^\d+\.\d+\.\d+$/);
 
   for (const objectName of ['refresh_token_sessions', 'scheduled_job_runs', 'rate_limit_buckets']) {
     assert.match(schema, new RegExp(`create table if not exists ${objectName}`, 'i'));
@@ -72,7 +72,7 @@ test('5.0 manifests, schema baseline, migration and CI gate stay aligned', () =>
   assert.match(upgrader, /schema_v5_applied_at/i);
   assert.match(read('scripts/doctor.js'), /v5 config schema_v5_applied_at/);
   assert.match(workflow, /image: postgres:16/);
-  assert.match(workflow, /RESET_IDBS_SCHEMA: 1/);
+  assert.match(workflow, /RESET_LABORATORY_MANAGEMENT_SYSTEM_SCHEMA: 1/);
   assert.match(workflow, /npm run v5:quality/);
   assert.match(workflow, /npm run db:migrate/);
 
@@ -83,11 +83,11 @@ test('5.0 manifests, schema baseline, migration and CI gate stay aligned', () =>
     'web/src/features/system/system-configuration-page.tsx'
   ]) {
     const source = read(uiPath);
-    assert.match(source, /(?:IDBS\s*)?5\.0/);
-    assert.doesNotMatch(source, /IDBS\s*[234](?:\.0)?|[34]\.0\s*閺呴缚鍏樻潻鎰儉/);
+    assert.match(source, /(?:实验室管理系统\s*)?5\.0/);
+    assert.doesNotMatch(source, /实验室管理系统\s*[234](?:\.0)?|[34]\.0\s*閺呴缚鍏樻潻鎰儉/);
   }
   const dashboardSource = read('web/src/features/dashboard/dashboard-placeholder.tsx');
-  assert.doesNotMatch(dashboardSource, /IDBS\s*[234](?:\.0)?|[34]\.0\s*閺呴缚鍏樻潻鎰儉/);
+  assert.doesNotMatch(dashboardSource, /实验室管理系统\s*[234](?:\.0)?|[34]\.0\s*閺呴缚鍏樻潻鎰儉/);
 });
 
 test('automatic migration discovery never executes rollback scripts', () => {

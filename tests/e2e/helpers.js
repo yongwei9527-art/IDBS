@@ -9,8 +9,8 @@ async function login(page, phone = '13800000002', password = '123456') {
     const json = await response.json().catch(() => ({}));
     const data = json.data || json;
     if (!response.ok || !data.access_token) return { ok: false, status: response.status, message: json.message || '' };
-    localStorage.setItem('idbs.access_token', data.access_token);
-    if (data.refresh_token) localStorage.setItem('idbs.refresh_token', data.refresh_token);
+    localStorage.setItem('laboratory-management-system.access_token', data.access_token);
+    if (data.refresh_token) localStorage.setItem('laboratory-management-system.refresh_token', data.refresh_token);
     return { ok: true };
   }, { phone, password });
   expect(result.ok, JSON.stringify(result)).toBeTruthy();

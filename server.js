@@ -81,6 +81,7 @@ const allowedRealtimeOrigins = configuredOrigins === true ? null : new Set(confi
 wsGateway = createWsGateway(httpServer, {
   resolvePrincipal: (auth) => service.resolveRealtimePrincipal(auth),
   authorizeChannel: (auth, channel) => {
+    if (channel === 'reservations:admin') return service.canSubscribeReservationAdminChannel(auth);
     if (!channel.startsWith('chat:')) return false;
     const conversationId = channel.slice('chat:'.length).trim();
     return service.canSubscribeChatChannel(auth.sub, conversationId);

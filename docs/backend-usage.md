@@ -1,8 +1,8 @@
-# IDBS 5.0 Backend Operations Guide
+# 实验室管理系统 5.0 Backend Operations Guide
 
 ## Release contract
 
-IDBS **5.0.0** is the current release. The React application is served at
+实验室管理系统 **5.0.0** is the current release. The React application is served at
 `/v5/` and its stable API prefix is `/api/v5`; the path names remain for
 backward-compatible deployment and do not identify the product release.
 
@@ -61,5 +61,5 @@ npm run v5:permission-audit
 npm run v5:click-audit
 ```
 
-Use `npm run e2e:isolated` with `E2E_DATABASE_URL` pointing to a database named, for example, `idbs_e2e`. The runner rejects non-E2E database names and starts its own temporary server. Verify `/health`
+Use `npm run e2e:isolated` with `E2E_DATABASE_URL` pointing to a database named, for example, `laboratory_management_system_e2e`. The runner rejects non-E2E database names and starts its own temporary server. Verify `/health`
 and `/ready` separately because they intentionally have different semantics.

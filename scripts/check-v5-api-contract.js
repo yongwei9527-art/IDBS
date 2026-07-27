@@ -27,7 +27,7 @@ for (const sourcePath of sources) {
 }
 
 const missing = [...implemented].filter((endpoint) => !documented.has(endpoint));
-assert.equal(missing.length, 0, `Missing IDBS 5.0 API documentation:\n${missing.join('\n')}`);
+assert.equal(missing.length, 0, `Missing 实验室管理系统 5.0 API documentation:\n${missing.join('\n')}`);
 const serviceSource = fs.readFileSync(path.join(root, 'src', 'services', 'create-rental-service.js'), 'utf8');
 const finalReturn = serviceSource.match(/return \{ runReservationReminderLifecycle,([^}]+)\};/);
 assert.ok(finalReturn, 'Unable to inspect the rental-service public method map.');
@@ -37,4 +37,4 @@ assert.equal(missingServiceMethods.length, 0, `V5 routes reference methods not e
 assert.match(contract, /WS `?\/api\/v5\/ws`?/);
 assert.match(contract, /GET `?\/health`?/);
 assert.match(contract, /GET `?\/ready`?/);
-console.log(`IDBS 5.0 API contract covers ${implemented.size} HTTP routes plus WebSocket and operational endpoints.`);
+console.log(`实验室管理系统 5.0 API contract covers ${implemented.size} HTTP routes plus WebSocket and operational endpoints.`);

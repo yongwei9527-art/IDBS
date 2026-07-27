@@ -1,10 +1,11 @@
-﻿# 变更记录
+# 变更记录
 
-## 5.0.1 - 2026-07-19
+## 0.1 - 2026-07-19
 
 本版本在 5.0.0 基础上继续完善稳定性、运维能力与前后端可维护性，详情见 [2026-07 优化说明](./docs/optimization-2026-07.md)。
 
 ### 正确性 / 运维
+- APK/服务器地址配置统一保留两种部署方式：有域名默认 HTTPS，无域名/IP 默认 HTTP，并在安装脚本与文档中补齐 APK 所需的 `https://localhost` CORS 来源。
 - 修复聊天演示数据种子参数与 `expires_at` 占位符不一致问题。
 - SPA `/v5` 静态资源缓存策略：`index.html` 不缓存，带 hash 资源长缓存。
 - 新增数据库备份脚本与定时安装入口（`npm run db:backup` / `db:backup:verify` / `db:backup:install-cron`）。

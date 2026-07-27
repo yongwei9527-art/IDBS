@@ -1,4 +1,4 @@
--- IDBS 3.0 回滚脚本：撤销 2026-07-04_v3_foundation.sql 中的结构变更。
+-- 实验室管理系统 3.0 回滚脚本：撤销 2026-07-04_v3_foundation.sql 中的结构变更。
 -- 注意：本脚本只回滚 DDL 与约束，不回滚已写入的业务数据。
 -- 软删除字段、audit_logs、user_wechat_bindings 中的数据会随 DROP 而丢失。
 -- 执行前先 pg_dump 备份；此脚本不幂等，不可反复执行，每条都用 IF EXISTS 兜底。

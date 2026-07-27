@@ -8,10 +8,10 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
   # shellcheck disable=SC1091
   source "$ROOT_DIR/.env"
   set +a
-elif [[ -f /var/www/idbs/shared/.env ]]; then
+elif [[ -f /var/www/laboratory-management-system/shared/.env ]]; then
   set -a
   # shellcheck disable=SC1091
-  source /var/www/idbs/shared/.env
+  source /var/www/laboratory-management-system/shared/.env
   set +a
 fi
 export BACKUP_DIR="${BACKUP_DIR:-$ROOT_DIR/backups/db}"

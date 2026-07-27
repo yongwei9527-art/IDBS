@@ -1,6 +1,6 @@
-# IDBS 大升级执行方案
+# 实验室管理系统 大升级执行方案
 
-> **Historical record.** Current IDBS 5.0 release material is [v5-release.md](./v5-release.md) and [v5-api-contract.md](./v5-api-contract.md).
+> **Historical record.** Current 实验室管理系统 5.0 release material is [v5-release.md](./v5-release.md) and [v5-api-contract.md](./v5-api-contract.md).
 
 更新时间：2026-07-03
 
@@ -192,7 +192,7 @@
 
 下一步继续在第 1 阶段内推进：优先拆分纯函数和只读查询，避免一次性移动预约、聊天 SSE 和审批事务逻辑。
 
-### 2026-07-03：IDBS 2.0 预约核心推进
+### 2026-07-03：实验室管理系统 2.0 预约核心推进
 
 - 旧 action API 已删除。
 - 预约批次和单条审批已改为基于 `reservation_items`。

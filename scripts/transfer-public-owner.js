@@ -3,7 +3,7 @@ const { postgresSslOptions } = require('../src/lib/postgres-ssl');
 require('dotenv').config({ quiet: true });
 
 const connectionString = process.env.DATABASE_URL || '';
-const appUser = process.env.IDBS_APP_DB_USER || process.env.APP_DB_USER || 'idbs_user';
+const appUser = process.env.LABORATORY_MANAGEMENT_SYSTEM_APP_DB_USER || process.env.APP_DB_USER || 'laboratory_management_system_user';
 
 function quoteIdent(value) {
   return '"' + String(value).replace(/"/g, '""') + '"';
@@ -12,7 +12,7 @@ function quoteIdent(value) {
 async function main() {
   if (!connectionString) throw new Error('DATABASE_URL 未配置。');
   if (!/^[A-Za-z_][A-Za-z0-9_$]*$/.test(appUser)) {
-    throw new Error('应用数据库用户名不合法，请检查 IDBS_APP_DB_USER。');
+    throw new Error('应用数据库用户名不合法，请检查 LABORATORY_MANAGEMENT_SYSTEM_APP_DB_USER。');
   }
 
   const pool = new Pool({
@@ -29,7 +29,7 @@ async function main() {
 
     await client.query(`alter schema public owner to ${owner}`);
     await client.query(`
-      do $idbs_owner$
+      do $laboratory_management_system_owner$
       DECLARE
         r record;
       BEGIN
@@ -53,7 +53,7 @@ async function main() {
         LOOP
           EXECUTE format('ALTER FUNCTION %I.%I(%s) OWNER TO ${owner}', r.schema_name, r.function_name, r.args);
         END LOOP;
-      END $idbs_owner$;
+      END $laboratory_management_system_owner$;
     `);
     await client.query(`grant usage, create on schema public to ${owner}`);
     await client.query(`grant all privileges on all tables in schema public to ${owner}`);

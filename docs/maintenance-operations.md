@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This runbook describes the preventive-maintenance workflow in IDBS 5.0. Maintenance windows reserve a device time range and block new overlapping reservations. They are operational controls, not a billing feature.
+This runbook describes the preventive-maintenance workflow in 实验室管理系统 5.0. Maintenance windows reserve a device time range and block new overlapping reservations. They are operational controls, not a billing feature.
 
 ## Workflow
 

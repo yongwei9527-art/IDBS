@@ -1,4 +1,4 @@
-﻿const {chromium}=require('playwright');
+const {chromium}=require('playwright');
 (async()=>{
   const b=await chromium.launch({headless:true});
   async function run(phone, routes){
@@ -8,7 +8,7 @@
     const login=await p.evaluate(async({phone})=>{
       const res=await fetch('/api/v5/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,password:'123456'})});
       const j=await res.json(); const d=j.data||j;
-      if(d.access_token) localStorage.setItem('idbs.access_token', d.access_token);
+      if(d.access_token) localStorage.setItem('laboratory-management-system.access_token', d.access_token);
       return {ok:!!d.access_token,status:res.status,role:d.role,msg:j.message};
     },{phone});
     console.log('LOGIN', phone, login);
@@ -34,7 +34,7 @@
   await p.goto('http://127.0.0.1:3000/v5/login');
   await p.evaluate(async()=>{
     const res=await fetch('/api/v5/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:'13800000001',password:'123456'})});
-    const j=await res.json(); localStorage.setItem('idbs.access_token', j.data.access_token);
+    const j=await res.json(); localStorage.setItem('laboratory-management-system.access_token', j.data.access_token);
   });
   await p.goto('http://127.0.0.1:3000/v5/this-route-should-not-exist-xyz',{waitUntil:'domcontentloaded'});
   await p.waitForTimeout(1500);

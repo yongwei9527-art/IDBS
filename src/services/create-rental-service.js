@@ -746,6 +746,15 @@ function createRentalService(options) {
     return queryOne('select * from admin_roles where user_id = $1 limit 1', [userId]);
   }
 
+  async function canSubscribeReservationAdminChannel(auth = {}) {
+    const roleKey = auth.role || auth.admin_role_key;
+    if (roleKey === 'super_admin' || (Array.isArray(auth.perms) && auth.perms.includes('*'))) return true;
+    const userId = String(auth.sub || auth.user_id || auth.id || '').trim();
+    if (!userId || roleKey !== 'admin') return false;
+    const role = await getAdminRoleForUser(userId);
+    return Boolean(role && hasAnyPermission(role, ['reservation.view', 'reservation.approve', 'reservation.change_plan']));
+  }
+
   async function requireAdminRole(token, allowedRoleKeys = [], allowedPermissions = []) {
     const admin = await requireAdmin(token);
     if (admin.role === 'super_admin' || admin.admin_role_key === 'super_admin') {
@@ -802,7 +811,7 @@ function createRentalService(options) {
   }
 
   async function lockDeviceSchedule(client, deviceId) {
-    await client.query("select pg_advisory_xact_lock(hashtext('idbs-device-schedule'), hashtext($1))", [String(deviceId)]);
+    await client.query("select pg_advisory_xact_lock(hashtext('laboratory-management-system-device-schedule'), hashtext($1))", [String(deviceId)]);
   }
 
   async function checkConflictInTransaction(client, deviceId, startTime, endTime, excludeReservationId = null) {
@@ -1348,6 +1357,7 @@ function createRentalService(options) {
     parseReservationGroups,
     parseReservationSlots,
     query,
+    realtimePublisher,
     requireAdminRole,
     requireUser,
     reservationDateText,
@@ -1388,7 +1398,7 @@ function createRentalService(options) {
   // auth: { sub, scope, role, perms, name }
 
 
-  return { runReservationReminderLifecycle, archiveDailySuccessfulUsage, adminAnalyticsDeviceUsage, adminListReturnTasks, adminReviewReturn, adminCreateMaintenancePlan, adminCreateMaintenanceWorkOrder, adminListMaintenancePlans, adminListMaintenanceWorkOrders, adminMaintenanceOverview, adminUpdateMaintenancePlan, adminUpdateMaintenanceWorkOrder, adminAnalyticsFaults, adminAnalyticsIntelligence, adminAnalyticsOverview, adminAnalyticsTimeHeatmap, adminListIntelligenceActionLogs, adminUpdateIntelligenceAction, adminApproveReservation, adminApproveReservationBatch, adminBulkApproveReservations, adminChangeReservationPlan, adminMarkReservationNoShow, adminReviewReservationCancellation, adminCreateDevice, adminCreateExportJob, adminGetExportJobDownload, adminDashboard, adminDeleteUser, adminExportData, adminGetActivitySummary, adminGetDeviceDetail, adminGetReservationBatch, adminGetSecurityConfig, adminGetUserDetail, adminListDevices, adminListExportJobs, adminListReservationBatches, adminListReservations, adminListRoles, adminListUsers, adminLogin, adminOperationLogs, adminOptions, adminPermissions, adminPreviewDailyUsageReport, adminRunNextExportJob, adminSendDailyUsageReport, adminRevokeRole, adminSetDeviceAvailable, adminSetUserBan, adminSetUserStatus, adminUnbindWechat, adminUpdateDevice, adminUpdateSecurityConfig, adminUpsertRole, adminUserRoles, adminListFaultReports, adminNotifyAffectedFaultUsers, adminResolveFaultReport, adminListUserRequests, adminReviewUserRequest, addChatParticipants, authTokenFromReq, bindWechatAccount, bootstrapSystem, buildWechatReply, canSubscribeChatChannel, cleanupExpiredTemporaryGroups, cancelReservation, cancelReservationItem, cancelUserRequest, createChatConversation, createLoginChallenge, createReservation, createUserRequest, dissolveChatConversation, leaveChatConversation, getCalendarDay, getCalendarEvents, getReportConfig, getDeviceDetail, getDeviceTimeSlots, getLoginChallengeStatus, getProfile, getReservationBatch, getReservationSlotOptions, getSystemNotice, getStaffContacts, handleWechatMessage, listChatConversations, listChatMessages, listChatUsers, listDevices, listMyNotifications, listMyFaultReports, listMyUserRequests, listReservationBatches, loginUser, markChatConversationRead, markMyNotificationsRead, myRecords, precheckBorrowExtension, precheckReservation, registerUser, removeChatParticipant, reportDeviceFault, requestUserRequestChange, resolveRealtimePrincipal, safeFilename, sendChatMessage, sendWechatCustomMessage, shouldBlockIpAccess, autoStartDueReservations, extendBorrow, startReservationBatch, startUse, streamChatEvents, submitReturn, supplementReturnMaterials, pushDailyUsageReport, runMaintenanceWindowLifecycle, updateUserRequest, usageStats, verifyWechatHandshake };
+  return { runReservationReminderLifecycle, archiveDailySuccessfulUsage, adminAnalyticsDeviceUsage, adminListReturnTasks, adminReviewReturn, adminCreateMaintenancePlan, adminCreateMaintenanceWorkOrder, adminListMaintenancePlans, adminListMaintenanceWorkOrders, adminMaintenanceOverview, adminUpdateMaintenancePlan, adminUpdateMaintenanceWorkOrder, adminAnalyticsFaults, adminAnalyticsIntelligence, adminAnalyticsOverview, adminAnalyticsTimeHeatmap, adminListIntelligenceActionLogs, adminUpdateIntelligenceAction, adminApproveReservation, adminApproveReservationBatch, adminBulkApproveReservations, adminChangeReservationPlan, adminMarkReservationNoShow, adminReviewReservationCancellation, adminCreateDevice, adminCreateExportJob, adminGetExportJobDownload, adminDashboard, adminDeleteUser, adminExportData, adminGetActivitySummary, adminGetDeviceDetail, adminGetReservationBatch, adminGetSecurityConfig, adminGetUserDetail, adminListDevices, adminListExportJobs, adminListReservationBatches, adminListReservations, adminListRoles, adminListUsers, adminLogin, adminOperationLogs, adminOptions, adminPermissions, adminPreviewDailyUsageReport, adminRunNextExportJob, adminSendDailyUsageReport, adminRevokeRole, adminSetDeviceAvailable, adminSetUserBan, adminSetUserStatus, adminUnbindWechat, adminUpdateDevice, adminUpdateSecurityConfig, adminUpsertRole, adminUserRoles, adminListFaultReports, adminNotifyAffectedFaultUsers, adminResolveFaultReport, adminListUserRequests, adminReviewUserRequest, addChatParticipants, authTokenFromReq, bindWechatAccount, bootstrapSystem, buildWechatReply, canSubscribeChatChannel, canSubscribeReservationAdminChannel, cleanupExpiredTemporaryGroups, cancelReservation, cancelReservationItem, cancelUserRequest, createChatConversation, createLoginChallenge, createReservation, createUserRequest, dissolveChatConversation, leaveChatConversation, getCalendarDay, getCalendarEvents, getReportConfig, getDeviceDetail, getDeviceTimeSlots, getLoginChallengeStatus, getProfile, getReservationBatch, getReservationSlotOptions, getSystemNotice, getStaffContacts, handleWechatMessage, listChatConversations, listChatMessages, listChatUsers, listDevices, listMyNotifications, listMyFaultReports, listMyUserRequests, listReservationBatches, loginUser, markChatConversationRead, markMyNotificationsRead, myRecords, precheckBorrowExtension, precheckReservation, registerUser, removeChatParticipant, reportDeviceFault, requestUserRequestChange, resolveRealtimePrincipal, safeFilename, sendChatMessage, sendWechatCustomMessage, shouldBlockIpAccess, autoStartDueReservations, extendBorrow, startReservationBatch, startUse, streamChatEvents, submitReturn, supplementReturnMaterials, pushDailyUsageReport, runMaintenanceWindowLifecycle, updateUserRequest, usageStats, verifyWechatHandshake };
 }
 
 module.exports = { createRentalService };

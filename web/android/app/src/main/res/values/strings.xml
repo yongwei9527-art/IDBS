@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">实验室管理系统</string>
+    <string name="title_activity_main">实验室管理系统</string>
+    <string name="package_name">com.laboratory.managementsystem</string>
+    <string name="custom_url_scheme">com.laboratory.managementsystem</string>
+</resources>

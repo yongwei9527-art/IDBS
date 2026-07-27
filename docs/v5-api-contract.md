@@ -1,8 +1,8 @@
-# IDBS 5.0 API and Realtime Contract
+# 实验室管理系统 5.0 API and Realtime Contract
 
 ## Scope and stable paths
 
-IDBS product release is **5.0.0**. The deployed React application and its HTTP
+实验室管理系统 product release is **5.0.0**. The deployed React application and its HTTP
 contract intentionally keep the stable compatibility paths `/v5/` and
 `/api/v5`; these path names are not the product version. New integrations must
 use the endpoints in this document. The older `/api/*` compatibility surface is
@@ -33,7 +33,7 @@ refresh tokens in a URL.
 - `GET /api/v5/me` - return the current principal, roles, and permissions.
 
 Login returns only the short-lived access token and user/permission data. The
-refresh token is an `idbs.refresh_token` HttpOnly, SameSite=Strict cookie scoped
+refresh token is an `laboratory-management-system.refresh_token` HttpOnly, SameSite=Strict cookie scoped
 to `/api/v5/auth` (and is Secure on HTTPS). It is rotated after each successful
 refresh. New clients must not send a refresh token in JSON.
 

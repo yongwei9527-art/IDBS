@@ -1,5 +1,5 @@
-﻿/**
- * Multi-agent parallel persona auditors for IDBS v5 (~30 min).
+/**
+ * Multi-agent parallel persona auditors for 实验室管理系统 v5 (~30 min).
  * Each agent writes its own report; parent writes combined summary periodically.
  */
 const fs = require('fs');
@@ -63,8 +63,8 @@ async function login(page, phone, password){
       const j = await res.json().catch(()=>({}));
       const d = j.data || j;
       if(!res.ok || !d.access_token) return {ok:false,status:res.status,message:j.message||'login failed', retryAfter: Number(res.headers.get('Retry-After')||0)};
-      localStorage.setItem('idbs.access_token', d.access_token);
-      if(d.refresh_token) localStorage.setItem('idbs.refresh_token', d.refresh_token);
+      localStorage.setItem('laboratory-management-system.access_token', d.access_token);
+      if(d.refresh_token) localStorage.setItem('laboratory-management-system.refresh_token', d.refresh_token);
       return {ok:true, role:d.role, name:d.name};
     }, {phone,password});
     if (result.ok) return result;
@@ -220,7 +220,7 @@ async function runNegative(agent, deadline){
           }
         }
         // clear token
-        await page.evaluate(()=>{ localStorage.removeItem('idbs.access_token'); localStorage.removeItem('idbs.refresh_token'); });
+        await page.evaluate(()=>{ localStorage.removeItem('laboratory-management-system.access_token'); localStorage.removeItem('laboratory-management-system.refresh_token'); });
         await page.goto(BASE+'/v5/devices',{waitUntil:'domcontentloaded'});
         await page.waitForTimeout(600);
         if (!/login/i.test(page.url())){
@@ -356,7 +356,7 @@ async function writeCombined(){
   };
   fs.writeFileSync(path.join(OUT, `combined-agents-${RUN_ID}.json`), JSON.stringify(summary,null,2));
   const md = [
-    `# IDBS 多代理并行用户模拟评估报告`,
+    `# 实验室管理系统 多代理并行用户模拟评估报告`,
     ``,
     `- 生成时间: ${summary.generated_at}`,
     `- 运行ID: ${RUN_ID}`,

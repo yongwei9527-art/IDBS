@@ -122,12 +122,17 @@ function Breadcrumb({ pathname }: { pathname: string }) {
   );
 }
 
+function shouldStartCollapsed() {
+  if (typeof window === 'undefined') return true;
+  return document.documentElement.dataset.runtimeSurface === 'apk' || window.innerWidth < 768;
+}
+
 export function AppLayout() {
-  const [collapsed, setCollapsed] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+  const [collapsed, setCollapsed] = useState(shouldStartCollapsed);
   const [notice, setNotice] = useState<SystemNotice | null>(null);
   const [ambient, setAmbient] = useState<'day' | 'night'>(() => {
     if (typeof window === 'undefined') return 'night';
-    const saved = window.localStorage.getItem('IDBS_AMBIENT');
+    const saved = window.localStorage.getItem('LABORATORY_MANAGEMENT_SYSTEM_AMBIENT');
     if (saved === 'day' || saved === 'night') return saved;
     const hour = new Date().getHours();
     return hour >= 7 && hour < 19 ? 'day' : 'night';
@@ -162,12 +167,25 @@ export function AppLayout() {
     : navGroups;
   const roleLabel = capability.isSuperAdmin ? '系统管理员' : capability.isAdminLike ? '运营权限已启用' : '服务账号';
   useEffect(() => {
+    function onViewportResize() {
+      if (document.documentElement.dataset.runtimeSurface === 'apk' || window.innerWidth < 768) {
+        setCollapsed(true);
+      }
+    }
+    window.addEventListener('resize', onViewportResize);
+    window.addEventListener('orientationchange', onViewportResize);
+    return () => {
+      window.removeEventListener('resize', onViewportResize);
+      window.removeEventListener('orientationchange', onViewportResize);
+    };
+  }, []);
+  useEffect(() => {
     document.documentElement.dataset.ambient = ambient;
     document.documentElement.style.colorScheme = ambient === 'night' ? 'dark' : 'light';
     // Keep legacy data-theme in sync for residual styles that still target it.
     if (ambient === 'night') document.documentElement.setAttribute('data-theme', 'dark');
     else document.documentElement.removeAttribute('data-theme');
-    window.localStorage.setItem('IDBS_AMBIENT', ambient);
+    window.localStorage.setItem('LABORATORY_MANAGEMENT_SYSTEM_AMBIENT', ambient);
   }, [ambient]);
 
   useEffect(() => {

@@ -8,7 +8,7 @@ export interface SystemNotice {
 }
 
 export const SYSTEM_NOTICE_QUERY_KEY = ['system-notice'] as const;
-export const SYSTEM_NOTICE_READ_EVENT = 'idbs:system-notice-read';
+export const SYSTEM_NOTICE_READ_EVENT = 'laboratory-management-system:system-notice-read';
 
 export async function fetchSystemNotice() {
   const result = await request<{ notice?: SystemNotice }>('/system/notice');
@@ -20,7 +20,7 @@ export function systemNoticeVersion(notice?: SystemNotice | null) {
 }
 
 export function systemNoticeReadKey(notice?: SystemNotice | null) {
-  return `IDBS_NOTICE_CLOSED_${systemNoticeVersion(notice)}`;
+  return `LABORATORY_MANAGEMENT_SYSTEM_NOTICE_CLOSED_${systemNoticeVersion(notice)}`;
 }
 
 export function isSystemNoticeRead(notice?: SystemNotice | null) {

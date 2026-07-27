@@ -154,7 +154,7 @@ const srv = require('http').createServer(app).listen(0, async () => {
   const j3 = (await r3.json()).data;
   if (j3.refresh_token) throw new Error('refresh token must not be exposed in the login response');
   const refreshCookie = String(r3.headers.get('set-cookie') || '').split(';')[0];
-  if (!refreshCookie.startsWith('idbs.refresh_token=')) throw new Error('login did not set the HttpOnly refresh cookie');
+  if (!refreshCookie.startsWith('laboratory-management-system.refresh_token=')) throw new Error('login did not set the HttpOnly refresh cookie');
   const refreshResponse = await fetch(u + '/api/v5/auth/refresh', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Cookie: refreshCookie },

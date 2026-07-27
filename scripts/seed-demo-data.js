@@ -6,7 +6,7 @@ const { postgresSslOptions } = require('../src/lib/postgres-ssl');
 const { loadConfig } = require('../src/config/env');
 require('dotenv').config({ quiet: true });
 
-const connectionString = process.env.DATABASE_URL || 'postgresql://idbs_user:generated-by-installer@127.0.0.1:5432/idbs';
+const connectionString = process.env.DATABASE_URL || 'postgresql://laboratory_management_system_user:generated-by-installer@127.0.0.1:5432/laboratory_management_system';
 
 function assertSeedTarget(urlText) {
   const url = new URL(urlText);

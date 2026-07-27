@@ -7,7 +7,7 @@ const { createExportService } = require('../../src/services/domains/reports/expo
 
 function context(overrides = {}) {
   const calls = [];
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'idbs-export-'));
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'laboratory-management-system-export-'));
   const job = { id: 'job-1', type: 'usage', params: {}, status: 'running', created_by: 'admin-1', attempt_count: 1, max_attempts: 3 };
   const client = {
     async queryOne(sql, params = []) {

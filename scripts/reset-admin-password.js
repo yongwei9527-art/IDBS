@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 
 const localEnvPath = path.resolve(process.cwd(), '.env');
-const vpsSharedEnvPath = '/var/www/idbs/shared/.env';
+const vpsSharedEnvPath = '/var/www/laboratory-management-system/shared/.env';
 require('dotenv').config({
   path: fs.existsSync(localEnvPath) ? localEnvPath : vpsSharedEnvPath
 });
@@ -41,7 +41,7 @@ async function main() {
       'Usage:',
       '  ADMIN_NEW_PASSWORD=<at-least-12-chars> npm run admin:reset-password',
       '  npm run admin:reset-password -- <at-least-12-chars>',
-      '  idbs-reset-admin-password  # on VPS after deployment'
+      '  laboratory-management-system-reset-admin-password  # on VPS after deployment'
     ].join('\n'));
   }
 

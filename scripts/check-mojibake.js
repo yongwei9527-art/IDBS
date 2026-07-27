@@ -10,12 +10,17 @@ const ignoredDirectories = new Set(['.git', 'node_modules', 'uploads', 'dist', '
 const hardPatterns = [
   { name: 'replacement character', regex: /\uFFFD/u },
   { name: 'classic mojibake marker', regex: /(\u951F\u65A4\u62F7|[\u00C2\u00C3\u00E2])/u },
-  { name: 'garbled Chinese sequence', regex: /(涓婂崍|涓嬪崍|澶滈棿|瀹為獙瀹|瀹屾垚|澶辫触)/u },
+  { name: 'garbled Chinese sequence', regex: /[\u9350\u9359\u93C1\u951B]{4,}/u },
   { name: 'broken closing tag', regex: /\?\/(?:h[1-6]|p|a|button|option|div)>/u }
 ];
 
 const cjkMojibakeChars = /[\u93C1\u6434\u951B\u9359\u95C7\u93C8\u93B5\u7035\u7EFE\u9286\u9428\u6769\u6DC7\u5BB8]/gu;
-const whitelistFiles = new Set([path.normalize('scripts/check-mojibake.js')]);
+const whitelistFiles = new Set([
+  path.normalize('scripts/check-mojibake.js'),
+  // These QA fixtures intentionally contain mojibake signatures to verify detection behavior.
+  path.normalize('scripts/qa-continuous-user-sim.js'),
+  path.normalize('scripts/qa-multi-agent-sim.js')
+]);
 
 function walk(directory, files = []) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {

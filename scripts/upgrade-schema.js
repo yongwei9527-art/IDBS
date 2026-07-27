@@ -1,4 +1,4 @@
-﻿const { Pool } = require('pg');
+const { Pool } = require('pg');
 const { postgresSslOptions } = require('../src/lib/postgres-ssl');
 require('dotenv').config({ quiet: true });
 
@@ -545,7 +545,7 @@ const REQUIRED_STATEMENTS = [
   },
   {
     label: 'seed v3 runtime configs',
-    sql: "insert into system_configs (config_key, config_value, description)\n      values\n        ('jwt_access_ttl_minutes', '15', 'Access token validity in minutes'),\n        ('jwt_refresh_ttl_days', '7', 'Refresh token validity in days'),\n        ('v3_feature_chat_ws_enabled', '1', 'Whether chat over WebSocket is enabled in v3'),\n        ('v3_feature_notifications_ws_enabled', '1', 'Whether realtime notifications over WebSocket is enabled in v3'),\n        ('overdue_auto_mark_enabled', '1', 'Whether to auto-mark overdue borrow records'),\n        ('overdue_check_cron', '*/15 * * * *', 'Cron for overdue scan'),\n        ('schema_v3_applied_at', to_char(now() at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), 'IDBS schema baseline applied timestamp'),\n        ('schema_v5_applied_at', to_char(now() at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), 'IDBS 5.0 release baseline applied timestamp')\n      on conflict (config_key) do update set\n        config_value = case when system_configs.config_key in ('schema_v3_applied_at', 'schema_v5_applied_at') then excluded.config_value else system_configs.config_value end,\n        updated_at = now()"
+    sql: "insert into system_configs (config_key, config_value, description)\n      values\n        ('jwt_access_ttl_minutes', '15', 'Access token validity in minutes'),\n        ('jwt_refresh_ttl_days', '7', 'Refresh token validity in days'),\n        ('v3_feature_chat_ws_enabled', '1', 'Whether chat over WebSocket is enabled in v3'),\n        ('v3_feature_notifications_ws_enabled', '1', 'Whether realtime notifications over WebSocket is enabled in v3'),\n        ('overdue_auto_mark_enabled', '1', 'Whether to auto-mark overdue borrow records'),\n        ('overdue_check_cron', '*/15 * * * *', 'Cron for overdue scan'),\n        ('schema_v3_applied_at', to_char(now() at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '实验室管理系统 schema baseline applied timestamp'),\n        ('schema_v5_applied_at', to_char(now() at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '实验室管理系统 5.0 release baseline applied timestamp')\n      on conflict (config_key) do update set\n        config_value = case when system_configs.config_key in ('schema_v3_applied_at', 'schema_v5_applied_at') then excluded.config_value else system_configs.config_value end,\n        updated_at = now()"
   },
   {
     label: 'seed device time slots',
@@ -770,9 +770,9 @@ async function tryStatement(client, label, sql) {
 
 function getConnectionUser() {
   try {
-    return new URL(connectionString).username || 'idbs_user';
+    return new URL(connectionString).username || 'laboratory_management_system_user';
   } catch (_) {
-    return 'idbs_user';
+    return 'laboratory_management_system_user';
   }
 }
 
@@ -781,7 +781,7 @@ function printOwnerTransferSql(appUser) {
   const owner = quoteIdent(appUser);
     console.log('Run the generated manual SQL with the database owner if required.');
   console.log(`alter schema public owner to ${owner};`);
-  console.log(`do $idbs_owner$
+  console.log(`do $laboratory_management_system_owner$
 DECLARE
   r record;
 BEGIN
@@ -794,7 +794,7 @@ BEGIN
   FOR r IN SELECT sequence_schema, sequence_name FROM information_schema.sequences WHERE sequence_schema = 'public' LOOP
     EXECUTE format('ALTER SEQUENCE %I.%I OWNER TO ${owner}', r.sequence_schema, r.sequence_name);
   END LOOP;
-END $idbs_owner$;`);
+END $laboratory_management_system_owner$;`);
 }
 
 function printManualSql(failedColumns = [], failedStatements = []) {

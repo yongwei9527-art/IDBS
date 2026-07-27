@@ -30,7 +30,7 @@ test('production runtime rejects placeholder secrets, weak passwords, and wildca
     NODE_ENV: 'production',
     ADMIN_PASSWORD: 'admin',
     TOKEN_SECRET: 'change-me-please',
-    DATABASE_URL: 'postgresql://example.invalid/idbs',
+    DATABASE_URL: 'postgresql://example.invalid/laboratory_management_system',
     CORS_ORIGIN: '*'
   });
   const runtime = buildRuntimeStatus(config);
@@ -43,25 +43,25 @@ test('administrator password policy rejects short, placeholder, and repeated pas
   assert.equal(isWeakAdminPassword('elevenchars'), true);
   assert.equal(isWeakAdminPassword('password'), true);
   assert.equal(isWeakAdminPassword('aaaaaaaaaaaa'), true);
-  assert.equal(isWeakAdminPassword('IDBS_strong_admin_2026'), false);
+  assert.equal(isWeakAdminPassword('LABORATORY_MANAGEMENT_SYSTEM_strong_admin_2026'), false);
 });
 
 test('production configuration validates origins, ports, and rate-limit bounds', () => {
-  assert.equal(isValidHttpOrigin('https://idbs.example.edu'), true);
-  assert.equal(isValidHttpOrigin('https://idbs.example.edu/path'), false);
+  assert.equal(isValidHttpOrigin('https://laboratory_management_system.example.edu'), true);
+  assert.equal(isValidHttpOrigin('https://laboratory_management_system.example.edu/path'), false);
   assert.equal(isValidHttpOrigin('javascript:alert(1)'), false);
-  assert.deepEqual(corsOriginList({ corsOrigin: 'https://idbs.example.edu/, http://127.0.0.1:3000' }), [
-    'https://idbs.example.edu',
+  assert.deepEqual(corsOriginList({ corsOrigin: 'https://laboratory_management_system.example.edu/, http://127.0.0.1:3000' }), [
+    'https://laboratory_management_system.example.edu',
     'http://127.0.0.1:3000'
   ]);
 
   const runtime = buildRuntimeStatus(loadConfig({
     NODE_ENV: 'production',
     PORT: '70000',
-    ADMIN_PASSWORD: 'IDBS_strong_admin_2026',
-    TOKEN_SECRET: 'IDBS_token_secret_at_least_32_characters_2026',
-    DATABASE_URL: 'postgresql://example.invalid/idbs',
-    CORS_ORIGIN: 'https://idbs.example.edu/path',
+    ADMIN_PASSWORD: 'LABORATORY_MANAGEMENT_SYSTEM_strong_admin_2026',
+    TOKEN_SECRET: 'LABORATORY_MANAGEMENT_SYSTEM_token_secret_at_least_32_characters_2026',
+    DATABASE_URL: 'postgresql://example.invalid/laboratory_management_system',
+    CORS_ORIGIN: 'https://laboratory_management_system.example.edu/path',
     AUTH_RATE_LIMIT_MAX: '0',
     API_RATE_LIMIT_WINDOW_MS: '500'
   }));
@@ -81,7 +81,7 @@ test('server fails before listening when production configuration is unsafe', ()
       NODE_ENV: 'production',
       ADMIN_PASSWORD: 'admin',
       TOKEN_SECRET: 'change-me-please',
-      DATABASE_URL: 'postgresql://127.0.0.1:1/idbs',
+      DATABASE_URL: 'postgresql://127.0.0.1:1/laboratory_management_system',
       CORS_ORIGIN: '*'
     }
   });
@@ -135,7 +135,7 @@ test('historical default administrator seed is not a login bypass', async () => 
     assertText: (value) => String(value),
     getAdminAuthConfig: async () => ({
       has_custom_admin_password: false,
-      default_admin_password_seed: 'IDBS123456'
+      default_admin_password_seed: '实验室管理系统123456'
     }),
     verifySecret: (left, right) => left === right,
     makeToken: () => 'token',
@@ -143,7 +143,7 @@ test('historical default administrator seed is not a login bypass', async () => 
     fail: (message, status, code) => ({ ok: false, message, status, code })
   });
 
-  const rejected = await auth.adminLogin({ password: 'IDBS123456' });
+  const rejected = await auth.adminLogin({ password: '实验室管理系统123456' });
   assert.equal(rejected.ok, false);
   const accepted = await auth.adminLogin({ password: 'strong-environment-admin-password' });
   assert.equal(accepted.ok, true);

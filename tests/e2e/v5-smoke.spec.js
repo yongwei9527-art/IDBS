@@ -1,7 +1,7 @@
 const { test, expect } = require('@playwright/test');
 const { login, expectAppPage } = require('./helpers');
 
-test.describe('IDBS 5.0 V5-only', () => {
+test.describe('实验室管理系统 5.0 V5-only', () => {
   test('login page renders two credential inputs', async ({ page }) => { await page.goto('/v5/login'); await expect(page.locator('input')).toHaveCount(2); });
   test('login page exposes a submit button', async ({ page }) => { await page.goto('/v5/login'); await expect(page.locator('button')).not.toHaveCount(0); });
   test('authenticated application layout renders', async ({ page }) => { await login(page); await expectAppPage(page, '/devices'); });

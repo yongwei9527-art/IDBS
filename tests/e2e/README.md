@@ -1,4 +1,4 @@
-# IDBS 5.0 E2E Test Plan
+# 实验室管理系统 5.0 E2E Test Plan
 
 Current Playwright coverage:
 
@@ -16,7 +16,7 @@ Use the guarded runner for local regression. It requires a dedicated PostgreSQL 
 
 ```powershell
 Copy-Item e2e.env.example .env.e2e
-# Edit .env.e2e and set a dedicated idbs_e2e connection string.
+# Edit .env.e2e and set a dedicated laboratory_management_system_e2e connection string.
 Get-Content .env.e2e | ForEach-Object {
   if ($_ -match '^(?<key>[^#=]+)=(?<value>.*)$') {
     Set-Item -Path "Env:$($matches.key.Trim())" -Value $matches.value
@@ -28,7 +28,7 @@ node scripts/run-isolated-e2e.js
 Or set the required value directly:
 
 ```powershell
-$env:E2E_DATABASE_URL = 'postgresql://idbs_user:your-password@127.0.0.1:55432/idbs_e2e'
+$env:E2E_DATABASE_URL = 'postgresql://laboratory_management_system_user:your-password@127.0.0.1:55432/laboratory_management_system_e2e'
 node scripts/run-isolated-e2e.js
 ```
 
@@ -38,7 +38,7 @@ Safety rules enforced by the runner:
 - Database names not explicitly marked with `e2e` are rejected.
 - Only `localhost` or `127.0.0.1` using `E2E_PORT` (default `3100`) can be the test URL.
 - The test server has temporary, test-only rate-limit values; production limits are not changed.
-- Test uploads are kept in `.idbs-runtime/e2e-uploads`.
+- Test uploads are kept in `.laboratory-management-system-runtime/e2e-uploads`.
 
 Set `E2E_PREPARE=false` only when the isolated database has already been initialized and seeded. Set `E2E_BUILD=false` only when the built React assets are known to be current.
 

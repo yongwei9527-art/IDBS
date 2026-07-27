@@ -1,5 +1,5 @@
-﻿/**
- * Continuous multi-persona UI audit for IDBS v5.
+/**
+ * Continuous multi-persona UI audit for 实验室管理系统 v5.
  * Simulates normal user and admin flows for DURATION_MS, recording
  * display/navigation/operation errors without high-risk destructive actions.
  */
@@ -105,8 +105,8 @@ async function apiLogin(page, phone, password) {
     if (!res.ok || !data.access_token) {
       return { ok: false, status: res.status, message: json.message || json.error || 'login failed' };
     }
-    localStorage.setItem('idbs.access_token', data.access_token);
-    if (data.refresh_token) localStorage.setItem('idbs.refresh_token', data.refresh_token);
+    localStorage.setItem('laboratory-management-system.access_token', data.access_token);
+    if (data.refresh_token) localStorage.setItem('laboratory-management-system.refresh_token', data.refresh_token);
     return { ok: true, role: data.role, name: data.name || data.user?.name };
   }, { phone, password });
   return result;
@@ -315,7 +315,7 @@ function writeReport(partial = false) {
   const jsonPath = path.join(OUT_DIR, `continuous-audit-${RUN_ID}.json`);
   fs.writeFileSync(jsonPath, JSON.stringify(report, null, 2), 'utf8');
   const md = [
-    `# IDBS 持续用户模拟审核报告`,
+    `# 实验室管理系统 持续用户模拟审核报告`,
     ``,
     `- 运行 ID: ${RUN_ID}`,
     `- 目标地址: ${BASE}`,

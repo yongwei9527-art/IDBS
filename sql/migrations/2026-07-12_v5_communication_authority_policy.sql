@@ -1,4 +1,4 @@
--- IDBS 5.0 communication and authority policy.
+-- 实验室管理系统 5.0 communication and authority policy.
 -- Keep exactly one root administrator, and make it impossible to retain legacy peer-to-peer chats.
 BEGIN;
 

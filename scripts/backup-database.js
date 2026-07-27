@@ -65,7 +65,7 @@ function parseDatabaseUrl(url) {
 function listBackupFiles(dir) {
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir)
-    .filter((name) => /^idbs-\d{8}T\d{6}Z\.(dump|sql)$/.test(name))
+    .filter((name) => /^laboratory-management-system-\d{8}T\d{6}Z\.(dump|sql)$/.test(name))
     .map((name) => {
       const full = path.join(dir, name);
       const st = fs.statSync(full);
@@ -147,7 +147,7 @@ function main() {
 
   const ts = stamp();
   const ext = format === 'plain' ? 'sql' : 'dump';
-  const outFile = path.join(backupDir, 'idbs-' + ts + '.' + ext);
+  const outFile = path.join(backupDir, 'laboratory-management-system-' + ts + '.' + ext);
   const pgDump = resolvePgDump(process.env.PG_DUMP_PATH || '');
   const env = Object.assign({}, process.env, { PGPASSWORD: db.password || process.env.PGPASSWORD || '' });
   const dumpArgs = [
@@ -204,7 +204,7 @@ function main() {
     sha256: digest,
     retention_days: keepDays,
     tool: 'pg_dump',
-    app: 'idbs',
+    app: 'laboratory_management_system',
     version: '5.0'
   };
   const manifestPath = outFile + '.json';

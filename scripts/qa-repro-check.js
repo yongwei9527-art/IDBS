@@ -1,4 +1,4 @@
-﻿const {chromium}=require('playwright');
+const {chromium}=require('playwright');
 (async()=>{
   const b=await chromium.launch({headless:true});
   const p=await b.newPage();
@@ -8,7 +8,7 @@
   const login=await p.evaluate(async()=>{
     const res=await fetch('/api/v5/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:'13800000001',password:'123456'})});
     const j=await res.json(); const d=j.data||j;
-    localStorage.setItem('idbs.access_token', d.access_token);
+    localStorage.setItem('laboratory-management-system.access_token', d.access_token);
     return {ok:!!d.access_token, status:res.status};
   });
   console.log('login', login);
@@ -30,7 +30,7 @@
   await p.evaluate(async()=>{
     const res=await fetch('/api/v5/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:'13900000000',password:'123456'})});
     const j=await res.json(); const d=j.data||j;
-    localStorage.setItem('idbs.access_token', d.access_token);
+    localStorage.setItem('laboratory-management-system.access_token', d.access_token);
   });
   for (const r of ['/admin/dashboard','/admin/system','/admin/reservations','/chat','/this-route-should-not-exist-xyz']) {
     errors.length=0;

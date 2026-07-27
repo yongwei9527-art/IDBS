@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/yongwei9527-art/IDBS.git}"
-SRC_DIR="${SRC_DIR:-/var/www/idbs-src}"
+SRC_DIR="${SRC_DIR:-/var/www/laboratory-management-system-src}"
 BRANCH="${BRANCH:-main}"
 
 ask_yes_no() {
@@ -19,6 +19,28 @@ ask_input() {
   local prompt="$1" default="$2" reply
   read -r -p "${prompt}${default:+ [$default]} " reply || true
   printf '%s' "${reply:-$default}"
+}
+
+normalize_domain() {
+  local value="$1"
+  value="${value#http://}"
+  value="${value#https://}"
+  value="${value%%/*}"
+  printf '%s' "$value"
+}
+
+detect_server_ip() {
+  local ip
+  ip="$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
+  if [ -z "$ip" ]; then
+    ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  fi
+  printf '%s' "$ip"
+}
+
+cors_origin_list() {
+  local endpoint="$1"
+  printf 'https://localhost,%s' "$endpoint"
 }
 
 random_token() {
@@ -64,28 +86,32 @@ if [ ! -f .env ]; then
 fi
 
 if ask_yes_no "服务器是否有域名？" Y; then
-  DOMAIN_NAME="$(ask_input "请输入域名" "北苑绿洲.online")"
-  CORS_ORIGIN="https://${DOMAIN_NAME}"
+  DOMAIN_INPUT="$(ask_input "请输入域名（不要带 http/https）" "北苑绿洲.online")"
+  DOMAIN_NAME="$(normalize_domain "$DOMAIN_INPUT")"
+  CORS_ORIGIN="$(cors_origin_list "https://${DOMAIN_NAME}")"
   WECHAT_TOKEN="$(random_token)"
   ensure_env_value CORS_ORIGIN "$CORS_ORIGIN"
   ensure_env_value WECHAT_TOKEN "$WECHAT_TOKEN"
   echo "[4/4] Deploying with domain: https://${DOMAIN_NAME}"
 else
   DOMAIN_NAME="_"
-  SERVER_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
-  CORS_ORIGIN="http://${SERVER_IP:-SERVER_IP}"
+  SERVER_IP="$(detect_server_ip)"
+  PUBLIC_ORIGIN="http://${SERVER_IP:-SERVER_IP}"
+  CORS_ORIGIN="$(cors_origin_list "$PUBLIC_ORIGIN")"
   ensure_env_value CORS_ORIGIN "$CORS_ORIGIN"
-  echo "[4/4] Deploying without domain"
+  echo "[4/4] Deploying without domain: ${PUBLIC_ORIGIN}"
 fi
 
 chmod +x scripts/prepare-vps.sh
 chmod +x scripts/deploy-ubuntu.sh
-sudo -E env RESET_IDBS_DATA=0 DOMAIN_NAME="$DOMAIN_NAME" ./scripts/prepare-vps.sh
+sudo -E env RESET_LABORATORY_MANAGEMENT_SYSTEM_DATA=0 DOMAIN_NAME="$DOMAIN_NAME" ./scripts/prepare-vps.sh
 sudo -E DOMAIN_NAME="$DOMAIN_NAME" CORS_ORIGIN="$CORS_ORIGIN" ./scripts/deploy-ubuntu.sh
 
 if [ "$DOMAIN_NAME" = "_" ]; then
-  echo "Open: http://SERVER_IP/"
+  echo "Open: ${PUBLIC_ORIGIN}/"
+  echo "APK login server address: ${SERVER_IP:-SERVER_IP}"
 else
   echo "Open: https://${DOMAIN_NAME}/"
+  echo "APK login server address: ${DOMAIN_NAME}"
 fi
 

@@ -1,0 +1,18 @@
+[Unit]
+Description=实验室管理系统 API
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/laboratory-management-system/current
+EnvironmentFile=/var/www/laboratory-management-system/shared/.env
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=5
+User=www-data
+Group=www-data
+StandardOutput=append:/var/log/laboratory-management-system/app.log
+StandardError=append:/var/log/laboratory-management-system/error.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,4 +1,4 @@
-name: IDBS 5.0 Quality Gate
+name: 实验室管理系统 5.0 Quality Gate
 
 on:
   push:
@@ -38,26 +38,26 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_DB: idbs
+          POSTGRES_DB: laboratory_management_system
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d idbs"
+          --health-cmd "pg_isready -U postgres -d laboratory_management_system"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
     env:
       NODE_ENV: test
       PORT: 3000
-      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/idbs
-      ADMIN_PASSWORD: IDBS_ci_admin_password_2026
-      TOKEN_SECRET: IDBS_ci_token_secret_at_least_32_characters_2026
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/laboratory_management_system
+      ADMIN_PASSWORD: LABORATORY_MANAGEMENT_SYSTEM_ci_admin_password_2026
+      TOKEN_SECRET: LABORATORY_MANAGEMENT_SYSTEM_ci_token_secret_at_least_32_characters_2026
       CORS_ORIGIN: http://127.0.0.1:3000
       API_RATE_LIMIT_MAX: 1000
       AUTH_RATE_LIMIT_MAX: 100
-RESET_IDBS_SCHEMA: 1
+RESET_LABORATORY_MANAGEMENT_SYSTEM_SCHEMA: 1
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -88,7 +88,7 @@ RESET_IDBS_SCHEMA: 1
           npm run doctor
           npm run v5:build
 
-      - name: Start IDBS
+      - name: Start 实验室管理系统
         run: |
           npm start > server-ci.log 2>&1 &
           for attempt in $(seq 1 30); do
@@ -113,7 +113,7 @@ RESET_IDBS_SCHEMA: 1
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: idbs-5-ci-evidence
+          name: laboratory-management-system-5-ci-evidence
           path: |
             server-ci.log
             test-results/

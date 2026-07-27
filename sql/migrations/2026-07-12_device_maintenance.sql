@@ -1,7 +1,7 @@
--- IDBS 5.0 preventive maintenance, maintenance windows and work orders
+-- 实验室管理系统 5.0 preventive maintenance, maintenance windows and work orders
 
 
--- Preventive maintenance, work orders and reservation-blocking windows (IDBS 5.0)
+-- Preventive maintenance, work orders and reservation-blocking windows (实验室管理系统 5.0)
 CREATE TABLE IF NOT EXISTS device_maintenance_plans (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,

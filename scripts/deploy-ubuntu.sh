@@ -2,10 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_NAME="idbs"
-APP_USER="${APP_USER:-idbs}"
+APP_NAME="laboratory_management_system"
+APP_USER="${APP_USER:-laboratory_management_system}"
 APP_GROUP="${APP_GROUP:-$APP_USER}"
-APP_BASE="${APP_BASE:-/var/www/idbs}"
+APP_BASE="${APP_BASE:-/var/www/laboratory-management-system}"
 APP_CURRENT="$APP_BASE/current"
 APP_SHARED="$APP_BASE/shared"
 APP_UPLOADS="$APP_BASE/uploads"
@@ -69,7 +69,7 @@ sync_app() {
 ensure_env() {
   if [ ! -f "$ENV_FILE" ]; then
     DB_PASSWORD="$(openssl rand -hex 16)"
-    ADMIN_PASSWORD="$(printf 'IDBS_%s' "$(openssl rand -hex 6)")"
+    ADMIN_PASSWORD="$(printf 'LABORATORY_MANAGEMENT_SYSTEM_%s' "$(openssl rand -hex 6)")"
     DEFAULT_ORIGIN="${CORS_ORIGIN:-$(detect_default_origin)}"
     cat > "$ENV_FILE" <<EOF
 NODE_ENV=production
@@ -81,7 +81,7 @@ WECHAT_APP_ID=
 WECHAT_APP_SECRET=
 WECHAT_ADMIN_OPENIDS=
 UPLOAD_DIR=$APP_UPLOADS
-DATABASE_URL=postgresql://idbs_user:${DB_PASSWORD}@127.0.0.1:5432/idbs
+DATABASE_URL=postgresql://laboratory_management_system_user:${DB_PASSWORD}@127.0.0.1:5432/laboratory_management_system
 PGSSL=false
 PGSSL_REJECT_UNAUTHORIZED=true
 CORS_ORIGIN=${DEFAULT_ORIGIN}
@@ -118,7 +118,7 @@ repair_env_placeholders() {
   current_trust_proxy="$(get_env_value TRUST_PROXY || true)"
 
   if [ -z "$current_admin" ] || [ "$current_admin" = "change-me" ] || [ "$current_admin" = "your-admin-password" ]; then
-    set_env_value ADMIN_PASSWORD "IDBS_$(openssl rand -hex 6)"
+    set_env_value ADMIN_PASSWORD "LABORATORY_MANAGEMENT_SYSTEM_$(openssl rand -hex 6)"
     ADMIN_PASSWORD_ROTATED=1
   fi
 
@@ -131,7 +131,7 @@ repair_env_placeholders() {
   fi
 
   if [ -z "$current_db" ] || printf '%s' "$current_db" | grep -q 'your-password'; then
-    set_env_value DATABASE_URL "postgresql://idbs_user:$(openssl rand -hex 16)@127.0.0.1:5432/idbs"
+    set_env_value DATABASE_URL "postgresql://laboratory_management_system_user:$(openssl rand -hex 16)@127.0.0.1:5432/laboratory_management_system"
   fi
 
   if [ -z "$current_node_env" ]; then
@@ -176,12 +176,12 @@ ensure_local_database() {
   database_url="$(get_env_value DATABASE_URL)"
 
   case "$database_url" in
-    postgresql://idbs_user:*@127.0.0.1:5432/idbs|postgres://idbs_user:*@127.0.0.1:5432/idbs)
-      db_password="${database_url#*://idbs_user:}"
-      db_password="${db_password%@127.0.0.1:5432/idbs}"
+    postgresql://laboratory_management_system_user:*@127.0.0.1:5432/laboratory_management_system|postgres://laboratory_management_system_user:*@127.0.0.1:5432/laboratory_management_system)
+      db_password="${database_url#*://laboratory_management_system_user:}"
+      db_password="${db_password%@127.0.0.1:5432/laboratory_management_system}"
       ;;
     *)
-      log "Skipping local PostgreSQL setup because DATABASE_URL is not the default local idbs database."
+      log "Skipping local PostgreSQL setup because DATABASE_URL is not the default local laboratory_management_system database."
       return 0
       ;;
   esac
@@ -189,20 +189,20 @@ ensure_local_database() {
   systemctl enable postgresql
   systemctl start postgresql
 
-  if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='idbs_user'" | grep -q 1; then
-    sudo -u postgres psql -c "CREATE USER idbs_user WITH PASSWORD '${db_password}';"
+  if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='laboratory_management_system_user'" | grep -q 1; then
+    sudo -u postgres psql -c "CREATE USER laboratory_management_system_user WITH PASSWORD '${db_password}';"
   else
-    sudo -u postgres psql -c "ALTER USER idbs_user WITH PASSWORD '${db_password}';"
+    sudo -u postgres psql -c "ALTER USER laboratory_management_system_user WITH PASSWORD '${db_password}';"
   fi
 
-  if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='idbs'" | grep -q 1; then
-    sudo -u postgres createdb -O idbs_user idbs
+  if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='laboratory_management_system'" | grep -q 1; then
+    sudo -u postgres createdb -O laboratory_management_system_user laboratory_management_system
   fi
 
-  sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON DATABASE idbs TO idbs_user;"
-  sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 -f "$APP_CURRENT/sql/schema.sql"
+  sudo -u postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON DATABASE laboratory_management_system TO laboratory_management_system_user;"
+  sudo -u postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -f "$APP_CURRENT/sql/schema.sql"
   if [ -d "$APP_CURRENT/sql/migrations" ]; then
-    sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now());"
+    sudo -u postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now());"
     for migration in "$APP_CURRENT"/sql/migrations/*.sql; do
       [ -e "$migration" ] || continue
       migration_name="$(basename "$migration")"
@@ -210,34 +210,34 @@ ensure_local_database() {
         *rollback*) continue ;;
       esac
       version="${migration_name%.sql}"
-      if ! sudo -u postgres psql -d idbs -tAc "SELECT 1 FROM schema_migrations WHERE version='${version}'" | grep -q 1; then
-        sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 --single-transaction -f "$migration" -c "INSERT INTO schema_migrations (version) VALUES ('${version}') ON CONFLICT DO NOTHING;"
+      if ! sudo -u postgres psql -d laboratory_management_system -tAc "SELECT 1 FROM schema_migrations WHERE version='${version}'" | grep -q 1; then
+        sudo -u postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 --single-transaction -f "$migration" -c "INSERT INTO schema_migrations (version) VALUES ('${version}') ON CONFLICT DO NOTHING;"
       fi
     done
   fi
 
-  sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 -c "ALTER SCHEMA public OWNER TO idbs_user;"
-  sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 <<'SQL'
+  sudo -u postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "ALTER SCHEMA public OWNER TO laboratory_management_system_user;"
+  sudo -u postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 <<'SQL'
 DO $$
 DECLARE
   r record;
 BEGIN
   FOR r IN SELECT schemaname, tablename FROM pg_tables WHERE schemaname = 'public' LOOP
-    EXECUTE format('ALTER TABLE %I.%I OWNER TO idbs_user', r.schemaname, r.tablename);
+    EXECUTE format('ALTER TABLE %I.%I OWNER TO laboratory_management_system_user', r.schemaname, r.tablename);
   END LOOP;
   FOR r IN SELECT schemaname, viewname FROM pg_views WHERE schemaname = 'public' LOOP
-    EXECUTE format('ALTER VIEW %I.%I OWNER TO idbs_user', r.schemaname, r.viewname);
+    EXECUTE format('ALTER VIEW %I.%I OWNER TO laboratory_management_system_user', r.schemaname, r.viewname);
   END LOOP;
   FOR r IN SELECT sequence_schema, sequence_name FROM information_schema.sequences WHERE sequence_schema = 'public' LOOP
-    EXECUTE format('ALTER SEQUENCE %I.%I OWNER TO idbs_user', r.sequence_schema, r.sequence_name);
+    EXECUTE format('ALTER SEQUENCE %I.%I OWNER TO laboratory_management_system_user', r.sequence_schema, r.sequence_name);
   END LOOP;
 END $$;
 SQL
-  sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 -c "GRANT ALL ON SCHEMA public TO idbs_user;"
-  sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO idbs_user;"
-  sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO idbs_user;"
-  sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES FOR ROLE idbs_user IN SCHEMA public GRANT ALL ON TABLES TO idbs_user;"
-  sudo -u postgres psql -d idbs -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES FOR ROLE idbs_user IN SCHEMA public GRANT ALL ON SEQUENCES TO idbs_user;"
+  sudo -u postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "GRANT ALL ON SCHEMA public TO laboratory_management_system_user;"
+  sudo -u postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO laboratory_management_system_user;"
+  sudo -u postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO laboratory_management_system_user;"
+  sudo -u postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES FOR ROLE laboratory_management_system_user IN SCHEMA public GRANT ALL ON TABLES TO laboratory_management_system_user;"
+  sudo -u postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES FOR ROLE laboratory_management_system_user IN SCHEMA public GRANT ALL ON SEQUENCES TO laboratory_management_system_user;"
 }
 
 run_doctor_check() {
@@ -252,7 +252,7 @@ run_doctor_check() {
 install_service() {
   cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=IDBS VPS service
+Description=实验室管理系统 VPS service
 After=network.target postgresql.service
 
 [Service]
@@ -277,7 +277,7 @@ EOF
 install_backup_timer() {
   cat > "$BACKUP_SERVICE_FILE" <<EOF
 [Unit]
-Description=IDBS PostgreSQL daily backup
+Description=实验室管理系统 PostgreSQL daily backup
 After=network.target postgresql.service
 
 [Service]
@@ -286,12 +286,12 @@ User=$APP_USER
 Group=$APP_GROUP
 EnvironmentFile=$ENV_FILE
 Environment=APP_BACKUPS=$APP_BACKUPS
-ExecStart=/bin/bash -lc 'set -euo pipefail; mkdir -p "$APP_BACKUPS"; pg_dump "\$DATABASE_URL" | gzip > "$APP_BACKUPS/idbs_\$(date +%%F).sql.gz"; find "$APP_BACKUPS" -type f -name "idbs_*.sql.gz" -mtime +14 -delete'
+ExecStart=/bin/bash -lc 'set -euo pipefail; mkdir -p "$APP_BACKUPS"; pg_dump "\$DATABASE_URL" | gzip > "$APP_BACKUPS/laboratory_management_system_\$(date +%%F).sql.gz"; find "$APP_BACKUPS" -type f -name "laboratory_management_system_*.sql.gz" -mtime +14 -delete'
 EOF
 
   cat > "$BACKUP_TIMER_FILE" <<EOF
 [Unit]
-Description=Run IDBS PostgreSQL backup once per day
+Description=Run 实验室管理系统 PostgreSQL backup once per day
 
 [Timer]
 OnCalendar=*-*-* 02:30:00
@@ -311,27 +311,27 @@ install_admin_reset_command() {
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_CURRENT="${APP_CURRENT:-/var/www/idbs/current}"
-ENV_FILE="${ENV_FILE:-/var/www/idbs/shared/.env}"
+APP_CURRENT="${APP_CURRENT:-/var/www/laboratory-management-system/current}"
+ENV_FILE="${ENV_FILE:-/var/www/laboratory-management-system/shared/.env}"
 
 if [ ! -f "$ENV_FILE" ]; then
-  echo "IDBS environment file not found: $ENV_FILE" >&2
+  echo "实验室管理系统 environment file not found: $ENV_FILE" >&2
   exit 1
 fi
 
 if [ ! -f "$APP_CURRENT/scripts/reset-admin-password.js" ]; then
-  echo "IDBS reset script not found: $APP_CURRENT/scripts/reset-admin-password.js" >&2
+  echo "实验室管理系统 reset script not found: $APP_CURRENT/scripts/reset-admin-password.js" >&2
   exit 1
 fi
 
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
   cat <<HELP
-Reset IDBS admin console password.
+Reset 实验室管理系统 admin console password.
 
 Usage:
-  sudo idbs-reset-admin-password
-  sudo idbs-reset-admin-password 'NewStrongPassword123'
-  sudo ADMIN_NEW_PASSWORD='NewStrongPassword123' idbs-reset-admin-password
+  sudo laboratory-management-system-reset-admin-password
+  sudo laboratory-management-system-reset-admin-password 'NewStrongPassword123'
+  sudo ADMIN_NEW_PASSWORD='NewStrongPassword123' laboratory-management-system-reset-admin-password
 
 When no password is passed, the command asks for it without echoing input.
 HELP
@@ -416,11 +416,11 @@ EOF
 
 build_v3_frontend() {
   if [ ! -f "$APP_CURRENT/web/package.json" ]; then
-    log "IDBS 5.0 React frontend package not found; skip compatible /v5 build."
+    log "实验室管理系统 5.0 React frontend package not found; skip compatible /v5 build."
     return
   fi
 
-  log "Building IDBS 5.0 React frontend into public/v5..."
+  log "Building 实验室管理系统 5.0 React frontend into public/v5..."
   npm --prefix "$APP_CURRENT/web" install
   npm --prefix "$APP_CURRENT/web" run build
   npm --prefix "$APP_CURRENT/web" prune --omit=dev

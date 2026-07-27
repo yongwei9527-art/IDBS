@@ -1,8 +1,8 @@
-# IDBS database backup (Windows)
+# 实验室管理系统 database backup (Windows)
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts/backup-database.ps1
 # Optional Task Scheduler daily:
-#   schtasks /Create /TN "IDBS-DB-Backup" /SC DAILY /ST 02:15 /TR "powershell -ExecutionPolicy Bypass -File C:\path\to\Rental-System\scripts\backup-database.ps1" /RL LIMITED
+#   schtasks /Create /TN "实验室管理系统-DB-Backup" /SC DAILY /ST 02:15 /TR "powershell -ExecutionPolicy Bypass -File C:\path\to\Rental-System\scripts\backup-database.ps1" /RL LIMITED
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot

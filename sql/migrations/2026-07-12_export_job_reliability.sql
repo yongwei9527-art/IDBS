@@ -1,4 +1,4 @@
-﻿-- IDBS 5.0 export-job reliability and secure-download upgrade
+-- 实验室管理系统 5.0 export-job reliability and secure-download upgrade
 ALTER TABLE export_jobs
   ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 3,

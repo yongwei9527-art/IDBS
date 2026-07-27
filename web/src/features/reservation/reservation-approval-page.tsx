@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   ClipboardCheck,
@@ -7,6 +8,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useWs } from '@/lib/ws';
 import { toFriendlyError } from '@/lib/friendly-error';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -793,6 +795,8 @@ export function AdminReservationsPage() {
   const [selectedBatchId, setSelectedBatchId] = useState('');
   const [notes, setNotes] = useState<Record<string, string>>({});
   const { data, isLoading, error } = useAdminReservationBatches(status || undefined, scope || undefined);
+  const queryClient = useQueryClient();
+  const ws = useWs();
   const capability = useCapability();
   const batches = data?.batches ?? [];
   const selectedBatch = useMemo(
@@ -800,9 +804,24 @@ export function AdminReservationsPage() {
     [batches, selectedBatchId]
   );
 
-
-
-
+  useEffect(() => {
+    if (!capability.canViewReservations && !capability.canApproveReservations && !capability.canChangeReservationPlan) return;
+    const channel = 'reservations:admin';
+    ws.subscribe(channel);
+    const unsubscribe = ws.onMessage((message: any) => {
+      if (message.channel !== channel || !['reservation_created', 'reservation_changed'].includes(message.type)) return;
+      queryClient.invalidateQueries({ queryKey: ['admin-reservation-batches'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-reservation-batch-detail'] });
+      queryClient.invalidateQueries({ queryKey: ['calendar-events'] });
+      if (message.type === 'reservation_created') {
+        toast.info('收到新的预约申请，列表已刷新。');
+      }
+    });
+    return () => {
+      ws.unsubscribe(channel);
+      unsubscribe();
+    };
+  }, [capability.canApproveReservations, capability.canChangeReservationPlan, capability.canViewReservations, queryClient, ws]);
 
   const stats = useMemo(() => ({
     total: batches.length,

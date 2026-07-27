@@ -4,8 +4,8 @@ param(
   [int]$Port = 5432,
   [string]$AdminUser = "postgres",
   [string]$AdminPassword = "",
-  [string]$Database = "idbs",
-  [string]$AppUser = "idbs_user",
+  [string]$Database = "laboratory_management_system",
+  [string]$AppUser = "laboratory_management_system_user",
   [string]$AppPassword = "generated-by-installer",
   [string]$SchemaPath = ".\sql\schema.sql",
   [string]$MigrationsDir = ".\sql\migrations"

@@ -1,4 +1,4 @@
--- IDBS 5.0 root-authority reconciliation.
+-- 实验室管理系统 5.0 root-authority reconciliation.
 -- Existing deployments may have used an administrator with a legacy wildcard permission
 -- before the dedicated super_admin role existed. Promote one deterministic root and
 -- remove wildcard authority from every ordinary administrator.

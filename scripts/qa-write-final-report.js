@@ -1,4 +1,4 @@
-﻿const fs = require('fs');
+const fs = require('fs');
 const path = require('path');
 const dir = path.join(process.cwd(), 'backups', 'reports', 'qa-30min');
 const outMd = path.join(dir, 'FINAL-multi-agent-evaluation-report.md');
@@ -113,7 +113,7 @@ const summary = {
 };
 
 const lines = [];
-lines.push('# IDBS 5.0 多代理持续用户模拟评估报告');
+lines.push('# 实验室管理系统 5.0 多代理持续用户模拟评估报告');
 lines.push('');
 lines.push(`- 生成时间: ${summary.generated_at}`);
 lines.push('- 目标系统: http://127.0.0.1:3000/v5/');

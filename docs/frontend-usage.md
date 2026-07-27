@@ -1,8 +1,8 @@
-# IDBS 5.0 Frontend Guide
+# 实验室管理系统 5.0 Frontend Guide
 
 ## Current frontend and paths
 
-IDBS **5.0.0** uses the React + TypeScript frontend in `web/`. Its production
+实验室管理系统 **5.0.0** uses the React + TypeScript frontend in `web/`. Its production
 bundle is written to `public/v5/` and the application is served at `/v5/`.
 `/v5/` is a stable deployment path retained for compatibility, not a statement
 that the product is version 3.

@@ -1,11 +1,11 @@
-# IDBS 5.0 Release and Acceptance Guide
+# 实验室管理系统 5.0 Release and Acceptance Guide
 
 **Updated:** 2026-07-12  
 **Product version:** 5.0.0
 
 ## Product scope
 
-IDBS 5.0 is a general-purpose device operations and reservation system. It supports device inventory, user access, reservations, borrowing and return, fault handling, notifications, real-time collaboration, analytics, export jobs, and preventive maintenance.
+实验室管理系统 5.0 is a general-purpose device operations and reservation system. It supports device inventory, user access, reservations, borrowing and return, fault handling, notifications, real-time collaboration, analytics, export jobs, and preventive maintenance.
 
 The current release does **not** include payment, pricing, invoices, refunds, billing, or settlement capabilities. It is not positioned as a higher-education-only product; organization-specific terminology and configuration should be adapted during deployment.
 

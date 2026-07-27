@@ -1,4 +1,4 @@
-﻿const fs = require('fs');
+const fs = require('fs');
 const path = require('path');
 
 function createBorrowReturnService(context = {}) {
@@ -296,7 +296,7 @@ function createBorrowReturnService(context = {}) {
     const startIso = currentEnd.toISOString();
     const endIso = requestedEnd.toISOString();
     const result = await withTransaction(async (client) => {
-      await client.query("select pg_advisory_xact_lock(hashtext('idbs-device-schedule'), hashtext($1))", [String(record.device_id)]);
+      await client.query("select pg_advisory_xact_lock(hashtext('laboratory-management-system-device-schedule'), hashtext($1))", [String(record.device_id)]);
       const conflicts = await client.query(`select id, start_time, end_time, 'reservation' as conflict_type from reservation_items where device_id = $1 and id <> $4 and status = any($5) and start_time < $3 and end_time > $2 union all select id, start_time, end_time, 'maintenance' as conflict_type from device_maintenance_windows where device_id = $1 and status in ('scheduled','active') and start_time < $3 and end_time > $2`, [record.device_id, startIso, endIso, reservationItem?.id || '', ['pending', 'approved', 'in_use']]);
       if (conflicts.rows?.length) return { conflict: conflicts.rows[0] };
       const updatedAt = nowIso();

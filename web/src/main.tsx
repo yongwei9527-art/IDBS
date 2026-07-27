@@ -21,6 +21,20 @@ function resolveBasepath(): string {
   return '/';
 }
 const basepath = resolveBasepath();
+function markRuntimeSurface() {
+  if (typeof window === 'undefined') return;
+  const ua = window.navigator.userAgent || '';
+  const isAndroid = /Android/i.test(ua);
+  const hasChromeShell = /Chrome\//i.test(ua) || /EdgA\//i.test(ua);
+  const isWebView = isAndroid && (/(; wv\)|Version\/\d+\.\d+ Chrome\/)/i.test(ua) || !hasChromeShell);
+  const isCapacitor = Boolean((window as unknown as { Capacitor?: unknown }).Capacitor);
+  const isStandalone = window.matchMedia?.('(display-mode: standalone)').matches;
+  if (isAndroid || isWebView || isCapacitor || isStandalone) {
+    document.documentElement.dataset.runtimeSurface = 'apk';
+  }
+}
+
+markRuntimeSurface();
 
 const router = createRouter({
   routeTree: routes,

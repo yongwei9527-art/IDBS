@@ -17,7 +17,7 @@
 - 导出：统计页支持 CSV 和 Excel 导出，覆盖使用记录、预约、故障、用户活动、设备汇总。
 - 验收：`npm run check`、`npm run smoke` 覆盖基础健康检查、鉴权、预约预检、后台指标、后台详情、导出和聊天 SSE。
 - 本轮复测：`npm.cmd run check` 通过；在当前工作区服务 `http://127.0.0.1:3012` 上 `npm.cmd run smoke` 全部通过。3000 端口曾命中旧服务，后续本地验证建议先确认端口进程或使用独立端口。
-- IDBS 2.0 体验升级：后台用户详情、设备历史、预约明细、故障详情和需求详情已优先使用抽屉展示，减少跳页和整页刷新。
+- 实验室管理系统 2.0 体验升级：后台用户详情、设备历史、预约明细、故障详情和需求详情已优先使用抽屉展示，减少跳页和整页刷新。
 - 预约审核 UI：预约批次卡片默认只显示紧凑摘要，展开后再加载 `/admin/reservation-batches/:id` 明细；整批/单条审批按钮仅在展开后显示，沟通入口保留，审批后保持当前展开上下文。
 - 预约模型收口：日历、后台批次列表、通知详情、统计视图、设备下一预约快照、设备故障通知、借还记录和故障报备均以 `reservation_items` 为事实来源；`/bookings` 保留为兼容别名，旧 `reservations` 仅作兼容影子更新/历史回填。
 - 交互反馈：关键按钮已接入 loading 状态，工作台 KPI 支持带筛选跳转，故障/需求/预约详情保留局部刷新和上下文沟通入口。
@@ -28,15 +28,15 @@
 - 统计导出：已新增 `export_jobs` 基线表、导出任务接口、后台队列入口和 CSV 任务执行器，保留同步 CSV/Excel 下载，同时支持后台生成导出文件。
 - 服务拆分：已新增认证、用户、设备只读、设备管理、预约只读、预约事务、借还事务、聊天、微信登录回调、微信推送、后台工作台、后台系统、故障诉求和导出任务领域服务，密码登录、微信验证码登录/绑定/回调、微信客服消息/每日使用日报推送、用户资料/通知/后台用户管理、设备列表/详情/时间段、设备新增/更新/恢复、预约日历/批次只读查询、预约预检/创建/取消/审批、借用开始/归还提交、聊天会话/消息/SSE/管理群、工作台 KPI、系统权限配置、故障诉求处理、导出任务已从主服务迁出。
 - 生产可靠性：已新增 `docs/production-upgrade-runbook.md`，明确备份、全量重建、验收、回滚和上线后观察步骤。
-- IDBS 3.0 A/B/C 合并推进：已按“完成度审计 → 用户端核心闭环 → 后台闭环验证”补齐 React 3.0 设备列表/详情、预约提交、我的预约、使用日历真实 v5 API 接入，移除这些页面的 mock 数据依赖；扩展 `scripts/v5-selftest.js` 覆盖设备、预约、日历和后台预约批次关键接口。
+- 实验室管理系统 3.0 A/B/C 合并推进：已按“完成度审计 → 用户端核心闭环 → 后台闭环验证”补齐 React 3.0 设备列表/详情、预约提交、我的预约、使用日历真实 v5 API 接入，移除这些页面的 mock 数据依赖；扩展 `scripts/v5-selftest.js` 覆盖设备、预约、日历和后台预约批次关键接口。
 - 本轮 3.0 验证：`npm run v5:typecheck`、`npm run v5:build`、`npm run v5:selftest`、`npm run check` 已通过；Vite 构建存在单 chunk 体积提示，属于性能优化建议，不影响当前功能验收。
-- IDBS 3.0 第二轮用户端优化：借还管理和故障报备已从静态说明升级为真实提交表单，分别接入 `/api/v5/borrow-records`、`/api/v5/borrow-records/:id/return`、`/api/v5/fault-reports`；通知与聊天前端 API 已兼容 v5 包裹响应结构，减少前后端数据形态不一致风险。
+- 实验室管理系统 3.0 第二轮用户端优化：借还管理和故障报备已从静态说明升级为真实提交表单，分别接入 `/api/v5/borrow-records`、`/api/v5/borrow-records/:id/return`、`/api/v5/fault-reports`；通知与聊天前端 API 已兼容 v5 包裹响应结构，减少前后端数据形态不一致风险。
 - 第二轮自测覆盖：`scripts/v5-selftest.js` 已新增借用开始、归还提交、故障报备、通知列表/已读、聊天会话/消息/发送接口覆盖；`npm run v5:typecheck && npm run v5:build && npm run v5:selftest && npm run check` 已通过。
-- IDBS 3.0 第三轮后台可靠性优化：后台 Dashboard、用户管理、故障处理、统计分析、导出任务、操作审计已补充错误态展示；统计分析页区分总览与设备排行错误，表格类页面统一 loading/empty/error 三态反馈。
+- 实验室管理系统 3.0 第三轮后台可靠性优化：后台 Dashboard、用户管理、故障处理、统计分析、导出任务、操作审计已补充错误态展示；统计分析页区分总览与设备排行错误，表格类页面统一 loading/empty/error 三态反馈。
 - 第三轮验证：`npm run v5:typecheck`、`npm run v5:build`、`npm run v5:selftest`、`npm run check` 已通过；Vite chunk 体积提示仍作为后续性能优化项保留。
-- IDBS 3.0 第四轮构建性能优化：Vite 构建已配置 Rollup `manualChunks`，将图表库拆到 `vendor-charts`，其他第三方依赖进入 `vendor`，降低单 JS chunk 体积并避免过细拆分导致循环 chunk 警告。
+- 实验室管理系统 3.0 第四轮构建性能优化：Vite 构建已配置 Rollup `manualChunks`，将图表库拆到 `vendor-charts`，其他第三方依赖进入 `vendor`，降低单 JS chunk 体积并避免过细拆分导致循环 chunk 警告。
 - 第四轮验证：`npm run v5:typecheck`、`npm run v5:build`、`npm run v5:selftest`、`npm run check` 已通过；构建最大 JS chunk 约 399.72KB，已低于 Vite 500KB 警告阈值。
-- IDBS 旧版后台 Element Plus Overview 风格适配：在 `admin.html#overview` 基础上引入适合本项目的 Alert、Skeleton、Statistic、Progress、Descriptions 交互/视觉模式；后台总览新增骨架屏、运营健康度、进度条、部分接口失败提示、运营摘要和语义化 KPI 图标，不引入额外前端框架依赖。
+- 实验室管理系统 旧版后台 Element Plus Overview 风格适配：在 `admin.html#overview` 基础上引入适合本项目的 Alert、Skeleton、Statistic、Progress、Descriptions 交互/视觉模式；后台总览新增骨架屏、运营健康度、进度条、部分接口失败提示、运营摘要和语义化 KPI 图标，不引入额外前端框架依赖。
 
 ## 外部未执行项
 

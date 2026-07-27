@@ -1,4 +1,4 @@
--- IDBS 3.0 基线迁移：枚举约束化、软删除、审计字段、时间段容量、通知扩展、
+-- 实验室管理系统 3.0 基线迁移：枚举约束化、软删除、审计字段、时间段容量、通知扩展、
 -- 聊天增强、统一审计日志、视图更新、微信绑定独立表。
 -- 设计原则：全部 additive + 幂等，兼容 2.x schema；
 -- 不删除已有数据；旧字段保留，新增字段 nullable 或带默认值。
@@ -262,5 +262,5 @@ ON CONFLICT DO NOTHING;
 
 -- 12. 基线标记（可选，便于排查）
 INSERT INTO system_configs (config_key, config_value, description)
-VALUES ('schema_v3_applied_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), 'IDBS 3.0 schema baseline applied timestamp')
+VALUES ('schema_v3_applied_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), '实验室管理系统 3.0 schema baseline applied timestamp')
 ON CONFLICT (config_key) DO UPDATE SET config_value = EXCLUDED.config_value;

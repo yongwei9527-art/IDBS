@@ -7,7 +7,7 @@ const { AppError } = require('../../lib/app-error');
 
 function createV5AuthRouter(service, { refreshSessions } = {}) {
   const router = express.Router();
-  const refreshCookieName = 'idbs.refresh_token';
+  const refreshCookieName = 'laboratory-management-system.refresh_token';
 
   function cookieValue(req, name) {
     const raw = String(req.headers.cookie || '');

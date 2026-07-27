@@ -7,7 +7,7 @@ require('dotenv').config();
 const root = path.resolve(__dirname, '..');
 const schemaPath = path.join(root, 'sql', 'schema.sql');
 const connectionString = process.env.DATABASE_URL || '';
-const confirmReset = process.env.RESET_IDBS_SCHEMA === '1';
+const confirmReset = process.env.RESET_LABORATORY_MANAGEMENT_SYSTEM_SCHEMA === '1';
 const allowProductionReset = process.env.ALLOW_PRODUCTION_SCHEMA_RESET === '1';
 
 function looksLikeProductionDatabase(url) {
@@ -19,7 +19,7 @@ async function main() {
     throw new Error('DATABASE_URL is not configured.');
   }
   if (!confirmReset) {
-    throw new Error('Refusing to reset schema. Set RESET_IDBS_SCHEMA=1 after backing up the database.');
+    throw new Error('Refusing to reset schema. Set RESET_LABORATORY_MANAGEMENT_SYSTEM_SCHEMA=1 after backing up the database.');
   }
   if (looksLikeProductionDatabase(connectionString) && !allowProductionReset) {
     throw new Error('Refusing to reset a non-local database. Set ALLOW_PRODUCTION_SCHEMA_RESET=1 only after a verified backup.');
@@ -43,7 +43,7 @@ async function main() {
     await client.query('grant usage on schema public to public');
     await client.query('grant create on schema public to public');
 
-    console.log('Applying sql/schema.sql as the fresh IDBS baseline...');
+    console.log('Applying sql/schema.sql as the fresh 实验室管理系统 baseline...');
     await client.query(schemaSql);
     console.log('Fresh schema baseline is ready.');
   } finally {

@@ -77,7 +77,7 @@ function initialFilters(): DeviceFilters {
 
 function initialView(): DeviceView {
   if (typeof window === 'undefined') return 'card';
-  return window.localStorage.getItem('IDBS_DEVICE_VIEW') === 'table' ? 'table' : 'card';
+  return window.localStorage.getItem('LABORATORY_MANAGEMENT_SYSTEM_DEVICE_VIEW') === 'table' ? 'table' : 'card';
 }
 
 function formatTime(value?: string | null) {
@@ -327,7 +327,7 @@ export function DevicesPage() {
   }, [filters]);
 
   useEffect(() => {
-    if (typeof window !== 'undefined') window.localStorage.setItem('IDBS_DEVICE_VIEW', view);
+    if (typeof window !== 'undefined') window.localStorage.setItem('LABORATORY_MANAGEMENT_SYSTEM_DEVICE_VIEW', view);
   }, [view]);
 
   const updateFilter = (key: keyof DeviceFilters, value: string) => setFilters((current) => ({ ...current, [key]: value }));

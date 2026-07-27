@@ -1,8 +1,8 @@
-# IDBS 2.0 生产升级与回滚手册
+# 实验室管理系统 2.0 生产升级与回滚手册
 
 更新时间：2026-07-03
 
-本文档用于 VPS/生产环境升级。IDBS 2.0 不兼容旧数据库结构，升级前必须完成数据库和上传文件备份。
+本文档用于 VPS/生产环境升级。实验室管理系统 2.0 不兼容旧数据库结构，升级前必须完成数据库和上传文件备份。
 
 ## 1. 升级前检查
 
@@ -15,7 +15,7 @@
 
 ## 2. 备份
 
-建议备份目录：`/var/www/idbs/backups/YYYYMMDD-HHMMSS/`。
+建议备份目录：`/var/www/laboratory-management-system/backups/YYYYMMDD-HHMMSS/`。
 
 必须备份：
 
@@ -30,11 +30,11 @@
 
 1. 停止服务。
 2. 再次确认备份存在。
-3. 拉取或上传 IDBS 2.0 新代码。
+3. 拉取或上传 实验室管理系统 2.0 新代码。
 4. 安装依赖。
 5. 全量重建数据库基线或执行升级迁移：
-   - 本地/测试库：`RESET_IDBS_SCHEMA=1 npm run db:reset-schema`
-   - 非本地库：`RESET_IDBS_SCHEMA=1 ALLOW_PRODUCTION_SCHEMA_RESET=1 npm run db:reset-schema`
+   - 本地/测试库：`RESET_LABORATORY_MANAGEMENT_SYSTEM_SCHEMA=1 npm run db:reset-schema`
+   - 非本地库：`RESET_LABORATORY_MANAGEMENT_SYSTEM_SCHEMA=1 ALLOW_PRODUCTION_SCHEMA_RESET=1 npm run db:reset-schema`
    - 保留数据升级：用 PostgreSQL 表 owner/admin 执行 `npm run db:upgrade-schema` 输出的全部手动 SQL。
    - 若 `npm run doctor` 仍报告 `users.*`、`operation_logs.*`、`borrow_records.*`、`reservation_batches.*` 或 `usage_log.reservation_item_id` 缺失，说明当前迁移账号不是表 owner，不能进入上线步骤。
 6. 初始化管理员、系统配置和演示/必要业务数据。
@@ -86,15 +86,15 @@
 一键安装/更新脚本会在 VPS 写入以下运维命令：
 
 ```bash
-sudo idbs-reset-admin-password
+sudo laboratory-management-system-reset-admin-password
 ```
 
-该命令会读取 `/var/www/idbs/shared/.env` 中的生产数据库连接，交互式输入两次新后台管理员密码，并更新数据库里的 `admin_password_salt` 与 `admin_password_hash`。输入密码时终端不会回显。
+该命令会读取 `/var/www/laboratory-management-system/shared/.env` 中的生产数据库连接，交互式输入两次新后台管理员密码，并更新数据库里的 `admin_password_salt` 与 `admin_password_hash`。输入密码时终端不会回显。
 
 非交互自动化场景可使用：
 
 ```bash
-sudo ADMIN_NEW_PASSWORD='新的强密码至少8位' idbs-reset-admin-password
+sudo ADMIN_NEW_PASSWORD='新的强密码至少8位' laboratory-management-system-reset-admin-password
 ```
 
 ## 8. 上线后观察
@@ -109,9 +109,9 @@ sudo ADMIN_NEW_PASSWORD='新的强密码至少8位' idbs-reset-admin-password
 - 微信推送失败日志。
 - 导出任务数量、状态和 `/uploads/exports/` 文件增长情况。
 
-## 9. IDBS 3.0 扩展部署
+## 9. 实验室管理系统 3.0 扩展部署
 
-IDBS 3.0 与 2.x 并行运行，2.x 页面仍走 `/`，3.0 前端构建产物位于 `public/v5/`，API 统一挂到 `/api/v5`。升级为增量迁移，2.x 数据库结构保留并加新增表与字段。
+实验室管理系统 3.0 与 2.x 并行运行，2.x 页面仍走 `/`，3.0 前端构建产物位于 `public/v5/`，API 统一挂到 `/api/v5`。升级为增量迁移，2.x 数据库结构保留并加新增表与字段。
 
 ### 9.1 3.0 迁移
 
@@ -151,7 +151,7 @@ npm run build      # 产物输出到 ../public/v5/
 ### 9.4 验收（3.0 专属）
 
 - `/api/v5/auth/login` 返回 access/refresh token。
-- 401 自动 refresh 多一次成功，且 localStorage 中 `idbs.access_token` 被刷新。
+- 401 自动 refresh 多一次成功，且 localStorage 中 `laboratory-management-system.access_token` 被刷新。
 - `/v5/` 后台总览、设备、用户、故障、预约、统计、导出、系统、审计页面正常加载与操作。
 - WebSocket 连接 `/api/v5/ws` 握手成功，聊天实时推送。
 - 2.x 页面 `/` 不受影响。

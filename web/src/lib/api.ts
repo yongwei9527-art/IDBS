@@ -2,28 +2,104 @@ interface ApiOptions extends RequestInit {
   token?: string;
 }
 
-const API_BASE = '/api/v5';
+const API_BASE_PATH = '/api/v5';
+const API_ORIGIN_STORAGE_KEY = 'laboratory-management-system.api_origin';
+
+function stripTrailingSlash(value: string) {
+  return value.replace(/\/+$/, '');
+}
+
+function isLocalHostOrIp(host: string) {
+  const h = host.toLowerCase();
+  if (h === 'localhost' || h === '127.0.0.1' || h === '0.0.0.0' || h === '::1') return true;
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(h)) return true;
+  if (h.endsWith('.local')) return true;
+  return false;
+}
+
+export function normalizeApiOrigin(value?: string | null): string {
+  let raw = String(value || '').trim();
+  if (!raw) return '';
+  raw = raw.replace(/\s+/g, '');
+  if (!/^https?:\/\//i.test(raw)) {
+    const hostPart = raw.split('/')[0] || '';
+    const hostOnly = hostPart.split(':')[0] || '';
+    const scheme = isLocalHostOrIp(hostOnly) ? 'http' : 'https';
+    raw = scheme + '://' + raw;
+  }
+  try {
+    return stripTrailingSlash(new URL(raw).origin);
+  } catch {
+    return stripTrailingSlash(raw.replace(/\/api\/v5\/?$/i, ''));
+  }
+}
+
+function normalizeApiBase(value?: string | null) {
+  const origin = normalizeApiOrigin(value);
+  if (!origin) return API_BASE_PATH;
+  return origin.endsWith(API_BASE_PATH) ? origin : origin + API_BASE_PATH;
+}
+
+function readStoredApiOrigin(): string {
+  if (typeof localStorage === 'undefined') return '';
+  try {
+    return normalizeApiOrigin(localStorage.getItem(API_ORIGIN_STORAGE_KEY));
+  } catch {
+    return '';
+  }
+}
+
+function readBuildApiOrigin(): string {
+  return normalizeApiOrigin(import.meta.env.VITE_API_ORIGIN);
+}
+
+export function getApiOrigin(): string {
+  return readStoredApiOrigin() || readBuildApiOrigin();
+}
+
+export function getApiBase(): string {
+  return normalizeApiBase(getApiOrigin());
+}
+
+export function saveApiOrigin(value: string): string {
+  const origin = normalizeApiOrigin(value);
+  if (typeof localStorage !== 'undefined') {
+    if (origin) localStorage.setItem(API_ORIGIN_STORAGE_KEY, origin);
+    else localStorage.removeItem(API_ORIGIN_STORAGE_KEY);
+  }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('laboratory-management-system:api-origin-changed', { detail: { origin } }));
+  }
+  return origin;
+}
+
+export function clearApiOrigin() {
+  saveApiOrigin('');
+}
+
+/** Compatibility snapshot; prefer getApiBase() for runtime-updated values. */
+export const API_BASE = getApiBase();
 
 function notifyAuthChanged() {
-  if (typeof window !== 'undefined') window.dispatchEvent(new Event('idbs:auth-changed'));
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event('laboratory-management-system:auth-changed'));
 }
 
 const tokenStore = {
   get(): string | null {
-    return localStorage.getItem('idbs.access_token');
+    return localStorage.getItem('laboratory-management-system.access_token');
   },
   set(v: string) {
-    localStorage.setItem('idbs.access_token', v);
+    localStorage.setItem('laboratory-management-system.access_token', v);
     notifyAuthChanged();
   },
   clear() {
-    localStorage.removeItem('idbs.access_token');
-    localStorage.removeItem('idbs.refresh_token');
+    localStorage.removeItem('laboratory-management-system.access_token');
+    localStorage.removeItem('laboratory-management-system.refresh_token');
     notifyAuthChanged();
   }
 };
 
-export { tokenStore, API_BASE };
+export { tokenStore, API_ORIGIN_STORAGE_KEY };
 
 export interface ApiError extends Error {
   status: number;
@@ -83,6 +159,10 @@ function createApiError(status: number, raw: string, payload?: unknown): ApiErro
   });
 }
 
+function requestCredentials(): RequestCredentials {
+  return 'include';
+}
+
 export async function request<T = unknown>(path: string, options: ApiOptions = {}): Promise<T> {
   return doRequest<T>(path, options, true);
 }
@@ -93,8 +173,9 @@ export async function uploadImage(file: File): Promise<string> {
   const accessToken = tokenStore.get();
   let res: Response;
   try {
-    res = await fetch('/api/v5/upload', {
+    res = await fetch(getApiBase() + '/upload', {
       method: 'POST',
+      credentials: requestCredentials(),
       headers: {
         ...(accessToken ? { Authorization: 'Bearer ' + accessToken } : {})
       },
@@ -114,8 +195,9 @@ async function doRequest<T>(path: string, options: ApiOptions, allowRefresh: boo
   const accessToken = token ?? tokenStore.get();
   let res: Response;
   try {
-    res = await fetch(API_BASE + path, {
+    res = await fetch(getApiBase() + path, {
       ...rest,
+      credentials: rest.credentials ?? requestCredentials(),
       headers: {
         'Content-Type': 'application/json',
         ...(accessToken ? { Authorization: 'Bearer ' + accessToken } : {}),
@@ -132,7 +214,6 @@ async function doRequest<T>(path: string, options: ApiOptions, allowRefresh: boo
   else if (ct.includes('text/')) body = await res.text();
 
   if (!res.ok) {
-    // 401 自动 refresh 一次
     if (res.status === 401 && allowRefresh && !path.startsWith('/auth/')) {
       const newToken = await refreshTokenOnly();
       if (newToken) return doRequest<T>(path, options, false);
@@ -150,10 +231,10 @@ async function refreshTokenOnly(): Promise<string | null> {
   if (_refreshing) return _refreshing;
   _refreshing = (async () => {
     try {
-      const r = await fetch(`${API_BASE}/auth/refresh`, {
+      const r = await fetch(getApiBase() + '/auth/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
+        credentials: requestCredentials(),
         body: '{}'
       });
       if (!r.ok) {

@@ -18,7 +18,7 @@ const E2E_BASE_URL = String(process.env.E2E_BASE_URL || `http://127.0.0.1:${E2E_
 const PREPARE = String(process.env.E2E_PREPARE ?? 'true').toLowerCase() !== 'false';
 const BUILD = String(process.env.E2E_BUILD ?? 'true').toLowerCase() !== 'false';
 const READY_TIMEOUT_MS = Number(process.env.E2E_READY_TIMEOUT_MS || 45_000);
-const TEST_UPLOAD_DIR = path.join(ROOT, '.idbs-runtime', 'e2e-uploads');
+const TEST_UPLOAD_DIR = path.join(ROOT, '.laboratory-management-system-runtime', 'e2e-uploads');
 
 function fail(message) {
   console.error(`E2E isolation error: ${message}`);
@@ -36,7 +36,7 @@ function assertIsolatedDatabase(connectionString) {
   if (!/^postgres(?:ql)?:$/i.test(url.protocol)) throw new Error('E2E_DATABASE_URL must use the postgresql protocol.');
   const databaseName = decodeURIComponent(url.pathname || '').replace(/^\//, '').toLowerCase();
   if (!/(^|[_-])e2e([_-]|$)/.test(databaseName)) {
-    throw new Error(`Database "${databaseName || '(missing)'}" is not explicitly marked as an E2E database. Use a name such as idbs_e2e.`);
+    throw new Error(`Database "${databaseName || '(missing)'}" is not explicitly marked as an E2E database. Use a name such as laboratory_management_system_e2e.`);
   }
 }
 

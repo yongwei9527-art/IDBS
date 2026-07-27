@@ -294,7 +294,7 @@ async function main() {
       warn('Database backup directory', 'missing ' + backupDir + '; run npm run db:backup');
     } else {
       const files = fs.readdirSync(backupDir)
-        .filter((name) => /^idbs-\d{8}T\d{6}Z\.(dump|sql)$/.test(name))
+        .filter((name) => /^laboratory-management-system-\d{8}T\d{6}Z\.(dump|sql)$/.test(name))
         .map((name) => {
           const full = path.join(backupDir, name);
           const st = fs.statSync(full);
@@ -337,7 +337,7 @@ async function main() {
   if (failed) {
     const v3Missing = checks.some((item) => !item.ok || (item.warning && String(item.name).startsWith('v3 ')));
     console.log('提示：请先备份数据库。保留数据升级时，使用表 owner/超级用户执行 npm run db:upgrade-schema，并应用脚本输出的 手工 SQL。');
-    console.log('提示：仅在已确认备份且允许重建测试库时，才可执行 RESET_IDBS_SCHEMA=1 npm run db:reset-schema。');
+    console.log('提示：仅在已确认备份且允许重建测试库时，才可执行 RESET_LABORATORY_MANAGEMENT_SYSTEM_SCHEMA=1 npm run db:reset-schema。');
     if (v3Missing) {
       console.log('提示：如来自旧库，请应用 sql/migrations/2026-07-04_v3_foundation.sql，再运行 npm run db:migrate-2-to-3:import。');
     }

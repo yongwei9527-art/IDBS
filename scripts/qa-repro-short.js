@@ -1,4 +1,4 @@
-﻿const {chromium}=require('playwright');
+const {chromium}=require('playwright');
 (async()=>{
   const b=await chromium.launch({headless:true});
   const p=await b.newPage();
@@ -6,7 +6,7 @@
     await p.goto('http://127.0.0.1:3000/v5/login',{waitUntil:'domcontentloaded'});
     return p.evaluate(async(phone)=>{
       const res=await fetch('/api/v5/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,password:'123456'})});
-      const j=await res.json(); const d=j.data||j; if(d.access_token) localStorage.setItem('idbs.access_token',d.access_token);
+      const j=await res.json(); const d=j.data||j; if(d.access_token) localStorage.setItem('laboratory-management-system.access_token',d.access_token);
       return {status:res.status, role:d.role, msg:j.message, ok:!!d.access_token};
     }, phone);
   }
@@ -36,7 +36,7 @@
   console.log('bad pwd', bad);
   // token clear
   await login('13800000001');
-  await p.evaluate(()=>{localStorage.removeItem('idbs.access_token'); localStorage.removeItem('idbs.refresh_token');});
+  await p.evaluate(()=>{localStorage.removeItem('laboratory-management-system.access_token'); localStorage.removeItem('laboratory-management-system.refresh_token');});
   await p.goto('http://127.0.0.1:3000/v5/devices',{waitUntil:'domcontentloaded'});
   await p.waitForTimeout(800);
   console.log('after clear', p.url());

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Install a daily cron job for IDBS database backups (02:15 server time).
+# Install a daily cron job for 实验室管理系统 database backups (02:15 server time).
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BACKUP_SCRIPT="$ROOT_DIR/scripts/backup-database.sh"
-LOG_DIR="${IDBS_LOG_DIR:-/var/log/idbs}"
-CRON_MARKER="# idbs-db-backup"
+LOG_DIR="${LABORATORY_MANAGEMENT_SYSTEM_LOG_DIR:-/var/log/laboratory-management-system}"
+CRON_MARKER="# laboratory-management-system-db-backup"
 
 if [[ ! -f "$BACKUP_SCRIPT" ]]; then
   echo "missing $BACKUP_SCRIPT" >&2

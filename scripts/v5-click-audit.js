@@ -1,4 +1,4 @@
-﻿/* IDBS 5.0 safe click-audit: checks public and administrator routes without executing high-risk actions. */
+/* 实验室管理系统 5.0 safe click-audit: checks public and administrator routes without executing high-risk actions. */
 /* It records page, console, interaction, and authorization failures for regression review. */
 /* The audit always targets the canonical V5 SPA entry point. */
 
@@ -75,8 +75,8 @@ async function apiLogin(page, endpoint, body) {
         };
       }
       const data = json?.data || json;
-      localStorage.setItem('idbs.access_token', data.access_token);
-      if (data.refresh_token) localStorage.setItem('idbs.refresh_token', data.refresh_token);
+      localStorage.setItem('laboratory-management-system.access_token', data.access_token);
+      if (data.refresh_token) localStorage.setItem('laboratory-management-system.refresh_token', data.refresh_token);
       return { ok: true, role: data.role, permissions: data.permissions || [] };
     }, { endpoint, body });
     if (result.ok) return { role: result.role, permissions: result.permissions || [] };

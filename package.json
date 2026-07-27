@@ -1,7 +1,7 @@
 {
-  "name": "idbs",
+  "name": "laboratory_management_system",
   "private": true,
-  "version": "5.0.1",
+  "version": "0.1.0",
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
@@ -40,7 +40,10 @@
     "dev:all": "node scripts/dev-all.js",
     "lint:web": "npm --prefix web run lint",
     "uploads:cleanup": "node scripts/cleanup-orphan-uploads.js",
-    "deps:opt": "powershell -ExecutionPolicy Bypass -File scripts/install-opt-deps.ps1"
+    "deps:opt": "powershell -ExecutionPolicy Bypass -File scripts/install-opt-deps.ps1",
+    "android:build": "npm --prefix web run android:debug",
+    "android:sync": "npm --prefix web run android:sync",
+    "android:open": "npm --prefix web run android:open"
   },
   "dependencies": {
     "cors": "^2.8.6",

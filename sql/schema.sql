@@ -1,4 +1,4 @@
-﻿-- IDBS schema for PostgreSQL
+-- 实验室管理系统 schema for PostgreSQL
 -- Run this in schema public.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -242,7 +242,7 @@ CREATE TABLE IF NOT EXISTS device_fault_reports (
 );
 
 
--- Preventive maintenance, work orders and reservation-blocking windows (IDBS 5.0)
+-- Preventive maintenance, work orders and reservation-blocking windows (实验室管理系统 5.0)
 CREATE TABLE IF NOT EXISTS device_maintenance_plans (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
@@ -777,8 +777,8 @@ VALUES
   ('v3_feature_notifications_ws_enabled', '1', 'Whether realtime notifications over WebSocket is enabled in v3'),
   ('overdue_auto_mark_enabled', '1', 'Whether to auto-mark overdue borrow records'),
   ('overdue_check_cron', '*/15 * * * *', 'Cron for overdue scan'),
-  ('schema_v3_applied_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), 'IDBS 3.0/4.0 schema baseline applied timestamp'),
-  ('schema_v5_applied_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), 'IDBS 5.0 release baseline applied timestamp'),
+  ('schema_v3_applied_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), '实验室管理系统 3.0/4.0 schema baseline applied timestamp'),
+  ('schema_v5_applied_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), '实验室管理系统 5.0 release baseline applied timestamp'),
   ('block_ip_access_enabled', '0', 'Whether public pages and login challenge are blocked when accessed by IP host'),
   ('public_show_reserver_name', '1', 'Whether public users can see reserver name'),
   ('public_show_reserver_phone', '1', 'Whether public users can see reserver phone'),

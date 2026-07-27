@@ -1,6 +1,6 @@
-# IDBS 2.0 大升级方案
+# 实验室管理系统 2.0 大升级方案
 
-> **Historical record.** Current IDBS 5.0 release material is [v5-release.md](./v5-release.md) and [v5-api-contract.md](./v5-api-contract.md).
+> **Historical record.** Current 实验室管理系统 5.0 release material is [v5-release.md](./v5-release.md) and [v5-api-contract.md](./v5-api-contract.md).
 
 更新时间：2026-07-03
 
@@ -87,7 +87,7 @@
 - 聊天、通知、用户请求、用户详情、设备详情已移除旧表/旧字段探测分支。
 - 服务层旧数据库结构探测工具 `tableExists`、`columnExists`、`cachedColumnExists` 已删除。
 - 日期时间工具已抽到 `src/services/core/date-time.js`。
-- `scripts/doctor.js` 已改为 IDBS 2.0 新基线巡检，缺核心表/字段会直接失败。
+- `scripts/doctor.js` 已改为 实验室管理系统 2.0 新基线巡检，缺核心表/字段会直接失败。
 - 已补充 `tests/e2e/` 测试计划骨架。
 - 用户端移动端已增加底部固定 Tab 导航样式。
 - 已接入 `@playwright/test`、`playwright.config.js` 和 `npm run e2e`。
