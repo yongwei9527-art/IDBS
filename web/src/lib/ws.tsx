@@ -1,12 +1,19 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext, type ReactNode } from 'react';
 import { tokenStore, getApiBase } from './api';
+import { prepareNativeNotifications, presentNativeMessageNotification } from '@/features/notification/native-notifications';
+
+interface RealtimeMessage {
+  type: string;
+  channel?: string;
+  payload?: unknown;
+}
 
 interface WsContextType {
   connected: boolean;
   send: (msg: { type: string; channel?: string; payload?: unknown }) => void;
   subscribe: (channel: string) => void;
   unsubscribe: (channel: string) => void;
-  onMessage: (handler: (msg: { type: string; channel?: string; payload?: unknown }) => void) => () => void;
+  onMessage: (handler: (msg: RealtimeMessage) => void) => () => void;
 }
 
 const WsCtx = createContext<WsContextType>({
@@ -23,11 +30,23 @@ function buildUrl(): string {
   return httpBase.replace(/^http/, 'ws') + '/ws';
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function notifyNativeMessage(message: RealtimeMessage) {
+  if (message.type !== 'new_message' || !message.channel?.startsWith('notifications:')) return;
+  const payload = asRecord(message.payload);
+  if (!payload || payload.is_sender === true) return;
+  // Keep system banners privacy-safe: never mirror chat content or user details.
+  void presentNativeMessageNotification({ title: '新消息', body: '您收到一条新消息' });
+}
+
 export function WsProvider({ children }: { children: ReactNode }) {
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
-  const handlersRef = useRef<Set<(msg: any) => void>>(new Set());
+  const handlersRef = useRef<Set<(msg: RealtimeMessage) => void>>(new Set());
   const subscriptionsRef = useRef<Set<string>>(new Set());
   const authenticatedRef = useRef(false);
 
@@ -45,15 +64,17 @@ export function WsProvider({ children }: { children: ReactNode }) {
     };
     ws.onmessage = (e) => {
       try {
-        const msg = JSON.parse(e.data);
+        const msg = JSON.parse(e.data) as RealtimeMessage;
         if (msg.type === 'ready') {
           authenticatedRef.current = true;
           setConnected(true);
           clearTimeout(reconnectTimer.current);
+          void prepareNativeNotifications();
           for (const channel of subscriptionsRef.current) {
             ws.send(JSON.stringify({ type: 'subscribe', channel }));
           }
         }
+        notifyNativeMessage(msg);
         for (const h of handlersRef.current) h(msg);
       } catch {}
     };
@@ -111,7 +132,7 @@ export function WsProvider({ children }: { children: ReactNode }) {
     if (authenticatedRef.current) send({ type: 'unsubscribe', channel });
   }, [send]);
 
-  const onMessage = useCallback((handler: (msg: any) => void) => {
+  const onMessage = useCallback((handler: (msg: RealtimeMessage) => void) => {
     handlersRef.current.add(handler);
     return () => { handlersRef.current.delete(handler); };
   }, []);

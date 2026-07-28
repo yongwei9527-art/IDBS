@@ -201,7 +201,10 @@ function createChatService(context = {}) {
         }
       }
       const channel = `notifications:${userId}`;
-      await realtimePublisher(channel, { type: realtimeType, channel, payload });
+      const notificationPayload = event === 'message'
+        ? { ...payload, is_sender: String(data?.message?.sender_id || '') === userId }
+        : payload;
+      await realtimePublisher(channel, { type: realtimeType, channel, payload: notificationPayload });
     }
     const conversationId = String(data.conversation_id || '').trim();
     if (conversationId) {

@@ -37,5 +37,8 @@
 
     <!-- Permissions -->
 
+    <!-- Network access is required for API calls and realtime messages. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Android 13+: ask the user before showing system message notifications. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>
