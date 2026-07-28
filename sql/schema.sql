@@ -12,9 +12,13 @@ CREATE TABLE IF NOT EXISTS users (
   group_name TEXT,
   avatar_url TEXT,
   department TEXT,
+  major TEXT,
+  mentor_name TEXT,
   email TEXT,
   password_hash TEXT NOT NULL,
   password_salt TEXT NOT NULL,
+  password_reset_required BOOLEAN NOT NULL DEFAULT false,
+  temporary_password_expires_at TIMESTAMPTZ,
   role TEXT NOT NULL DEFAULT 'user', -- user/admin/super_admin
   status TEXT NOT NULL DEFAULT 'pending', -- pending/active/disabled/rejected
   is_banned BOOLEAN NOT NULL DEFAULT FALSE,
@@ -180,6 +184,7 @@ CREATE TABLE IF NOT EXISTS borrow_records (
   overdue_reason_category TEXT,
   abnormal_reason_category TEXT,
   return_photos JSONB NOT NULL DEFAULT '[]'::jsonb,
+  return_photo_metadata JSONB NOT NULL DEFAULT '[]'::jsonb,
   status TEXT NOT NULL DEFAULT 'in_use', -- in_use/return_pending/returned/abnormal_pending/overdue
   is_overdue BOOLEAN NOT NULL DEFAULT FALSE,
   actual_start_time TIMESTAMPTZ,
@@ -193,6 +198,7 @@ CREATE TABLE IF NOT EXISTS borrow_records (
   return_material_deadline TIMESTAMPTZ,
   return_supplement_note TEXT,
   return_supplement_photos JSONB NOT NULL DEFAULT '[]'::jsonb,
+  return_supplement_photo_metadata JSONB NOT NULL DEFAULT '[]'::jsonb,
   return_supplemented_at TIMESTAMPTZ,
   return_material_late BOOLEAN NOT NULL DEFAULT FALSE,
   updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
@@ -317,6 +323,26 @@ CREATE TABLE IF NOT EXISTS user_requests (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK (status IN ('pending','confirmed','rejected','closed','cancelled','change_requested'))
 );
+
+CREATE TABLE IF NOT EXISTS material_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  item_name TEXT NOT NULL,
+  quantity NUMERIC(12,3) NOT NULL CHECK (quantity > 0 AND quantity <= 1000000),
+  unit TEXT NOT NULL,
+  purpose TEXT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','fulfilled','cancelled')),
+  admin_note TEXT,
+  reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  reviewed_at TIMESTAMPTZ,
+  fulfilled_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  fulfilled_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (fulfilled_at IS NULL OR status = 'fulfilled')
+);
+CREATE INDEX IF NOT EXISTS idx_material_requests_user_time ON material_requests(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_material_requests_status_time ON material_requests(status, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS user_notifications (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -761,6 +787,7 @@ VALUES
   ('captcha_expire_minutes', '3', 'Challenge code validity in minutes'),
   ('captcha_hourly_limit', '3', 'Maximum challenge requests per hour'),
   ('openid_daily_register_limit', '1', 'Daily bind limit for the same OpenID'),
+  ('registration_approval_code_ttl_minutes', '5', 'Registration approval code validity in minutes'),
   ('enable_image_captcha', '0', 'Whether image captcha is enabled before challenge issuance'),
   ('admin_report_enabled', '0', 'Whether daily usage report push is enabled'),
   ('admin_report_hour', '9', 'Daily report push hour'),
@@ -855,6 +882,7 @@ ALTER TABLE usage_log DISABLE ROW LEVEL SECURITY;
 ALTER TABLE wechat_push_logs DISABLE ROW LEVEL SECURITY;
 ALTER TABLE device_fault_reports DISABLE ROW LEVEL SECURITY;
 ALTER TABLE user_requests DISABLE ROW LEVEL SECURITY;
+ALTER TABLE material_requests DISABLE ROW LEVEL SECURITY;
 ALTER TABLE user_notifications DISABLE ROW LEVEL SECURITY;
 ALTER TABLE chat_conversations DISABLE ROW LEVEL SECURITY;
 ALTER TABLE chat_participants DISABLE ROW LEVEL SECURITY;

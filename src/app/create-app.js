@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { corsOriginList } = require('../config/env');
 const { AppError } = require('../lib/app-error');
+const { jwtFromReq, verifyJwt } = require('../lib/auth');
 const { sendError } = require('../lib/http');
 const { createDistributedRateLimiter, createMemoryRateLimiter, createRequestLogger, safeRequestPath } = require('../lib/security');
 const { createHealthRouter } = require('../routes/health');
@@ -29,14 +30,27 @@ function collectInlineScriptHashes(publicDir) {
   return [...hashes].sort();
 }
 
-function createSecurityHeaders(publicDir) {
+function createSecurityHeaders(publicDir, config = {}) {
   const inlineScriptHashes = collectInlineScriptHashes(publicDir);
+  // CORS origins are explicit deployment configuration. Reuse that allowlist
+  // for fetch/XHR/WebSocket destinations without ever turning CSP into `*`.
+  const configuredOrigins = corsOriginList(config);
+  const connectOrigins = Array.isArray(configuredOrigins)
+    ? configuredOrigins.filter((origin) => {
+      try {
+        const url = new URL(origin);
+        return (url.protocol === 'http:' || url.protocol === 'https:') && url.origin === origin;
+      } catch (_) {
+        return false;
+      }
+    })
+    : [];
   const csp = [
     "default-src 'self'", "base-uri 'self'", "object-src 'none'", "frame-ancestors 'none'",
     "img-src 'self' data: blob:", "media-src 'self' blob:", "font-src 'self' data:",
     "style-src 'self' 'unsafe-inline'",
     `script-src 'self'${inlineScriptHashes.length ? ` ${inlineScriptHashes.join(' ')}` : ''}`,
-    "connect-src 'self' ws: wss:", "form-action 'self'"
+    `connect-src 'self' ws: wss:${connectOrigins.length ? ` ${connectOrigins.join(' ')}` : ''}`, "form-action 'self'"
   ].join('; ');
   return (_req, res, next) => {
     res.setHeader('Content-Security-Policy', csp);
@@ -76,7 +90,7 @@ function createApp({ config, db, service, refreshSessions, runtimeDiagnostics, s
   app.disable('x-powered-by');
   app.set('trust proxy', config.trustProxy ? 1 : false);
   app.use(createRequestLogger());
-  app.use(createSecurityHeaders(v5PublicDir));
+  app.use(createSecurityHeaders(v5PublicDir, config));
   app.use(async (req, _res, next) => {
     try {
       if (!isHealthProbeRequest(req) && (isPublicPageRequest(req) || isPublicApiRequest(req)) && await service.shouldBlockIpAccess({ host: req.headers.host })) {
@@ -97,6 +111,18 @@ function createApp({ config, db, service, refreshSessions, runtimeDiagnostics, s
     },
     message: 'Too many login attempts. Please try again later.', code: 1004
   }));
+  app.use('/api/v5/auth/register', createRateLimiter({
+    windowMs: 10 * 60_000,
+    max: 5,
+    maxKeys: 20_000,
+    keyGenerator(req) {
+      const account = String(req.body?.phone || '').trim().toLowerCase().slice(0, 80);
+      const accountKey = crypto.createHmac('sha256', config.tokenSecret).update(account).digest('hex').slice(0, 24);
+      return `${req.ip || req.socket?.remoteAddress || 'unknown'}:${accountKey}`;
+    },
+    message: '注册尝试过于频繁，请稍后再试。',
+    code: 1004
+  }));
   app.use('/uploads/exports', (_req, res) => res.status(404).end());
   app.use('/uploads', express.static(config.uploadDir, {
     maxAge: '7d', immutable: true,
@@ -111,6 +137,19 @@ function createApp({ config, db, service, refreshSessions, runtimeDiagnostics, s
     windowMs: config.apiRateLimitWindowMs, max: config.apiRateLimitMax, maxKeys: 20_000,
     message: 'Too many requests. Please try again later.'
   }));
+  app.use('/api/v5', async (req, _res, next) => {
+    try {
+      if (req.path === '/me' || req.path.startsWith('/auth/')) return next();
+      const token = jwtFromReq(req);
+      const auth = token ? verifyJwt(token, { type: 'access' }) : null;
+      if (auth && await service.isPasswordResetRequired(auth)) {
+        throw new AppError('密码已由管理员重置，请先设置新密码。', { status: 403, code: 1005 });
+      }
+      next();
+    } catch (error) {
+      next(error);
+    }
+  });
   app.use('/api/v5', createUploadRouter({ service, uploadDir: config.uploadDir }));
   app.use('/api/v5', createV5Router(service, { refreshSessions, runtimeDiagnostics }));
   app.use('/wechat', createWechatRouter(service));

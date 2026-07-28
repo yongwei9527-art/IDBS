@@ -110,7 +110,8 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
         className={cn(
           inputBase,
           sizeCls,
-          (prefix || suffix || showClear || showPassword) && 'pr-9',
+          (prefix || suffix || showClear || showPassword) && 'pr-12',
+          showClear && showPassword && 'pr-20',
           prefix && 'pl-9',
           className
         )}
@@ -158,9 +159,8 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
             {showClear && (
               <button
                 type="button"
-                tabIndex={-1}
                 aria-label="清空"
-                className="inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground hover:text-foreground"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => {
                   if (!isControlled) setInternalValue('');
                   onChange?.({ target: { value: '' } } as any);
@@ -174,9 +174,8 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
             {showPassword && (
               <button
                 type="button"
-                tabIndex={-1}
                 aria-label={visible ? '隐藏密码' : '显示密码'}
-                className="inline-flex h-5 w-5 items-center justify-center text-muted-foreground hover:text-foreground"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => setVisible((v) => !v)}
               >
                 {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}

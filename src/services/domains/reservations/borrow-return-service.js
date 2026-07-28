@@ -45,6 +45,54 @@ function createBorrowReturnService(context = {}) {
     return text.startsWith('/uploads/') || /^https?:\/\//i.test(text);
   }
 
+  function metadataArray(value) {
+    if (Array.isArray(value)) return value;
+    if (typeof value !== 'string' || !value.trim()) return [];
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function originalPhotoName(value, index = 0) {
+    const fallback = `return-photo-${index + 1}.jpg`;
+    const name = path.basename(String(value || fallback).replace(/[\u0000-\u001f\u007f]/g, '').trim()) || fallback;
+    return name.slice(0, 160);
+  }
+
+  function normalizeIncomingPhotoItems(items, fallbackUrls, defaultAbnormal = false) {
+    const source = Array.isArray(items) && items.length
+      ? items.slice(0, 5)
+      : (Array.isArray(fallbackUrls) ? fallbackUrls.slice(0, 5).map((url, index) => ({ url, original_name: originalPhotoName(url, index), abnormal: defaultAbnormal })) : []);
+    return source.map((item, index) => {
+      const raw = item && typeof item === 'object' ? item : { url: item };
+      return {
+        url: String(raw.url || '').trim().slice(0, 500),
+        original_name: originalPhotoName(raw.original_name || raw.originalName || raw.name || raw.url, index),
+        abnormal: raw.abnormal === true || raw.abnormal === 'true'
+      };
+    }).filter((item) => item.url);
+  }
+
+  function retainedPhotoMetadata(items, archivedUrls, submittedAt) {
+    const submittedMs = new Date(submittedAt).getTime();
+    return archivedUrls.map((url, index) => {
+      const item = items[index] || {};
+      const abnormal = Boolean(item.abnormal);
+      const days = abnormal ? 14 : 7;
+      return {
+        id: String(typeof uuid === 'function' ? uuid() : `${Date.now()}-${index}`),
+        url,
+        original_name: originalPhotoName(item.original_name, index),
+        abnormal,
+        submitted_at: submittedAt,
+        retain_until: new Date(submittedMs + days * 24 * 60 * 60 * 1000).toISOString()
+      };
+    });
+  }
+
   function localUploadPathFromUrl(url) {
     const text = String(url || '').trim();
     if (!text.startsWith('/uploads/')) return null;
@@ -319,15 +367,14 @@ function createBorrowReturnService(context = {}) {
     const rawReturnCondition = String(payload.return_condition || 'normal').trim().slice(0, 50);
     const normalizedCondition = rawReturnCondition.toLowerCase();
     const isNormalCondition = ['normal', 'ok', 'good', '正常', '完好', '良好'].includes(normalizedCondition) || ['正常', '完好', '良好'].includes(rawReturnCondition);
-    const returnCondition = isNormalCondition ? 'normal' : rawReturnCondition;
+    let returnCondition = isNormalCondition ? 'normal' : rawReturnCondition;
     const returnNote = String(payload.return_note || '').trim().slice(0, 500);
     const requestedAbnormalReason = String(payload.abnormal_reason_category || payload.abnormalReasonCategory || '').trim().toLowerCase();
     const requestedOverdueReason = String(payload.overdue_reason_category || payload.overdueReasonCategory || '').trim().toLowerCase();
     const abnormalReason = ['missing_accessory', 'appearance_damage', 'operation_abnormal', 'other'].includes(requestedAbnormalReason) ? requestedAbnormalReason : 'other';
     const overdueReason = ['experiment_not_finished', 'awaiting_result', 'forgot_return', 'other'].includes(requestedOverdueReason) ? requestedOverdueReason : 'other';
-    let returnPhotos = Array.isArray(payload.return_photos)
-      ? payload.return_photos.slice(0, 5).map((value) => String(value || '').trim().slice(0, 500)).filter(Boolean)
-      : [];
+    const returnPhotoItems = normalizeIncomingPhotoItems(payload.return_photo_items, payload.return_photos, !isNormalCondition);
+    let returnPhotos = returnPhotoItems.map((item) => item.url);
     if (returnPhotos.some((url) => !isAllowedReturnPhotoUrl(url))) {
       return fail('归还照片地址不安全，请重新上传后再提交。', 400, 2001);
     }
@@ -338,7 +385,11 @@ function createBorrowReturnService(context = {}) {
     const returnTime = nowIso();
     const duration = durationMinutes(record.borrow_time, returnTime);
     const isOverdue = record.expected_return_time ? new Date(returnTime) > new Date(record.expected_return_time) : false;
-    const abnormal = !isNormalCondition;
+    const abnormal = !isNormalCondition || returnPhotoItems.some((item) => item.abnormal);
+    if (abnormal && isNormalCondition) returnCondition = 'abnormal';
+    if (abnormal && returnPhotoItems.length && !returnPhotoItems.some((item) => item.abnormal)) {
+      return fail('\u5f02\u5e38\u5f52\u8fd8\u81f3\u5c11\u9700\u8981\u5c06\u4e00\u5f20\u7167\u7247\u6807\u8bb0\u4e3a\u5f02\u5e38\u3002', 400, 2001);
+    }
     const device = await getById('devices', record.device_id);
     const config = await getSecurityConfig();
     const returnMode = String(device?.return_mode || (config.require_return_photo ? 'image_required' : 'image_optional')).trim();
@@ -353,10 +404,15 @@ function createBorrowReturnService(context = {}) {
     const nextRecordStatus = abnormal ? 'abnormal_pending' : 'return_pending';
     const archivedReturn = await archiveReturnPhotos(returnPhotos, { device, user, returnTime });
     returnPhotos = archivedReturn.photos;
+    const returnPhotoMetadata = retainedPhotoMetadata(returnPhotoItems, returnPhotos, returnTime);
     const returnArchiveFolder = archivedReturn.folder;
     await withTransaction(async (client) => {
       const txQuery = (sql, params = []) => client.query(sql, params);
-      await client.query('update borrow_records set return_time = $1, duration_minutes = $2, return_condition = $3, return_note = $4, return_photos = $5, status = $6, is_overdue = $7, actual_end_time = $8, updated_at = $9, return_archive_folder = $10, return_archive_photos = $11, abnormal_reason_category = $12, overdue_reason_category = $13 where id = $14', [returnTime, duration, returnCondition, returnNote, JSON.stringify(returnPhotos), nextRecordStatus, isOverdue, returnTime, nowIso(), returnArchiveFolder || null, JSON.stringify(returnPhotos), abnormal ? abnormalReason : null, isOverdue ? overdueReason : null, record.id]);
+      await client.query(`update borrow_records set return_time = $1, duration_minutes = $2, return_condition = $3,
+        return_note = $4, return_photos = $5, status = $6, is_overdue = $7, actual_end_time = $8,
+        updated_at = $9, return_archive_folder = $10, return_archive_photos = $11,
+        abnormal_reason_category = $12, overdue_reason_category = $13, return_photo_metadata = $14
+        where id = $15`, [returnTime, duration, returnCondition, returnNote, JSON.stringify(returnPhotos), nextRecordStatus, isOverdue, returnTime, nowIso(), returnArchiveFolder || null, JSON.stringify(returnPhotos), abnormal ? abnormalReason : null, isOverdue ? overdueReason : null, JSON.stringify(returnPhotoMetadata), record.id]);
       await client.query('update devices set status = $1, allow_reservation = $2, last_return_photo = $3, last_return_user = $4, last_return_time = $5, last_condition = $6, updated_at = $7 where id = $8', [nextDeviceStatus, false, returnPhotos[0] || null, user.name, returnTime, returnCondition, nowIso(), record.device_id]);
       if (abnormal) {
         await notifyReservationUsersForDevice(record.device_id, {
@@ -385,7 +441,8 @@ function createBorrowReturnService(context = {}) {
     return ok({
       message: abnormal ? '异常归还已提交，等待管理员处理。' : '归还已提交，等待管理员验收。',
       return_archive_folder: returnArchiveFolder || '',
-      return_archive_photos: returnPhotos
+      return_archive_photos: returnPhotos,
+      return_photo_metadata: returnPhotoMetadata
     });
   }
 
@@ -399,9 +456,12 @@ function createBorrowReturnService(context = {}) {
       return fail('该归还记录当前没有待补充材料。', 409, 3001);
     }
     const note = String(payload.return_supplement_note || payload.note || '').trim().slice(0, 500);
-    const photoUrls = Array.isArray(payload.return_supplement_photos || payload.photos)
-      ? (payload.return_supplement_photos || payload.photos).slice(0, 5).map((value) => String(value || '').trim().slice(0, 500)).filter(Boolean)
-      : [];
+    const supplementPhotoItems = normalizeIncomingPhotoItems(
+      payload.return_supplement_photo_items,
+      payload.return_supplement_photos || payload.photos,
+      true
+    );
+    const photoUrls = supplementPhotoItems.map((item) => item.url);
     if (!note && !photoUrls.length) return fail('请补充照片或情况说明。', 400, 2001);
     if (photoUrls.some((url) => !isAllowedReturnPhotoUrl(url))) {
       return fail('补充照片地址不安全，请重新上传。', 400, 2001);
@@ -410,11 +470,13 @@ function createBorrowReturnService(context = {}) {
     const supplementedAt = nowIso();
     const late = Boolean(record.return_material_deadline && new Date(supplementedAt) > new Date(record.return_material_deadline));
     const archived = await archiveReturnPhotos(photoUrls, { device, user, returnTime: supplementedAt });
+    const supplementPhotoMetadata = retainedPhotoMetadata(supplementPhotoItems, archived.photos, supplementedAt);
     await withTransaction(async (client) => {
       const txQuery = (sql, params = []) => client.query(sql, params);
       await client.query(`update borrow_records set return_supplement_note=$1, return_supplement_photos=$2,
-        return_supplemented_at=$3, return_material_required=false, return_material_late=$4, updated_at=$3
-        where id=$5`, [note || null, JSON.stringify(archived.photos), supplementedAt, late, record.id]);
+        return_supplement_photo_metadata=$3, return_supplemented_at=$4,
+        return_material_required=false, return_material_late=$5, updated_at=$4
+        where id=$6`, [note || null, JSON.stringify(archived.photos), JSON.stringify(supplementPhotoMetadata), supplementedAt, late, record.id]);
       await log('supplement_return_materials', {
         message: late ? '超时补充归还材料' : '补充归还材料',
         borrow_record_id: record.id,
@@ -426,7 +488,8 @@ function createBorrowReturnService(context = {}) {
       message: late ? '材料已补充，但已超过截止时间，管理员将据此复核。' : '归还材料已补充，等待管理员复核。',
       supplemented_at: supplementedAt,
       late,
-      photos: archived.photos
+      photos: archived.photos,
+      photo_metadata: supplementPhotoMetadata
     });
   }
 
@@ -434,9 +497,9 @@ async function adminListReturnTasks(params = {}, token) {
     await requireAdminRole(token, ['super_admin', 'admin'], ['return.view', 'return.confirm', 'return.image_review', 'device.manage']);
     const limit = Math.max(1, Math.min(Number(params.limit) || 100, 200));
     const tasks = await query(`select b.id, b.device_id, b.user_id, b.borrow_time, b.expected_return_time, b.return_time,
-        b.return_condition, b.return_note, b.return_photos, b.status, b.is_overdue, b.return_archive_photos,
+        b.return_condition, b.return_note, b.return_photos, b.status, b.is_overdue, b.return_archive_photos, b.return_photo_metadata,
         b.return_material_required, b.return_material_deadline, b.return_supplement_note,
-        b.return_supplement_photos, b.return_supplemented_at, b.return_material_late,
+        b.return_supplement_photos, b.return_supplement_photo_metadata, b.return_supplemented_at, b.return_material_late,
         d.device_code, d.name as device_name, u.name as user_name
       from borrow_records b
       join devices d on d.id=b.device_id
@@ -504,7 +567,78 @@ async function adminListReturnTasks(params = {}, token) {
     return ok({ message, record_id: record.id, status: nextRecordStatus, material_deadline: deadline });
   }
 
-  return { adminListReturnTasks, adminReviewReturn, autoStartDueReservations, extendBorrow, precheckBorrowExtension, startReservationBatch, startUse, submitReturn, supplementReturnMaterials };
+  async function adminGetReturnPhotoDownload(payload, token) {
+    await requireAdminRole(token, ['super_admin', 'admin'], ['return.image_review']);
+    const recordId = assertText(payload.record_id || payload.id, 'record_id', 60);
+    const photoId = assertText(payload.photo_id || payload.photoId, 'photo_id', 100);
+    const record = await getById('borrow_records', recordId);
+    if (!record) return fail('\u5f52\u8fd8\u8bb0\u5f55\u4e0d\u5b58\u5728\u3002', 404, 3004);
+    const items = [...metadataArray(record.return_photo_metadata), ...metadataArray(record.return_supplement_photo_metadata)];
+    const photo = items.find((item) => String(item?.id || '') === photoId);
+    if (!photo) return fail('\u7167\u7247\u4e0d\u5b58\u5728\u6216\u5df2\u8fc7\u671f\u3002', 404, 3004);
+    if (!photo.abnormal) return fail('\u4ec5\u5141\u8bb8\u4e0b\u8f7d\u6807\u8bb0\u4e3a\u5f02\u5e38\u7684\u7167\u7247\u3002', 403, 1003);
+    if (photo.retain_until && new Date(photo.retain_until).getTime() <= Date.now()) {
+      return fail('\u7167\u7247\u5df2\u8fc7\u4fdd\u7559\u671f\u3002', 410, 3004);
+    }
+    const absolutePath = localUploadPathFromUrl(photo.url);
+    if (!absolutePath || !String(photo.url || '').startsWith('/uploads/returns/')) {
+      return fail('\u8be5\u7167\u7247\u4e0d\u662f\u53ef\u4e0b\u8f7d\u7684\u672c\u5730\u5f52\u8fd8\u5f52\u6863\u3002', 409, 3001);
+    }
+    try {
+      await fs.promises.access(absolutePath, fs.constants.R_OK);
+    } catch (_) {
+      return fail('\u7167\u7247\u6587\u4ef6\u5df2\u88ab\u6e05\u7406\u3002', 404, 3004);
+    }
+    return ok({ absolutePath, download_name: originalPhotoName(photo.original_name) });
+  }
+
+  async function cleanupExpiredReturnPhotos(nowValue = nowIso()) {
+    const now = new Date(nowValue);
+    if (Number.isNaN(now.getTime())) return fail('\u6e05\u7406\u65f6\u95f4\u65e0\u6548\u3002', 400, 2001);
+    const rows = await query(`select id, return_photos, return_archive_photos, return_photo_metadata,
+        return_supplement_photos, return_supplement_photo_metadata
+      from borrow_records
+      where jsonb_array_length(return_photo_metadata) > 0
+         or jsonb_array_length(return_supplement_photo_metadata) > 0
+      order by updated_at asc
+      limit 500`);
+    let deletedFiles = 0;
+    let updatedRecords = 0;
+    for (const row of rows) {
+      const primary = metadataArray(row.return_photo_metadata);
+      const supplement = metadataArray(row.return_supplement_photo_metadata);
+      const expired = [...primary, ...supplement].filter((item) => item?.retain_until && new Date(item.retain_until).getTime() <= now.getTime());
+      if (!expired.length) continue;
+      for (const item of expired) {
+        if (!String(item?.url || '').startsWith('/uploads/returns/')) continue;
+        const absolutePath = localUploadPathFromUrl(item.url);
+        if (!absolutePath) continue;
+        try {
+          await fs.promises.unlink(absolutePath);
+          deletedFiles += 1;
+        } catch (error) {
+          if (!error || error.code !== 'ENOENT') throw error;
+        }
+      }
+      const expiredUrls = new Set(expired.map((item) => String(item?.url || '')));
+      const keep = (items) => items.filter((item) => !expiredUrls.has(String(item?.url || '')));
+      const keepUrls = (value) => metadataArray(value).map((item) => String(item || '')).filter((url) => url && !expiredUrls.has(url));
+      await query(`update borrow_records set return_photo_metadata=$1, return_supplement_photo_metadata=$2,
+        return_photos=$3, return_archive_photos=$4, return_supplement_photos=$5, updated_at=$6 where id=$7`, [
+        JSON.stringify(keep(primary)),
+        JSON.stringify(keep(supplement)),
+        JSON.stringify(keepUrls(row.return_photos)),
+        JSON.stringify(keepUrls(row.return_archive_photos)),
+        JSON.stringify(keepUrls(row.return_supplement_photos)),
+        now.toISOString(),
+        row.id
+      ]);
+      updatedRecords += 1;
+    }
+    return ok({ updated_records: updatedRecords, deleted_files: deletedFiles });
+  }
+
+  return { adminGetReturnPhotoDownload, adminListReturnTasks, adminReviewReturn, autoStartDueReservations, cleanupExpiredReturnPhotos, extendBorrow, precheckBorrowExtension, startReservationBatch, startUse, submitReturn, supplementReturnMaterials };
 }
 
 module.exports = { createBorrowReturnService };

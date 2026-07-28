@@ -53,12 +53,95 @@
     });
   }
 
+  /**
+   * A deliberately small, paginated operational view for the system owner.
+   * This response must never expose authentication material or full user rows.
+   */
+  async function adminGetOperationsOverview(params = {}, token) {
+    await requireAdminRole(token, ['super_admin']);
+    const requestedLimit = Number(params.limit);
+    const limit = Math.max(1, Math.min(Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 10, 50));
+    const requestedOffset = Number(params.offset);
+    const offset = Math.max(0, Number.isFinite(requestedOffset) ? Math.floor(requestedOffset) : 0);
+
+    const [userStatusRows, registrationRows, totalRows, users, reservationRows, borrowRows] = await Promise.all([
+      query(`select status, count(*)::int as count from users where deleted_at is null group by status`),
+      query(`
+        select to_char(date_trunc('day', created_at), 'YYYY-MM-DD') as date, count(*)::int as count
+        from users
+        where deleted_at is null and created_at >= date_trunc('day', now()) - interval '13 days'
+        group by date_trunc('day', created_at)
+        order by date_trunc('day', created_at) asc
+      `),
+      query(`select count(*)::int as total from users where deleted_at is null`),
+      query(`
+        select id, name, student_no, phone, major, mentor_name, status, created_at
+        from users
+        where deleted_at is null
+        order by created_at desc
+        limit $1 offset $2
+      `, [limit, offset]),
+      query(`
+        select
+          count(*) filter (where status in ('approved', 'in_use', 'completed'))::int as successful,
+          count(*) filter (where status in ('rejected', 'cancelled', 'no_show'))::int as failed,
+          count(*) filter (where status = 'pending')::int as pending
+        from reservations
+        where deleted_at is null
+      `),
+      query(`
+        select
+          count(*) filter (where status = 'returned')::int as returned,
+          count(*) filter (where status in ('in_use', 'return_pending'))::int as in_use,
+          count(*) filter (where status = 'overdue' or is_overdue = true)::int as overdue,
+          count(*) filter (where status = 'abnormal_pending' or coalesce(return_condition, '') in ('abnormal', 'damaged'))::int as abnormal
+        from borrow_records
+        where deleted_at is null
+      `)
+    ]);
+
+    const statusDistribution = Object.fromEntries((userStatusRows || []).map((row) => [String(row.status || 'unknown'), Number(row.count) || 0]));
+    const registrationByDate = new Map((registrationRows || []).map((row) => [String(row.date), Number(row.count) || 0]));
+    const registrationTrend = Array.from({ length: 14 }, (_, index) => {
+      const day = new Date();
+      day.setHours(0, 0, 0, 0);
+      day.setDate(day.getDate() - (13 - index));
+      const date = day.toISOString().slice(0, 10);
+      return { date, count: registrationByDate.get(date) || 0 };
+    });
+    const reservationUsage = reservationRows?.[0] || {};
+    const borrowUsage = borrowRows?.[0] || {};
+    const total = Number(totalRows?.[0]?.total) || 0;
+
+    return ok({
+      users: {
+        total,
+        status_distribution: statusDistribution,
+        registration_trend: registrationTrend,
+        rows: users || [],
+        limit,
+        offset,
+        has_more: offset + (users || []).length < total
+      },
+      device_usage: {
+        successful: Number(reservationUsage.successful) || 0,
+        failed: Number(reservationUsage.failed) || 0,
+        pending: Number(reservationUsage.pending) || 0,
+        returned: Number(borrowUsage.returned) || 0,
+        in_use: Number(borrowUsage.in_use) || 0,
+        overdue: Number(borrowUsage.overdue) || 0,
+        abnormal: Number(borrowUsage.abnormal) || 0
+      }
+    });
+  }
+
   async function adminUpdateSecurityConfig(payload, token) {
     const { admin } = await requireAdminRole(token, ['super_admin']);
     const updates = [
       ['captcha_expire_minutes', 'captcha_expire_minutes', 'Challenge code validity in minutes'],
       ['captcha_hourly_limit', 'captcha_hourly_limit', 'Maximum challenge requests per hour'],
       ['openid_daily_register_limit', 'openid_daily_register_limit', 'Daily bind limit for the same OpenID'],
+      ['registration_approval_code_ttl_minutes', 'registration_approval_code_ttl_minutes', 'Registration approval code validity in minutes'],
       ['enable_image_captcha', 'enable_image_captcha', 'Whether image captcha is enabled before challenge issuance', true],
       ['require_return_photo', 'require_return_photo', 'Whether return photos are required before ending usage', true],
       ['block_ip_access_enabled', 'block_ip_access_enabled', 'Whether public pages and login challenge are blocked when accessed by IP host', true],
@@ -77,7 +160,17 @@
     ];
     for (const [key, payloadKey, description, booleanValue] of updates) {
       if (!Object.prototype.hasOwnProperty.call(payload, payloadKey)) continue;
-      const value = booleanValue ? (parseBoolean(payload[payloadKey]) ? '1' : '0') : payload[payloadKey];
+      let value = booleanValue ? (parseBoolean(payload[payloadKey]) ? '1' : '0') : payload[payloadKey];
+      if (key === 'registration_approval_code_ttl_minutes') {
+        const minutes = Number(value);
+        if (!Number.isFinite(minutes) || minutes < 1 || minutes > 24 * 60) {
+          const error = new Error('?????????? 1 ? 1440 ?????');
+          error.status = 400;
+          error.code = 2001;
+          throw error;
+        }
+        value = String(Math.floor(minutes));
+      }
       await saveSystemConfig(key, value, description);
     }
     if (Object.prototype.hasOwnProperty.call(payload, 'wechat_app_secret') && String(payload.wechat_app_secret || '').trim()) {
@@ -283,6 +376,7 @@
   }
 
   return {
+    adminGetOperationsOverview,
     adminGetSecurityConfig,
     adminListRoles,
     adminOperationLogs,

@@ -9,10 +9,24 @@ function createV5AdminRouter(service, { runtimeDiagnostics } = {}) {
   router.get('/admin/dashboard', requirePerm('stats.view', 'device.view', 'reservation.view', 'reservation.approve', 'reservation.change_plan', 'user.approve', 'user.manage', 'device.manage', 'fault.manage', 'return.view', 'return.confirm', 'return.image_review', 'return.export', 'stats.export', 'audit.view'), wrapV5(async (req) => unwrap(await service.adminDashboard(req.query || {}, serviceAuth(req)))));
   // users
   router.get('/admin/users', requirePerm('user.manage', 'user.approve'), wrapV5(async (req) => unwrap(await service.adminListUsers(req.query || {}, serviceAuth(req)))));
+  router.get('/admin/users/registration-approval-code', requirePerm('user.approve'), wrapV5(async (req, res) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Pragma', 'no-cache');
+    return unwrap(await service.adminGetRegistrationApprovalCode({}, serviceAuth(req)));
+  }));
   router.get('/admin/users/:id', requirePerm('user.manage', 'user.approve'), wrapV5(async (req) => unwrap(await service.adminGetUserDetail({ ...req.query, id: req.params.id }, serviceAuth(req)))));
   router.patch('/admin/users/:id/status', requirePerm('user.manage', 'user.approve'), validate({ body: z.object({ status: z.string() }).passthrough(), params: z.object({ id: z.string() }) }), wrapV5(async (req) => unwrap(await service.adminSetUserStatus({ ...req.validated.body, user_id: req.validated.params.id }, serviceAuth(req)))));
   router.put('/admin/users/:id/ban', requirePerm('user.manage'), validate({ body: z.object({}).passthrough(), params: z.object({ id: z.string() }) }), wrapV5(async (req) => unwrap(await service.adminSetUserBan({ ...req.validated.body, user_id: req.validated.params.id }, serviceAuth(req)))));
   router.delete('/admin/users/:id/wechat-binding', requirePerm('user.manage'), validate({ params: z.object({ id: z.string() }) }), wrapV5(async (req) => unwrap(await service.adminUnbindWechat({ user_id: req.validated.params.id }, serviceAuth(req)))));
+  router.post('/admin/users/:id/password-reset', requireRole('super_admin'), validate({
+    params: z.object({ id: z.string() })
+  }), wrapV5(async (req, res) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Pragma', 'no-cache');
+    return unwrap(await service.adminResetUserPassword({
+      user_id: req.validated.params.id
+    }, serviceAuth(req)));
+  }));
   router.delete('/admin/users/:id', requirePerm('user.manage'), validate({ params: z.object({ id: z.string() }) }), wrapV5(async (req) => unwrap(await service.adminDeleteUser({ user_id: req.validated.params.id }, serviceAuth(req)))));
   // devices list/detail/update (admin)
   router.get('/admin/devices', requirePerm('device.view', 'device.manage'), wrapV5(async (req) => unwrap(await service.adminListDevices(req.query || {}, serviceAuth(req)))));
@@ -24,9 +38,20 @@ function createV5AdminRouter(service, { runtimeDiagnostics } = {}) {
   router.post('/admin/fault-reports/:id/notify-affected', requirePerm('device.manage', 'fault.manage'), wrapV5(async (req) => unwrap(await service.adminNotifyAffectedFaultUsers({ ...req.body, report_id: req.params.id }, serviceAuth(req)))));
   router.get('/admin/return-tasks', requirePerm('return.view', 'return.confirm', 'return.image_review', 'device.manage'), wrapV5(async (req) => unwrap(await service.adminListReturnTasks(req.query || {}, serviceAuth(req)))));
   router.patch('/admin/return-tasks/:id/review', requirePerm('return.confirm'), validate({ body: z.object({ approved: z.boolean().optional(), review_note: z.string().max(500).optional() }).passthrough(), params: z.object({ id: z.string() }) }), wrapV5(async (req) => unwrap(await service.adminReviewReturn({ ...req.validated.body, record_id: req.validated.params.id }, serviceAuth(req)))));
+  router.get('/admin/return-photos/:recordId/:photoId/download', requirePerm('return.image_review'), validate({ params: z.object({ recordId: z.string(), photoId: z.string() }) }), async (req, res, next) => {
+    try {
+      const download = unwrap(await service.adminGetReturnPhotoDownload({ record_id: req.validated.params.recordId, photo_id: req.validated.params.photoId }, serviceAuth(req)));
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      return res.download(download.absolutePath, download.download_name, (error) => { if (error) next(error); });
+    } catch (error) { return next(error); }
+  });
   // user requests / demands
   router.get('/admin/user-requests', requirePerm('user.manage', 'reservation.view', 'reservation.approve'), wrapV5(async (req) => unwrap(await service.adminListUserRequests(req.query || {}, serviceAuth(req)))));
   router.patch('/admin/user-requests/:id/review', requirePerm('user.manage'), validate({ body: z.object({}).passthrough(), params: z.object({ id: z.string() }) }), wrapV5(async (req) => unwrap(await service.adminReviewUserRequest({ ...req.validated.body, request_id: req.validated.params.id }, serviceAuth(req)))));
+  // material checklist requests
+  router.get('/admin/material-requests', requirePerm('user.manage'), wrapV5(async (req) => unwrap(await service.adminListMaterialRequests(req.query || {}, serviceAuth(req)))));
+  router.patch('/admin/material-requests/:id/review', requirePerm('user.manage'), validate({ body: z.object({}).passthrough(), params: z.object({ id: z.string() }) }), wrapV5(async (req) => unwrap(await service.adminReviewMaterialRequest({ ...req.validated.body, request_id: req.validated.params.id }, serviceAuth(req)))));
   // analytics
   router.get('/admin/analytics/overview', requirePerm('stats.view'), wrapV5(async (req) => unwrap(await service.adminAnalyticsOverview(req.query || {}, serviceAuth(req)))));
   router.get('/admin/analytics/device-usage', requirePerm('stats.view'), wrapV5(async (req) => unwrap(await service.adminAnalyticsDeviceUsage(req.query || {}, serviceAuth(req)))));
@@ -58,6 +83,7 @@ function createV5AdminRouter(service, { runtimeDiagnostics } = {}) {
   router.get('/admin/system/security-config', requireRole('super_admin'), wrapV5(async (req) => unwrap(await service.adminGetSecurityConfig({}, serviceAuth(req)))));
   router.put('/admin/system/security-config', requireRole('super_admin'), wrapV5(async (req) => unwrap(await service.adminUpdateSecurityConfig(req.body || {}, serviceAuth(req)))));
   router.get('/admin/system/activity-summary', requireRole('super_admin'), wrapV5(async (req) => unwrap(await service.adminGetActivitySummary(req.query || {}, serviceAuth(req)))));
+  router.get('/admin/system/operations-overview', requireRole('super_admin'), wrapV5(async (req) => unwrap(await service.adminGetOperationsOverview(req.query || {}, serviceAuth(req)))));
   router.get('/admin/system/reports/daily-usage', requirePerm('stats.view'), wrapV5(async (req) => unwrap(await service.adminPreviewDailyUsageReport(req.query || {}, serviceAuth(req)))));
   router.post('/admin/system/reports/daily-usage/send', requirePerm('stats.export'), wrapV5(async (req) => unwrap(await service.adminSendDailyUsageReport(req.body || {}, serviceAuth(req)))));
   router.get('/admin/system/roles', requireRole('super_admin'), wrapV5(async (req) => unwrap(await service.adminListRoles({}, serviceAuth(req)))));

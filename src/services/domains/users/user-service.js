@@ -1,4 +1,4 @@
-﻿function createUserService(context = {}) {
+function createUserService(context = {}) {
   const {
     addNamesToBorrowRows,
     addUserToManagementGroup,
@@ -7,21 +7,25 @@
     db,
     fail,
     getById,
+    getRegistrationApprovalCode,
+    hashPassword,
     log,
     nowIso,
     ok,
     parseBoolean,
     query,
     queryOne,
+    randomBytes,
     removeUserFromManagementGroup,
     requireAdminRole,
     requireUser,
     safeUser,
+    verifyPassword,
     withTransaction
   } = context;
 
   async function getProfile(token) {
-    const user = await requireUser(token);
+    const user = await requireUser(token, { allowPasswordReset: true });
     return ok({ user: safeUser(user) });
   }
 
@@ -144,6 +148,15 @@
     return admin.role === 'super_admin' || admin.admin_role_key === 'super_admin';
   }
 
+  function isHighestAdminOperator(admin = {}, assignedRole = {}) {
+    const operatorPermissions = Array.isArray(admin.permissions) ? admin.permissions : [];
+    const assignedPermissions = Array.isArray(assignedRole.permissions) ? assignedRole.permissions : [];
+    return isSuperAdminOperator(admin)
+      || assignedRole.role_key === 'super_admin'
+      || operatorPermissions.includes('*')
+      || assignedPermissions.includes('*');
+  }
+
   function isSelfTarget(admin, user) {
     const adminUserId = String(admin?.user_id || admin?.id || '');
     return Boolean(adminUserId && user?.id && String(user.id) === adminUserId);
@@ -161,6 +174,167 @@
     return null;
   }
 
+  function generateTemporaryPassword() {
+    let value = '';
+    while (value.length < 12) {
+      const bytes = randomBytes(24);
+      for (const byte of bytes) {
+        if (byte >= 250) continue;
+        value += String(byte % 10);
+        if (value.length === 12) break;
+      }
+    }
+    return value;
+  }
+
+  async function adminResetUserPassword(payload, token) {
+    const { admin, role } = await requireAdminRole(token, ['super_admin'], ['*']);
+    if (!isHighestAdminOperator(admin, role)) {
+      return fail('\u53ea\u6709\u6700\u9ad8\u6743\u9650\u7ba1\u7406\u5458\u53ef\u4ee5\u91cd\u7f6e\u666e\u901a\u7528\u6237\u5bc6\u7801\u3002', 403, 1003);
+    }
+    const userId = assertText(payload.user_id, 'user_id', 60);
+    const password = generateTemporaryPassword();
+
+    const user = await getById('users', userId);
+    if (!user) return fail('\u7528\u6237\u4e0d\u5b58\u5728\u3002', 404, 3004);
+    const assignedAdminRole = await queryOne('select role_key, permissions from admin_roles where user_id = $1 limit 1', [userId]);
+    const targetPermissions = Array.isArray(assignedAdminRole?.permissions) ? assignedAdminRole.permissions : [];
+    const targetIsHighestAdmin = user.role === 'super_admin'
+      || assignedAdminRole?.role_key === 'super_admin'
+      || targetPermissions.includes('*');
+    if (isSelfTarget(admin, user) || targetIsHighestAdmin) {
+      return fail('\u4e0d\u80fd\u91cd\u7f6e\u5f53\u524d\u6216\u5176\u4ed6\u6700\u9ad8\u6743\u9650\u7ba1\u7406\u5458\u8d26\u53f7\u5bc6\u7801\u3002', 403, 1003);
+    }
+
+    const salt = randomBytes(16).toString('hex');
+    const passwordHash = await hashPassword(password, salt);
+    const changedAt = nowIso();
+    const temporaryPasswordExpiresAt = new Date(new Date(changedAt).getTime() + 24 * 60 * 60_000).toISOString();
+    let revokedRefreshSessions = 0;
+    await withTransaction(async (client) => {
+      const updated = await client.query(`
+        update users
+        set password_hash = $1,
+            password_salt = $2,
+            password_reset_required = true,
+            temporary_password_expires_at = $3,
+            updated_at = $4
+        where id = $5
+          and role <> 'super_admin'
+          and not exists (
+            select 1
+            from admin_roles
+            where user_id = $5
+              and (role_key = 'super_admin' or permissions ? '*')
+          )
+      `, [passwordHash, salt, temporaryPasswordExpiresAt, changedAt, userId]);
+      if (updated.rowCount !== 1) {
+        const error = new Error('\u7528\u6237\u6743\u9650\u72b6\u6001\u5df2\u53d8\u5316\uff0c\u8bf7\u5237\u65b0\u540e\u91cd\u8bd5\u3002');
+        error.status = 409;
+        error.code = 3001;
+        throw error;
+      }
+      const revoked = await client.query(`
+        update refresh_token_sessions
+        set revoked_at = $1
+        where subject = $2 and revoked_at is null
+      `, [changedAt, userId]);
+      revokedRefreshSessions = Number(revoked.rowCount || 0);
+      const txQuery = (sql, params = []) => client.query(sql, params);
+      await log('reset_user_password', {
+        message: user.role === 'admin' || assignedAdminRole
+          ? '\u6700\u9ad8\u6743\u9650\u7ba1\u7406\u5458\u5df2\u91cd\u7f6e\u666e\u901a\u7ba1\u7406\u5458\u5bc6\u7801'
+          : '\u6700\u9ad8\u6743\u9650\u7ba1\u7406\u5458\u5df2\u91cd\u7f6e\u666e\u901a\u7528\u6237\u5bc6\u7801',
+        refresh_sessions_revoked: revokedRefreshSessions,
+        access_token_max_minutes: 15,
+        temporary_password_expires_at: temporaryPasswordExpiresAt
+      }, admin, null, userId, txQuery);
+    });
+    return ok({
+      message: '\u5bc6\u7801\u5df2\u91cd\u7f6e\u4e3a\u4e00\u6b21\u6027\u4e34\u65f6\u5bc6\u7801\uff0c\u7528\u6237\u767b\u5f55\u540e\u5fc5\u987b\u7acb\u5373\u8bbe\u7f6e\u65b0\u5bc6\u7801\u3002',
+      temporary_password: password,
+      temporary_password_expires_at: temporaryPasswordExpiresAt,
+      refresh_sessions_revoked: revokedRefreshSessions,
+      access_token_max_minutes: 15,
+      password_reset_required: true
+    });
+  }
+
+  async function adminGetRegistrationApprovalCode(_, token) {
+    await requireAdminRole(token, ['super_admin', 'admin'], ['user.approve']);
+    return ok(await getRegistrationApprovalCode());
+  }
+
+  function passwordResetError(message, status = 400, code = 2001) {
+    const error = new Error(message);
+    error.status = status;
+    error.code = code;
+    return error;
+  }
+
+  async function completeRequiredPasswordReset(payload, token) {
+    const user = await requireUser(token, { allowPasswordReset: true });
+    const currentPassword = typeof payload.current_password === 'string' ? payload.current_password : '';
+    const newPassword = typeof payload.new_password === 'string' ? payload.new_password : '';
+    if (!currentPassword || currentPassword.length > 128) {
+      return fail('\u8bf7\u8f93\u5165\u5f53\u524d\u4e34\u65f6\u5bc6\u7801\u3002', 400, 2001);
+    }
+    if (newPassword.length < 12) return fail('\u65b0\u5bc6\u7801\u81f3\u5c11\u9700\u8981 12 \u4f4d\u3002', 400, 2001);
+    if (newPassword.length > 128) return fail('\u65b0\u5bc6\u7801\u6700\u591a 128 \u4f4d\u3002', 400, 2001);
+    if (newPassword === currentPassword) return fail('\u65b0\u5bc6\u7801\u4e0d\u80fd\u4e0e\u4e34\u65f6\u5bc6\u7801\u76f8\u540c\u3002', 400, 2001);
+
+    const salt = randomBytes(16).toString('hex');
+    const changedAt = nowIso();
+    let revokedRefreshSessions = 0;
+
+    await withTransaction(async (client) => {
+      const lockedResult = await client.query(`
+        select id, password_hash, password_salt, password_reset_required, temporary_password_expires_at
+        from users
+        where id = $1 and status = 'active' and coalesce(is_banned, false) = false
+        for update
+      `, [user.id]);
+      const lockedUser = lockedResult.rows?.[0];
+      if (!lockedUser) throw passwordResetError('\u8d26\u53f7\u72b6\u6001\u5df2\u53d8\u5316\uff0c\u8bf7\u91cd\u65b0\u767b\u5f55\u540e\u518d\u8bd5\u3002', 403, 1003);
+      if (!lockedUser.password_reset_required) {
+        throw passwordResetError('\u8be5\u8d26\u53f7\u5f53\u524d\u4e0d\u9700\u8981\u5b8c\u6210\u5f3a\u5236\u6539\u5bc6\u3002', 409, 3001);
+      }
+      if (lockedUser.temporary_password_expires_at && new Date(lockedUser.temporary_password_expires_at).getTime() <= Date.now()) {
+        throw passwordResetError('\u4e34\u65f6\u5bc6\u7801\u5df2\u8fc7\u671f\uff0c\u8bf7\u8054\u7cfb\u6700\u9ad8\u6743\u9650\u7ba1\u7406\u5458\u91cd\u65b0\u91cd\u7f6e\u3002', 401, 1001);
+      }
+      if (!(await verifyPassword(currentPassword, lockedUser.password_salt, lockedUser.password_hash))) {
+        throw passwordResetError('\u5f53\u524d\u4e34\u65f6\u5bc6\u7801\u4e0d\u6b63\u786e\u3002', 401, 1001);
+      }
+
+      const passwordHash = await hashPassword(newPassword, salt);
+      await client.query(`
+        update users
+        set password_hash = $1,
+            password_salt = $2,
+            password_reset_required = false,
+            temporary_password_expires_at = null,
+            updated_at = $3
+        where id = $4 and password_reset_required = true
+      `, [passwordHash, salt, changedAt, user.id]);
+      const revoked = await client.query(`
+        update refresh_token_sessions
+        set revoked_at = $1
+        where subject = $2 and revoked_at is null
+      `, [changedAt, user.id]);
+      revokedRefreshSessions = Number(revoked.rowCount || 0);
+      const txQuery = (sql, params = []) => client.query(sql, params);
+      await log('complete_required_password_reset', {
+        message: '\u7528\u6237\u5df2\u5b8c\u6210\u7ba1\u7406\u5458\u91cd\u7f6e\u540e\u7684\u5f3a\u5236\u6539\u5bc6',
+        refresh_sessions_revoked: revokedRefreshSessions
+      }, user, null, user.id, txQuery);
+    });
+
+    return ok({
+      message: '\u65b0\u5bc6\u7801\u5df2\u751f\u6548\uff0c\u8bf7\u4f7f\u7528\u65b0\u5bc6\u7801\u91cd\u65b0\u767b\u5f55\u3002',
+      refresh_sessions_revoked: revokedRefreshSessions,
+      password_reset_required: false
+    });
+  }
   async function adminDeleteUser(payload, token) {
     const { admin } = await requireAdminRole(token, ['super_admin', 'admin'], ['user.manage']);
     const userId = assertText(payload.user_id, 'user_id', 60);
@@ -290,10 +464,13 @@
   return {
     adminDeleteUser,
     adminGetUserDetail,
+    adminGetRegistrationApprovalCode,
     adminListUsers,
     adminSetUserBan,
     adminSetUserStatus,
     adminUnbindWechat,
+    adminResetUserPassword,
+    completeRequiredPasswordReset,
     getProfile,
     listMyNotifications,
     markMyNotificationsRead
@@ -301,4 +478,3 @@
 }
 
 module.exports = { createUserService };
-

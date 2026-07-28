@@ -24,6 +24,7 @@ refresh tokens in a URL.
 ## Authentication and session
 
 - `POST /api/v5/auth/login` - sign in with phone and password.
+- `POST /api/v5/auth/register` - create an ordinary user; a valid registration approval code activates the account immediately, otherwise it remains pending administrator approval.
 - `POST /api/v5/auth/login` - sign in using the bootstrap administrator password.
 - `GET /api/v5/auth/wechat/challenge` - obtain a WeChat binding challenge.
 - `GET /api/v5/auth/wechat/status` - poll a WeChat binding challenge; requires `code`.
@@ -31,6 +32,7 @@ refresh tokens in a URL.
 - `POST /api/v5/auth/refresh` - rotate the current refresh session.
 - `POST /api/v5/auth/logout` - revoke the current refresh session.
 - `GET /api/v5/me` - return the current principal, roles, and permissions.
+- `POST /api/v5/auth/password-reset/complete` - authenticated user completes a required temporary-password change; the new password must meet the 12–128 character policy.
 
 Login returns only the short-lived access token and user/permission data. The
 refresh token is an `laboratory-management-system.refresh_token` HttpOnly, SameSite=Strict cookie scoped
@@ -69,6 +71,9 @@ refresh. New clients must not send a refresh token in JSON.
 - `PUT /api/v5/user-requests/:id` - update an editable service request.
 - `PATCH /api/v5/user-requests/:id/cancel` - cancel a service request.
 - `POST /api/v5/user-requests/:id/change-request` - request a change to a service request.
+- `GET /api/v5/material-requests` - list the current user's material checklist requests.
+- `POST /api/v5/material-requests` - submit one material checklist item with name, quantity, unit, and optional purpose.
+- `PATCH /api/v5/material-requests/:id/cancel` - cancel the caller's pending material request.
 
 All endpoints in this section require authentication.
 
@@ -171,6 +176,10 @@ Maintenance lifecycle behavior: scheduled windows block new overlapping reservat
 - `PUT /api/v5/admin/system/roles` - update role assignments.
 - `DELETE /api/v5/admin/system/roles/:userId` - remove a role assignment.
 - `GET /api/v5/admin/audit/operation-logs` - query operation audit logs.
+- `POST /api/v5/admin/users/:id/password-reset` - super-administrator-only reset for an ordinary user or ordinary administrator; returns a one-time temporary password and revokes refresh sessions.
+- `GET /api/v5/admin/material-requests` - list material checklist requests; requires user.manage.
+- `PATCH /api/v5/admin/material-requests/:id/review` - approve, reject, or mark an approved material request fulfilled; requires user.manage.
+- `GET /api/v5/admin/system/operations-overview` - super-administrator-only registration, profile, and device-use aggregate with bounded pagination.
 
 ## Operational endpoints and non-v5 integrations
 

@@ -1,5 +1,17 @@
-﻿import { request } from '@/lib/api';
+import { request } from '@/lib/api';
 import type { ReservationItem } from '../reservation/reservation-api';
+
+export interface ReturnPhotoItem {
+  url: string;
+  original_name: string;
+  abnormal: boolean;
+}
+
+export interface ReturnPhotoMetadata extends ReturnPhotoItem {
+  id: string;
+  submitted_at: string;
+  retain_until: string;
+}
 
 export interface BorrowRecord {
   id: string;
@@ -12,6 +24,7 @@ export interface BorrowRecord {
   return_condition?: string;
   return_note?: string;
   return_photos?: string[];
+  return_photo_metadata?: ReturnPhotoMetadata[];
   return_archive_folder?: string;
   return_archive_photos?: string[];
   user_name?: string;
@@ -24,6 +37,7 @@ export interface BorrowRecord {
   return_material_deadline?: string | null;
   return_supplement_note?: string | null;
   return_supplement_photos?: string[];
+  return_supplement_photo_metadata?: ReturnPhotoMetadata[];
   return_supplemented_at?: string | null;
   return_material_late?: boolean;
   status: 'in_use' | 'returned' | 'return_pending' | 'abnormal_pending' | 'overdue';
@@ -65,6 +79,7 @@ export async function submitReturn(recordId: string, payload: {
   return_condition?: string;
   return_note?: string;
   return_photos?: string[];
+  return_photo_items?: ReturnPhotoItem[];
   abnormal_reason_category?: 'missing_accessory' | 'appearance_damage' | 'operation_abnormal' | 'other';
   overdue_reason_category?: 'experiment_not_finished' | 'awaiting_result' | 'forgot_return' | 'other';
 }) {
@@ -77,8 +92,9 @@ export async function submitReturn(recordId: string, payload: {
 export async function supplementReturnMaterials(recordId: string, payload: {
   return_supplement_note?: string;
   return_supplement_photos?: string[];
+  return_supplement_photo_items?: ReturnPhotoItem[];
 }) {
-  return request<{ message?: string; supplemented_at?: string; late?: boolean; photos?: string[] }>(`/borrow-records/${recordId}/return-supplement`, {
+  return request<{ message?: string; supplemented_at?: string; late?: boolean; photos?: string[]; photo_metadata?: ReturnPhotoMetadata[] }>(`/borrow-records/${recordId}/return-supplement`, {
     method: 'PATCH',
     body: JSON.stringify(payload)
   });

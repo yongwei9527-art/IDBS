@@ -9,7 +9,7 @@ import { OpsPageHeader } from '@/components/ops/design-system';
 import { briefDateTime } from '@/lib/time-format';
 import { toFriendlyError } from '@/lib/friendly-error';
 import { uploadImage } from '@/lib/api';
-import { extendBorrow, listMyBorrowRecords, precheckBorrowExtension, submitReturn, supplementReturnMaterials, type BorrowRecord } from './borrow-api';
+import { extendBorrow, listMyBorrowRecords, precheckBorrowExtension, submitReturn, supplementReturnMaterials, type BorrowRecord, type ReturnPhotoItem } from './borrow-api';
 
 const ABNORMAL_REASON_OPTIONS = [
   { value: 'missing_accessory', label: '配件缺失' },
@@ -252,7 +252,7 @@ function BorrowReturnPanel({ record }: { record: BorrowRecord }) {
   const [condition, setCondition] = useState<'normal' | 'missing_accessory' | 'appearance_damage' | 'operation_abnormal' | 'other'>('normal');
   const [overdueReason, setOverdueReason] = useState<'experiment_not_finished' | 'awaiting_result' | 'forgot_return' | 'other'>('experiment_not_finished');
   const [note, setNote] = useState('');
-  const [photos, setPhotos] = useState<string[]>([]);
+  const [photos, setPhotos] = useState<ReturnPhotoItem[]>([]);
   const [uploading, setUploading] = useState(false);
   const isAbnormal = condition !== 'normal';
   const isOverdue = Boolean(record.expected_return_time && new Date(record.expected_return_time).getTime() < Date.now());
@@ -262,7 +262,8 @@ function BorrowReturnPanel({ record }: { record: BorrowRecord }) {
     mutationFn: () => submitReturn(record.id, {
       return_condition: isAbnormal ? 'abnormal' : 'normal',
       return_note: note.trim(),
-      return_photos: photos,
+      return_photos: photos.map((photo) => photo.url),
+      return_photo_items: photos,
       abnormal_reason_category: isAbnormal ? condition : undefined,
       overdue_reason_category: isOverdue ? overdueReason : undefined
     }),
@@ -281,8 +282,11 @@ function BorrowReturnPanel({ record }: { record: BorrowRecord }) {
     if (!files.length) return;
     setUploading(true);
     try {
-      const uploaded: string[] = [];
-      for (const file of files) uploaded.push(await uploadImage(file));
+      const uploaded: ReturnPhotoItem[] = [];
+      for (const file of files) {
+        const url = await uploadImage(file);
+        uploaded.push({ url, original_name: file.name, abnormal: isAbnormal });
+      }
       setPhotos((current) => [...current, ...uploaded].slice(0, 5));
     } catch (error) {
       toast.error('照片上传失败：' + toFriendlyError(error));
@@ -294,6 +298,10 @@ function BorrowReturnPanel({ record }: { record: BorrowRecord }) {
   function handleSubmit() {
     if (photoRequired && photos.length === 0) {
       toast.warning(isAbnormal ? '异常归还必须上传设备照片' : '该设备要求上传归还照片');
+      return;
+    }
+    if (isAbnormal && photos.length > 0 && !photos.some((photo) => photo.abnormal)) {
+      toast.warning('异常归还至少需要将一张照片标记为“有异常”');
       return;
     }
     if (noteRequired && !note.trim()) {
@@ -322,7 +330,11 @@ function BorrowReturnPanel({ record }: { record: BorrowRecord }) {
 
           <label className="grid gap-1.5 text-xs font-semibold text-muted-foreground">
             设备归还状态
-            <select className="h-10 rounded-md border border-input bg-card px-3 text-sm text-foreground" value={condition} onChange={(event) => setCondition(event.target.value as typeof condition)}>
+            <select className="h-10 rounded-md border border-input bg-card px-3 text-sm text-foreground" value={condition} onChange={(event) => {
+              const next = event.target.value as typeof condition;
+              setCondition(next);
+              setPhotos((current) => current.map((photo) => ({ ...photo, abnormal: next !== 'normal' })));
+            }}>
               <option value="normal">正常完好</option>
               {ABNORMAL_REASON_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
             </select>
@@ -352,12 +364,20 @@ function BorrowReturnPanel({ record }: { record: BorrowRecord }) {
               </label>
             ) : null}
             {photos.length ? (
-              <div className="flex flex-wrap gap-2">
+              <div className="grid gap-2 sm:grid-cols-2">
                 {photos.map((photo, index) => (
-                  <div key={photo} className="relative h-20 w-20 overflow-hidden rounded-xl border bg-muted">
-                    <img src={photo} alt={`归还照片 ${index + 1}`} className="h-full w-full object-cover" />
-                    <button type="button" aria-label={`删除归还照片 ${index + 1}`} onClick={() => setPhotos((current) => current.filter((item) => item !== photo))} className="absolute right-1 top-1 rounded-md bg-black/65 px-1.5 py-0.5 text-[10px] text-white">删除</button>
-                  </div>
+                  <article key={`${photo.url}-${index}`} className="grid grid-cols-[5rem_minmax(0,1fr)] gap-3 rounded-xl border bg-card p-2">
+                    <img src={photo.url} alt={photo.original_name} className="h-20 w-20 rounded-lg bg-muted object-contain" />
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-semibold" title={photo.original_name}>{photo.original_name}</p>
+                      <label className="mt-2 flex items-center gap-2 text-xs">
+                        <input type="checkbox" checked={photo.abnormal} onChange={(event) => setPhotos((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, abnormal: event.target.checked } : item))} />
+                        <span>是否有异常</span>
+                      </label>
+                      <p className={photo.abnormal ? 'mt-1 text-[11px] text-destructive' : 'mt-1 text-[11px] text-emerald-700 dark:text-emerald-300'}>{photo.abnormal ? '有异常 · 保留14天' : '无异常 · 保留7天'}</p>
+                      <button type="button" aria-label={`删除归还照片 ${index + 1}`} onClick={() => setPhotos((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="mt-1 text-[11px] text-destructive hover:underline">删除</button>
+                    </div>
+                  </article>
                 ))}
               </div>
             ) : null}
@@ -377,13 +397,14 @@ function BorrowReturnPanel({ record }: { record: BorrowRecord }) {
 function ReturnSupplementPanel({ record }: { record: BorrowRecord }) {
   const qc = useQueryClient();
   const [note, setNote] = useState('');
-  const [photos, setPhotos] = useState<string[]>([]);
+  const [photos, setPhotos] = useState<ReturnPhotoItem[]>([]);
   const [uploading, setUploading] = useState(false);
   const deadlinePassed = Boolean(record.return_material_deadline && new Date(record.return_material_deadline).getTime() < Date.now());
   const mutation = useMutation({
     mutationFn: () => supplementReturnMaterials(record.id, {
       return_supplement_note: note.trim(),
-      return_supplement_photos: photos
+      return_supplement_photos: photos.map((photo) => photo.url),
+      return_supplement_photo_items: photos
     }),
     onSuccess: async (result) => {
       toast.success(result.message || '材料已补充');
@@ -398,8 +419,11 @@ function ReturnSupplementPanel({ record }: { record: BorrowRecord }) {
     if (!files.length) return;
     setUploading(true);
     try {
-      const uploaded: string[] = [];
-      for (const file of files) uploaded.push(await uploadImage(file));
+      const uploaded: ReturnPhotoItem[] = [];
+      for (const file of files) {
+        const url = await uploadImage(file);
+        uploaded.push({ url, original_name: file.name, abnormal: true });
+      }
       setPhotos((current) => [...current, ...uploaded].slice(0, 5));
     } catch (error) {
       toast.error('照片上传失败：' + toFriendlyError(error));
@@ -433,12 +457,16 @@ function ReturnSupplementPanel({ record }: { record: BorrowRecord }) {
         <Button type="button" disabled={uploading || mutation.isPending} onClick={submit}>{mutation.isPending ? '提交中…' : '提交补充材料'}</Button>
       </div>
       {photos.length ? (
-        <div className="flex flex-wrap gap-2">
+        <div className="grid gap-2 sm:grid-cols-2">
           {photos.map((photo, index) => (
-            <div key={photo} className="relative h-16 w-16 overflow-hidden rounded-xl border bg-muted">
-              <img src={photo} alt={`补充照片 ${index + 1}`} className="h-full w-full object-cover" />
-              <button type="button" aria-label={`删除补充照片 ${index + 1}`} onClick={() => setPhotos((current) => current.filter((item) => item !== photo))} className="absolute right-1 top-1 rounded bg-black/65 px-1 text-[10px] text-white">删除</button>
-            </div>
+            <article key={`${photo.url}-${index}`} className="flex min-w-0 items-center gap-2 rounded-xl border bg-card p-2">
+              <img src={photo.url} alt={photo.original_name} className="h-16 w-16 shrink-0 rounded-lg bg-muted object-contain" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-semibold" title={photo.original_name}>{photo.original_name}</p>
+                <p className="mt-1 text-[11px] text-destructive">异常补充材料 · 保留14天</p>
+                <button type="button" aria-label={`删除补充照片 ${index + 1}`} onClick={() => setPhotos((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="mt-1 text-[11px] text-destructive hover:underline">删除</button>
+              </div>
+            </article>
           ))}
         </div>
       ) : null}

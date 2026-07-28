@@ -1,0 +1,17 @@
+{
+	"appId": "com.laboratory.managementsystem",
+	"appName": "Laboratory Management System",
+	"webDir": "../public/v5",
+	"server": {
+		"androidScheme": "https",
+		"cleartext": true
+	},
+	"plugins": {
+		"CapacitorHttp": {
+			"enabled": true
+		},
+		"SystemBars": {
+			"insetsHandling": "disable"
+		}
+	}
+}

@@ -1,11 +1,12 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
-import { CalendarDays, CheckCircle2, Clock3, Search, Tag } from 'lucide-react';
+import { CalendarDays, CheckCircle2, Clock3, Info, Search, Tag } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { useActionDialog } from '@/components/ui/action-dialog';
 import { slotDisplayName, tinyTimeRange } from '@/lib/time-format';
 import { createReservation, precheckReservation, type ReservationPlanGroup } from './reservation-api';
 import { listDevices, listReservationSlots, type Device, type ReservationSlotOption } from '../devices/device-api';
@@ -81,6 +82,8 @@ export function ReservePage() {
   const [purpose, setPurpose] = useState('');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
+  const [acknowledgedNotices, setAcknowledgedNotices] = useState<string[]>([]);
+  const { confirm, ActionDialog } = useActionDialog();
 
   const devicesQuery = useQuery({ queryKey: ['devices'], queryFn: listDevices });
   const slotsQuery = useQuery({
@@ -108,10 +111,27 @@ export function ReservePage() {
   const selectedSlotLabels = slots.filter((slot) => selectedSlotKeys.includes(slotKey(slot))).map(slotLabel);
   const totalItems = selectedCodes.length * selectedDates.length * selectedSlotKeys.length;
 
+  function showUsageNotice(device: Device) {
+    const notice = String(device.usage_notice || '').trim();
+    if (!notice) return;
+    void confirm({
+      title: `${device.name} 使用注意事项`,
+      description: <div className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{notice}</div>,
+      confirmText: '我已了解',
+      cancelText: '关闭',
+      tone: 'warning'
+    });
+  }
+
   function toggleDevice(device: Device) {
     if (!isDeviceReservable(device)) return;
+    const isAdding = !selectedCodes.includes(device.device_code);
     setSelectedCodes((values) => toggleValue(values, device.device_code));
     setSelectedSlotKeys([]);
+    if (isAdding && String(device.usage_notice || '').trim() && !acknowledgedNotices.includes(device.device_code)) {
+      setAcknowledgedNotices((values) => [...values, device.device_code]);
+      showUsageNotice(device);
+    }
   }
 
   function addDate() {
@@ -162,6 +182,7 @@ export function ReservePage() {
 
   return (
     <form onSubmit={submit} className="ops-page-stack">
+      <ActionDialog />
       <OpsPageHeader
         title="预约设备"
       />
@@ -203,6 +224,11 @@ export function ReservePage() {
                         !reservable ? 'cursor-not-allowed opacity-50' : ''
                       ].join(' ')}
                     >
+                      {device.cover_photo ? (
+                        <img src={device.cover_photo} alt={`${device.name} 设备外观`} className="mb-3 h-32 w-full rounded-xl border bg-muted object-contain sm:h-36 xl:h-40" />
+                      ) : (
+                        <div className="mb-3 grid h-32 w-full place-items-center rounded-xl border border-dashed bg-muted/30 px-3 text-center text-xs text-muted-foreground sm:h-36 xl:h-40">暂无设备外观照片</div>
+                      )}
                       <div className="flex items-start justify-between gap-2">
                         <div>
                           <p className="font-semibold leading-snug">{device.name}</p>
@@ -218,6 +244,37 @@ export function ReservePage() {
                         {device.category ? <span className="badge-pill badge-muted">{device.category}</span> : null}
                         {device.allow_reservation === false ? <span className="badge-pill badge-danger">禁止预约</span> : null}
                       </div>
+                      {String(device.usage_notice || '').trim() ? (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary underline-offset-4 hover:underline"
+                          onClick={(event) => { event.preventDefault(); event.stopPropagation(); showUsageNotice(device); }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              showUsageNotice(device);
+                            }
+                          }}
+                        >
+                          <Info className="h-3.5 w-3.5" /> 查看使用注意事项
+                        </span>
+                      ) : null}
+                      {device.recent_return_photos?.length ? (
+                        <div className="mt-3 border-t pt-3">
+                          <p className="text-[11px] font-semibold text-muted-foreground">最近归还照片</p>
+                          <div className="mt-2 flex gap-2 overflow-hidden">
+                            {device.recent_return_photos.slice(0, 3).map((photo) => (
+                              <div key={photo.id} className="min-w-0 flex-1">
+                                <img src={photo.url} alt={photo.original_name} className="aspect-square w-full rounded-lg border bg-muted object-contain" />
+                                <p className="mt-1 truncate text-[10px] text-muted-foreground" title={photo.original_name}>{photo.original_name}</p>
+                                <p className={photo.abnormal ? 'text-[10px] text-destructive' : 'text-[10px] text-emerald-700 dark:text-emerald-300'}>{photo.abnormal ? '异常 · 保留14天' : '正常 · 保留7天'}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
                     </button>
                   );
                 })}
@@ -335,6 +392,19 @@ export function ReservePage() {
                     ? selectedDevices.map((d) => `${d.name}（${d.device_code}）`).join('、') || selectedCodes.join('、')
                     : '未选择'}
                 </p>
+                {selectedDevices.length ? (
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    {selectedDevices.map((device) => (
+                      <div key={device.device_code} className="flex items-center gap-2 rounded-xl border bg-muted/20 p-2">
+                        {device.cover_photo ? <img src={device.cover_photo} alt={`${device.name} 外观`} className="h-14 w-14 shrink-0 rounded-lg border bg-muted object-contain" /> : null}
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-semibold">{device.name}</p>
+                          <p className="text-[11px] text-muted-foreground">归还照片 {device.recent_return_photos?.length ?? 0} 张</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
               <div>
                 <p className="text-xs font-semibold text-muted-foreground">日期</p>

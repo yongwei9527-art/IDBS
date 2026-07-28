@@ -6,6 +6,10 @@ import { RequirePermission, RequireSuperAdmin } from './features/auth/permission
 import { getAdminModule } from './features/platform/operations-module-registry';
 
 const LoginPage = lazyRouteComponent(() => import('./features/auth/login-page'), 'LoginPage');
+const RequiredPasswordChangePage = lazyRouteComponent(
+  () => import('./features/auth/required-password-change-page'),
+  'RequiredPasswordChangePage'
+);
 const AppLayout = lazyRouteComponent(() => import('./features/layout/app-layout'), 'AppLayout');
 const AdminDashboardPage = lazyRouteComponent(() => import('./features/analytics/operations-dashboard-page'), 'AdminDashboardPage');
 const AdminDevicesPage = lazyRouteComponent(() => import('./features/equipment/equipment-management-page'), 'AdminDevicesPage');
@@ -30,6 +34,8 @@ const CalendarDetailPage = lazyRouteComponent(() => import('./features/reservati
 const BorrowIndexPage = lazyRouteComponent(() => import('./features/borrow/borrow-page'), 'BorrowIndexPage');
 const FaultPage = lazyRouteComponent(() => import('./features/fault/fault-page'), 'FaultPage');
 const StaffContactsPage = lazyRouteComponent(() => import('./features/support/staff-contacts-page'), 'StaffContactsPage');
+const ProfilePage = lazyRouteComponent(() => import('./features/profile/profile-page'), 'ProfilePage');
+const MaterialRequestPage = lazyRouteComponent(() => import('./features/materials/material-request-page'), 'MaterialRequestPage');
 
 interface RouterContext {
   queryClient: QueryClient;
@@ -94,6 +100,11 @@ function buildRouteTree() {
     component: () => null
   });
   const loginRoute = createRoute({ getParentRoute: () => rootRoute, path: '/login', component: LoginPage });
+  const requiredPasswordChangeRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/password-reset-required',
+    component: RequiredPasswordChangePage
+  });
   const appLayout = createRoute({ getParentRoute: () => rootRoute, id: '_app', component: AppLayout });
 
   const children = [
@@ -119,10 +130,12 @@ function buildRouteTree() {
     { path: '/calendar/$date', component: CalendarDetailPage },
     { path: '/borrow', component: BorrowIndexPage },
     { path: '/faults', component: FaultPage },
+    { path: '/me/profile', component: ProfilePage },
+    { path: '/materials', component: MaterialRequestPage },
     { path: '/support/contacts', component: StaffContactsPage }
   ].map(({ path, component }) => createRoute({ getParentRoute: () => appLayout, path, component }));
 
-  return rootRoute.addChildren([indexRoute, loginRoute, appLayout.addChildren(children)]);
+  return rootRoute.addChildren([indexRoute, loginRoute, requiredPasswordChangeRoute, appLayout.addChildren(children)]);
 }
 
 export const routes = buildRouteTree();

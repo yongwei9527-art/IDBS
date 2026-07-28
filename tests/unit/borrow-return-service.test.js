@@ -76,7 +76,7 @@ test('user can supplement an assigned abnormal return task with a note', async (
   assert.equal(result.data.late, false);
   const update = calls.find((call) => call.sql.includes('return_supplement_note'));
   assert.equal(update.params[0], '已补充配件清单');
-  assert.equal(update.params[3], false);
+  assert.equal(update.params[4], false);
 });
 
 test('abnormal return cannot be closed while requested materials are still within deadline', async () => {

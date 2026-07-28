@@ -1,14 +1,23 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
-import { authApi, type AuthBundle, type Me } from '@/lib/auth-api';
+import {
+  authApi,
+  type AuthBundle,
+  type Me,
+  type RegisterPayload,
+  type RegisterPendingResult
+} from '@/lib/auth-api';
 import { tokenStore, type ApiError } from '@/lib/api';
 
 interface AuthState {
   me: Me | null;
   role: string | null;
   permissions: string[];
+  passwordResetRequired: boolean;
   isLoggedIn: boolean;
   isReady: boolean;
   loginUser: (phone: string, password: string) => Promise<AuthBundle>;
+  registerUser: (payload: RegisterPayload) => Promise<AuthBundle | RegisterPendingResult>;
+  completeRequiredPasswordReset: (currentPassword: string, newPassword: string) => Promise<void>;
   logout: () => void;
   hasPerm: (p: string) => boolean;
   refresh: () => Promise<void>;
@@ -26,9 +35,21 @@ function decodeTokenMe(token: string | null): Me | null {
     const json = decodeURIComponent(
       Array.from(atob(padded), (c) => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join('')
     );
-    const data = JSON.parse(json) as { sub?: string; name?: string; role?: string; perms?: string[] };
+    const data = JSON.parse(json) as {
+      sub?: string;
+      name?: string;
+      role?: string;
+      perms?: string[];
+      password_reset_required?: boolean;
+    };
     if (!data.sub || !data.role) return null;
-    return { id: data.sub, name: data.name || '用户', role: data.role, permissions: Array.isArray(data.perms) ? data.perms : [] };
+    return {
+      id: data.sub,
+      name: data.name || '用户',
+      role: data.role,
+      permissions: Array.isArray(data.perms) ? data.perms : [],
+      password_reset_required: data.password_reset_required === true
+    };
   } catch {
     return null;
   }
@@ -43,8 +64,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isReady, setIsReady] = useState(false);
 
   const refresh = useCallback(async () => {
-    const token = tokenStore.get();
+    let token = tokenStore.get();
     try {
+      if (!token) token = await authApi.refreshToken();
       if (!token) {
         setMe(null);
         return;
@@ -55,7 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (isAuthExpiredError(error)) {
         setMe(null);
       } else {
-        const fallback = decodeTokenMe(token);
+        const fallback = decodeTokenMe(tokenStore.get() || token);
         setMe((prev) => prev ?? fallback);
       }
     } finally {
@@ -66,11 +88,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  useEffect(() => {
+    const onPasswordResetRequired = () => void refresh();
+    window.addEventListener('laboratory-management-system:password-reset-required', onPasswordResetRequired);
+    return () => window.removeEventListener('laboratory-management-system:password-reset-required', onPasswordResetRequired);
+  }, [refresh]);
   const loginUser = useCallback(async (phone: string, password: string) => {
     const bundle = await authApi.loginUser(phone, password);
     await refresh();
     return bundle;
   }, [refresh]);
+  const registerUser = useCallback(async (payload: RegisterPayload) => {
+    const result = await authApi.registerUser(payload);
+    if ('access_token' in result) await refresh();
+    return result;
+  }, [refresh]);
+
+  const completeRequiredPasswordReset = useCallback(async (currentPassword: string, newPassword: string) => {
+    await authApi.completeRequiredPasswordReset(currentPassword, newPassword);
+    tokenStore.clear();
+    setMe(null);
+    setIsReady(true);
+  }, []);
 
   const logout = useCallback(() => {
     authApi.logout();
@@ -89,9 +128,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     me,
     role,
     permissions,
+    passwordResetRequired: me?.password_reset_required === true,
     isLoggedIn: !!me,
     isReady,
     loginUser,
+    registerUser,
+    completeRequiredPasswordReset,
     logout,
     hasPerm,
     refresh

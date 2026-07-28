@@ -30,6 +30,49 @@ function createDeviceReadService(context = {}) {
     return normalizeReservationSlotOptions(device.reservation_slot_keys || RESERVATION_SLOT_PRESETS);
   }
 
+  function metadataArray(value) {
+    if (Array.isArray(value)) return value;
+    if (typeof value !== 'string' || !value.trim()) return [];
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  async function addRecentReturnPhotos(devices = []) {
+    const ids = devices.map((device) => device?.id).filter(Boolean);
+    if (!ids.length) return devices;
+    const rows = await query(`select id, device_id, return_photo_metadata, return_supplement_photo_metadata
+      from borrow_records
+      where device_id = any($1::uuid[])
+        and return_time is not null
+        and (jsonb_array_length(return_photo_metadata) > 0 or jsonb_array_length(return_supplement_photo_metadata) > 0)
+      order by return_time desc
+      limit 200`, [ids]);
+    const now = Date.now();
+    const grouped = new Map();
+    for (const row of rows || []) {
+      const list = grouped.get(row.device_id) || [];
+      for (const item of [...metadataArray(row.return_photo_metadata), ...metadataArray(row.return_supplement_photo_metadata)]) {
+        if (!item?.url || (item.retain_until && new Date(item.retain_until).getTime() <= now)) continue;
+        list.push({
+          id: String(item.id || ''),
+          record_id: row.id,
+          url: String(item.url),
+          original_name: String(item.original_name || '\u5f52\u8fd8\u7167\u7247').slice(0, 160),
+          abnormal: Boolean(item.abnormal),
+          submitted_at: item.submitted_at || null,
+          retain_until: item.retain_until || null
+        });
+        if (list.length >= 6) break;
+      }
+      grouped.set(row.device_id, list.slice(0, 6));
+    }
+    return devices.map((device) => ({ ...device, recent_return_photos: grouped.get(device.id) || [] }));
+  }
+
   async function listDevices(filters = {}) {
     let sql = 'select * from devices';
     let countSql = 'select count(*)::int as total from devices';
@@ -59,7 +102,8 @@ function createDeviceReadService(context = {}) {
       sql += ` offset $${params.length}`;
     }
     const rows = await query(sql, params);
-    const list = await addReservationSnapshotsToDevices(rows, { fullAccess: false });
+    const snapshots = await addReservationSnapshotsToDevices(rows, { fullAccess: false });
+    const list = await addRecentReturnPhotos(snapshots);
     return ok({ list, total: total ?? list.length, page, page_size: pageSize || list.length });
   }
 
@@ -151,9 +195,9 @@ function createDeviceReadService(context = {}) {
         from reservation_items ri
         join reservation_batches b on b.id = ri.batch_id
         where ri.device_id = $1
-        and status = any($2)
-        and start_time >= now()
-        and start_time < now() + interval '14 days'
+        and ri.status = any($2)
+        and ri.start_time >= now()
+        and ri.start_time < now() + interval '14 days'
       ) upcoming
       order by start_time asc
     `, [device.id, activeReservationStatus]);
@@ -165,7 +209,8 @@ function createDeviceReadService(context = {}) {
       limit 5
     `, [device.id]);
     const visibility = await getReservationVisibilityConfig();
-    const deviceList = await addReservationSnapshotsToDevices([device], { fullAccess: false });
+    const snapshots = await addReservationSnapshotsToDevices([device], { fullAccess: false });
+    const deviceList = await addRecentReturnPhotos(snapshots);
     return ok({
       device: deviceList[0] || device,
       reservations: (reservations || []).map((row) => applyReservationVisibility(row, visibility)),

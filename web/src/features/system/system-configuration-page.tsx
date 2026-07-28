@@ -7,6 +7,7 @@ import {
   type RoleRow,
   type StaffContact,
   useAdminActivitySummary,
+  useAdminOperationsOverview,
   useAdminRoles,
   useAdminSecurityConfig,
   useAdminUsers,
@@ -22,7 +23,7 @@ import { Input } from '@/components/ui/input';
 import { CompactId } from '@/components/ui/compact-id';
 import { uploadImage } from '@/lib/api';
 import { toast } from 'sonner';
-import { PERMISSION_LABELS } from '@/features/auth/permissions';
+import { PERMISSION_LABELS, useCapability } from '@/features/auth/permissions';
 import { useAuth } from '@/features/auth/use-auth';
 import { toFriendlyError } from '@/lib/friendly-error';
 import { OpsPageHeader } from '@/components/ops/design-system';
@@ -132,10 +133,17 @@ function systemText(value?: unknown) {
 }
 
 export function AdminSystemPage() {
+  const capability = useCapability();
   const { me } = useAuth();
   const { data, isLoading } = useAdminSecurityConfig();
   const update = useUpdateSecurityConfig();
   const { data: activityData } = useAdminActivitySummary();
+  const [operationsOffset, setOperationsOffset] = useState(0);
+  const { data: operationsData, isLoading: isOperationsLoading } = useAdminOperationsOverview({
+    limit: 10,
+    offset: operationsOffset,
+    enabled: capability.isSuperAdmin
+  });
   const { data: runtimeData, isLoading: isRuntimeLoading } = useAdminRuntimeDiagnostics();
   const { data: rolesData, refetch: refetchRoles } = useAdminRoles();
   const { data: users = [] } = useAdminUsers();
@@ -154,6 +162,8 @@ export function AdminSystemPage() {
   const [reportPreview, setReportPreview] = useState<DailyReportPreview | null>(null);
   const [editRole, setEditRole] = useState<EditRole>({ user_id: '', role_key: 'admin', note: '', permissions: [] });
   const [activeSection, setActiveSection] = useState<SystemSectionKey>('overview');
+  const operationsUsers = operationsData?.users;
+  const maxTrendCount = Math.max(1, ...(operationsUsers?.registration_trend ?? []).map((point) => point.count));
 
   const cfg = data?.config;
   const roleDefaults = rolesData?.role_defaults ?? {};
@@ -226,6 +236,7 @@ export function AdminSystemPage() {
       captcha_expire_minutes: asText(cfg.captcha_expire_minutes, '3'),
       captcha_hourly_limit: asText(cfg.captcha_hourly_limit, '3'),
       openid_daily_register_limit: asText(cfg.openid_daily_register_limit, '1'),
+      registration_approval_code_ttl_minutes: asText(cfg.registration_approval_code_ttl_minutes, '5'),
       enable_image_captcha: asBool(cfg.enable_image_captcha),
       require_return_photo: asBool(cfg.require_return_photo, true),
       block_ip_access_enabled: asBool(cfg.block_ip_access_enabled),
@@ -301,6 +312,7 @@ export function AdminSystemPage() {
       captcha_expire_minutes: numberValue(form.captcha_expire_minutes, 3),
       captcha_hourly_limit: numberValue(form.captcha_hourly_limit, 3),
       openid_daily_register_limit: numberValue(form.openid_daily_register_limit, 1),
+      registration_approval_code_ttl_minutes: numberValue(form.registration_approval_code_ttl_minutes, 5),
       enable_image_captcha: form.enable_image_captcha,
       require_return_photo: form.require_return_photo,
       block_ip_access_enabled: form.block_ip_access_enabled,
@@ -482,7 +494,96 @@ export function AdminSystemPage() {
               </div>
             ))}
           </div>
-          <div className="system-config-panel mt-4 p-3">
+          {capability.isSuperAdmin ? (
+            <div className='system-config-panel mt-4 p-3'>
+              <div className='flex flex-wrap items-start justify-between gap-2'>
+                <div>
+                  <div className='text-sm font-semibold'>系统运营概览</div>
+                  <p className='mt-1 text-xs text-muted-foreground'>仅展示运营所需的最少个人资料字段；不含密码、令牌或登录会话。</p>
+                </div>
+                <span className='rounded-full bg-primary/10 px-2 py-1 text-xs font-semibold text-primary'>注册总数 {operationsUsers?.total ?? 0}</span>
+              </div>
+              <div className='mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4'>
+                {Object.entries(operationsUsers?.status_distribution ?? {}).map(([status, count]) => (
+                  <div key={status} className='rounded-lg border bg-card p-3'>
+                    <div className='text-xs text-muted-foreground'>用户状态 · {status}</div>
+                    <div className='mt-1 text-xl font-bold'>{count}</div>
+                  </div>
+                ))}
+                {Object.keys(operationsUsers?.status_distribution ?? {}).length === 0 && <div className='rounded-lg border bg-card p-3 text-sm text-muted-foreground'>暂无用户状态数据</div>}
+              </div>
+              <div className='mt-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]'>
+                <div className='rounded-lg border bg-card p-3'>
+                  <div className='text-sm font-medium'>近 14 天注册趋势</div>
+                  <div className='mt-3 grid grid-cols-7 gap-2 sm:grid-cols-14'>
+                    {(operationsUsers?.registration_trend ?? []).map((point) => (
+                      <div key={point.date} className='min-w-0 text-center'>
+                        <div className='flex h-20 items-end rounded bg-muted/60 px-1'>
+                          <div className='w-full rounded-t bg-primary' style={{ height: ((point.count / maxTrendCount) * 100) + '%' }} title={point.date + '：' + point.count} />
+                        </div>
+                        <div className='mt-1 text-xs font-medium'>{point.count}</div>
+                        <div className='truncate text-[10px] text-muted-foreground'>{point.date.slice(5)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className='rounded-lg border bg-card p-3'>
+                  <div className='text-sm font-medium'>设备使用汇总</div>
+                  <div className='mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4'>
+                    {[
+                      ['预约成功', operationsData?.device_usage.successful ?? 0],
+                      ['失败/取消', operationsData?.device_usage.failed ?? 0],
+                      ['待审批', operationsData?.device_usage.pending ?? 0],
+                      ['已归还', operationsData?.device_usage.returned ?? 0],
+                      ['使用中', operationsData?.device_usage.in_use ?? 0],
+                      ['逾期', operationsData?.device_usage.overdue ?? 0],
+                      ['异常', operationsData?.device_usage.abnormal ?? 0]
+                    ].map(([label, count]) => (
+                      <div key={String(label)} className='rounded-md bg-muted/50 p-2'>
+                        <div className='text-xs text-muted-foreground'>{label}</div>
+                        <div className='mt-1 text-lg font-bold'>{count}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className='mt-4 rounded-lg border bg-card p-3'>
+                <div className='flex flex-wrap items-center justify-between gap-2'>
+                  <div>
+                    <div className='text-sm font-medium'>注册用户资料</div>
+                    <p className='mt-1 text-xs text-muted-foreground'>按注册时间倒序，每页最多 10 条。</p>
+                  </div>
+                  <div className='flex items-center gap-2 text-xs text-muted-foreground'>
+                    <span>{isOperationsLoading ? '加载中…' : '共 ' + (operationsUsers?.total ?? 0) + ' 人'}</span>
+                    <Button size='sm' variant='outline' disabled={operationsOffset === 0 || isOperationsLoading} onClick={() => setOperationsOffset((current) => Math.max(0, current - 10))}>上一页</Button>
+                    <Button size='sm' variant='outline' disabled={!operationsUsers?.has_more || isOperationsLoading} onClick={() => setOperationsOffset((current) => current + 10)}>下一页</Button>
+                  </div>
+                </div>
+                <div className='mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3'>
+                  {(operationsUsers?.rows ?? []).map((user) => (
+                    <article key={user.id} className='rounded-xl border bg-muted/15 p-3 shadow-sm'>
+                      <div className='flex items-start justify-between gap-3'>
+                        <div className='min-w-0'>
+                          <div className='truncate text-sm font-semibold'>{user.name || '-'}</div>
+                          <div className='mt-1 text-xs text-muted-foreground'>注册于 {fmtTime(user.created_at)}</div>
+                        </div>
+                        <span className='shrink-0 rounded-full border bg-card px-2 py-1 text-xs font-medium'>{user.status || '-'}</span>
+                      </div>
+                      <dl className='mt-3 grid grid-cols-2 gap-x-3 gap-y-3 text-xs'>
+                        <div className='min-w-0'><dt className='text-muted-foreground'>学号</dt><dd className='mt-1 break-words font-medium'>{user.student_no || '-'}</dd></div>
+                        <div className='min-w-0'><dt className='text-muted-foreground'>手机号</dt><dd className='mt-1 break-words font-medium'>{user.phone || '-'}</dd></div>
+                        <div className='min-w-0'><dt className='text-muted-foreground'>专业</dt><dd className='mt-1 break-words font-medium'>{user.major || '-'}</dd></div>
+                        <div className='min-w-0'><dt className='text-muted-foreground'>导师</dt><dd className='mt-1 break-words font-medium'>{user.mentor_name || '-'}</dd></div>
+                      </dl>
+                    </article>
+                  ))}
+                  {isOperationsLoading && <div className='rounded-xl border border-dashed p-4 text-center text-sm text-muted-foreground'>正在加载注册用户资料…</div>}
+                  {!isOperationsLoading && (operationsUsers?.rows ?? []).length === 0 && <div className='rounded-xl border border-dashed p-4 text-center text-sm text-muted-foreground'>暂无注册用户资料</div>}
+                </div>
+              </div>
+            </div>
+          ) : null}
+          <div className='system-config-panel mt-4 p-3'>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <div className="text-sm font-medium">{'5.0 \u8fd0\u884c\u72b6\u6001'}</div>
@@ -605,6 +706,10 @@ export function AdminSystemPage() {
             <label className="text-sm">
               <span className="text-muted-foreground">同一微信每日绑定上限</span>
               <Input type="number" min={1} max={20} value={form.openid_daily_register_limit} onChange={(e) => setField('openid_daily_register_limit', e.target.value)} />
+            </label>
+            <label className="text-sm">
+              <span className="text-muted-foreground">批准码有效分钟数</span>
+              <Input type="number" min={1} max={1440} value={form.registration_approval_code_ttl_minutes} onChange={(e) => setField('registration_approval_code_ttl_minutes', e.target.value)} />
             </label>
             <label className="text-sm">
               <span className="text-muted-foreground">站点域名</span>

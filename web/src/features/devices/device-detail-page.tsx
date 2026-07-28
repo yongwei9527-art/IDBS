@@ -286,6 +286,25 @@ export function DeviceDetailPage() {
                 <div className="mt-3"><SlotBlocks device={device} /></div>
               </section>
 
+              {device.recent_return_photos?.length ? (
+                <section className="rounded-xl border bg-background/70 p-4">
+                  <OpsSectionHeader title="最近归还照片" description="用于预约前确认设备外观；照片到期后自动清理。" />
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {device.recent_return_photos.map((photo) => (
+                      <figure key={photo.id} className="min-w-0 rounded-xl border bg-card p-2">
+                        <img src={photo.url} alt={photo.original_name} className="aspect-[4/3] w-full rounded-lg bg-muted object-contain" />
+                        <figcaption className="mt-2">
+                          <p className="truncate text-xs font-semibold" title={photo.original_name}>{photo.original_name}</p>
+                          <p className={photo.abnormal ? 'mt-1 text-[11px] text-destructive' : 'mt-1 text-[11px] text-emerald-700 dark:text-emerald-300'}>
+                            {photo.abnormal ? '有异常 · 保留14天' : '无异常 · 保留7天'}
+                          </p>
+                        </figcaption>
+                      </figure>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+
               {device.description ? <p className="text-sm"><FileText className="mr-1 inline h-3 w-3 text-muted-foreground" />{device.description}</p> : null}
               {device.usage_notice ? <p className="rounded-2xl bg-primary/5 px-3 py-2 text-sm text-muted-foreground">使用须知：{device.usage_notice}</p> : null}
 

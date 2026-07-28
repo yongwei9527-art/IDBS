@@ -10,7 +10,7 @@ const {
 const MANAGEMENT_GROUP_KEY = 'lab_management';
 const MANAGEMENT_GROUP_TITLE = '实验管理总群';
 const MANAGEMENT_GROUP_RETENTION_DAYS = 7;
-const TEMP_GROUP_TTL_DAYS = 2;
+const TEMP_GROUP_TTL_DAYS = 1;
 const TEMP_GROUP_WARN_HOURS = 6;
 const PENDING_ACCOUNT_TTL_DAYS = 3;
 const CHAT_MESSAGE_TYPES = new Set(['text', 'image', 'file', 'system', 'device_card', 'reservation_card', 'fault_card', 'user_request_card']);
@@ -134,12 +134,12 @@ function createChatService(context = {}) {
     const userId = String(auth.sub || '').trim();
     if (userId && userId !== 'admin') {
       const user = await queryOne(`
-        select id, role
+        select id, role, password_reset_required
         from users
         where id = $1 and status = 'active' and coalesce(is_banned, false) = false
         limit 1
       `, [userId]);
-      return user ? { ...auth, sub: user.id, role: auth.role || user.role } : null;
+      return user && !user.password_reset_required ? { ...auth, sub: user.id, role: auth.role || user.role } : null;
     }
     if (['admin', 'super_admin'].includes(auth.role) || auth.scope === 'admin') {
       const adminUser = await queryOne(`

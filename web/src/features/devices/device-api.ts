@@ -1,4 +1,14 @@
-﻿import { request } from '@/lib/api';
+import { request } from '@/lib/api';
+
+export interface ReturnPhotoSummary {
+  id: string;
+  record_id: string;
+  url: string;
+  original_name: string;
+  abnormal: boolean;
+  submitted_at?: string | null;
+  retain_until?: string | null;
+}
 
 export interface Device {
   id: string;
@@ -11,6 +21,7 @@ export interface Device {
   description?: string;
   usage_notice?: string;
   cover_photo?: string;
+  recent_return_photos?: ReturnPhotoSummary[];
   allow_reservation?: boolean;
   last_return_time?: string;
   last_condition?: string;

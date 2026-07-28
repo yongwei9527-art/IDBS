@@ -39,10 +39,12 @@ const { createAnalyticsService } = require('./domains/analytics/analytics-servic
 const { createChatService } = require('./domains/chat/chat-service');
 const { createAdminSystemService } = require('./domains/admin/system-service');
 const { createAuthService } = require('./domains/auth/auth-service');
+const { createRegistrationApprovalCodeService } = require('./domains/auth/registration-approval-code');
 const { createDeviceAdminService } = require('./domains/devices/device-admin-service');
 const { createDeviceReadService } = require('./domains/devices/device-read-service');
 const { createFaultRequestService } = require('./domains/faults/fault-request-service');
 const { createMaintenanceService } = require('./domains/maintenance/maintenance-service');
+const { createMaterialRequestService } = require('./domains/materials/material-request-service');
 const { createExportService } = require('./domains/reports/export-service');
 const { createBorrowReturnService } = require('./domains/reservations/borrow-return-service');
 const { createReservationActionService } = require('./domains/reservations/reservation-action-service');
@@ -99,7 +101,8 @@ function createRentalService(options) {
     admin_report_enabled: 0,
     admin_report_hour: 9,
     admin_report_minute: 0,
-    admin_report_timezone: 'Asia/Shanghai'
+    admin_report_timezone: 'Asia/Shanghai',
+    registration_approval_code_ttl_minutes: 5
   };
   const DEFAULT_WECHAT_CONFIG = {
     wechat_token: wechatToken,
@@ -114,6 +117,22 @@ function createRentalService(options) {
     { key: 'usage', label: '值班管理员（紧急联系）', description: '紧急情况、现场协助、无法归类的问题' }
   ];
   function uuid() { return crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex'); }
+  async function registrationApprovalCodeWindowMs() {
+    const rows = await query("select config_value from system_configs where config_key = 'registration_approval_code_ttl_minutes' limit 1");
+    const configuredMinutes = Number(rows?.[0]?.config_value);
+    const minutes = Math.max(1, Math.min(Number.isFinite(configuredMinutes) ? Math.floor(configuredMinutes) : 5, 24 * 60));
+    return minutes * 60_000;
+  }
+
+  async function getRegistrationApprovalCode() {
+    const windowMs = await registrationApprovalCodeWindowMs();
+    return createRegistrationApprovalCodeService({ crypto, secret: tokenSecret, windowMs }).get();
+  }
+
+  async function verifyRegistrationApprovalCode(value) {
+    const windowMs = await registrationApprovalCodeWindowMs();
+    return createRegistrationApprovalCodeService({ crypto, secret: tokenSecret, windowMs }).verify(value);
+  }
 
   function authTokenFromReq(req) {
     const bearer = req.headers.authorization || '';
@@ -650,6 +669,7 @@ function createRentalService(options) {
       system_notice_title: String(config.system_notice_title || DEFAULT_SECURITY_CONFIG.system_notice_title),
       system_notice_content: String(config.system_notice_content || DEFAULT_SECURITY_CONFIG.system_notice_content),
       system_notice_version: String(config.system_notice_version || DEFAULT_SECURITY_CONFIG.system_notice_version),
+      registration_approval_code_ttl_minutes: Math.max(1, Math.min(Number(config.registration_approval_code_ttl_minutes) || DEFAULT_SECURITY_CONFIG.registration_approval_code_ttl_minutes, 24 * 60)),
       staff_contacts: normalizeStaffContacts(config.staff_contacts)
     };
   }
@@ -722,6 +742,7 @@ function createRentalService(options) {
         id: auth.sub,
         admin_role_key: role === 'super_admin' ? 'super_admin' : undefined,
         permissions: Array.isArray(auth.perms) ? auth.perms : [],
+        password_reset_required: auth.password_reset_required === true || auth.pwd_reset === true,
         name: auth.name || ''
       };
     }
@@ -737,6 +758,15 @@ function createRentalService(options) {
     }
     if (!['admin', 'super_admin'].includes(payload.role) && !payload.admin_role_key) {
       throw new AppError('没有访问权限。', { status: 403, code: 1003 });
+    }
+    if (payload.user_id && payload.user_id !== 'admin') {
+      const user = await getById('users', payload.user_id);
+      if (!user || user.status !== 'active' || user.is_banned) {
+        throw new AppError(userAccessMessage(user), { status: 403, code: 1003 });
+      }
+      if (payload.password_reset_required || user.password_reset_required) {
+        throw new AppError('密码已由管理员重置，请先设置新密码。', { status: 403, code: 1005 });
+      }
     }
     return payload;
   }
@@ -781,7 +811,7 @@ function createRentalService(options) {
     return '';
   }
 
-  async function requireUser(token) {
+  async function requireUser(token, options = {}) {
     const payload = resolveServiceAuth(token);
     if (!payload || !payload.user_id) {
       throw new AppError('未登录或登录已过期。', { status: 401, code: 1001 });
@@ -791,7 +821,18 @@ function createRentalService(options) {
     if (!user || user.status !== 'active' || user.is_banned) {
       throw new AppError(userAccessMessage(user), { status: 403, code: 1003 });
     }
+    if (!options.allowPasswordReset && (payload.password_reset_required || user.password_reset_required)) {
+      throw new AppError('密码已由管理员重置，请先设置新密码。', { status: 403, code: 1005 });
+    }
     return user;
+  }
+
+  async function isPasswordResetRequired(token) {
+    const payload = resolveServiceAuth(token);
+    if (!payload?.user_id || payload.user_id === 'admin') return false;
+    if (payload.password_reset_required) return true;
+    const row = await queryOne('select password_reset_required from users where id = $1 limit 1', [payload.user_id]);
+    return Boolean(row?.password_reset_required);
   }
 
   async function checkConflictWithQuery(runQuery, deviceId, startTime, endTime, excludeReservationId = null) {
@@ -938,6 +979,7 @@ function createRentalService(options) {
       role: tokenRole,
       admin_role_key: adminRoleKey || undefined,
       permissions: adminRole ? effectiveRolePermissions(adminRole) : undefined,
+      password_reset_required: Boolean(user.password_reset_required),
       name: user.name
     }, 7);
     await recordUserEvent({
@@ -1171,7 +1213,29 @@ function createRentalService(options) {
   const dashboardService = createDashboardService({ currentReservationDateCondition, ok, query, queryOne, requireAdminRole });
   const { adminDashboard } = dashboardService;
 
-  const authService = createAuthService({ adminPassword, assertPassword, assertPhone, assertText, fail, finalizeUserLogin, getAdminAuthConfig, hashPassword, makeToken, needsPasswordRehash, ok, query, queryOne, recordUserEvent, verifyPassword, verifySecret, userAccessMessage });
+  const authService = createAuthService({
+    adminPassword,
+    assertPassword,
+    assertPhone,
+    assertText,
+    fail,
+    finalizeUserLogin,
+    getAdminAuthConfig,
+    hashPassword,
+    makeToken,
+    needsPasswordRehash,
+    nowIso,
+    ok,
+    query,
+    queryOne,
+    randomBytes: (size) => crypto.randomBytes(size),
+    recordUserEvent,
+    uuid,
+    verifyPassword,
+    verifyRegistrationApprovalCode,
+    verifySecret,
+    userAccessMessage
+  });
   const { adminLogin, loginUser, registerUser } = authService;
 
   const adminSystemService = createAdminSystemService({
@@ -1201,7 +1265,7 @@ function createRentalService(options) {
     uuid,
     withTransaction
   });
-  const { adminGetSecurityConfig, adminListRoles, adminOperationLogs, adminOptions, adminPermissions, adminRevokeRole, adminUpdateSecurityConfig, adminUpsertRole, adminUserRoles } = adminSystemService;
+  const { adminGetOperationsOverview, adminGetSecurityConfig, adminListRoles, adminOperationLogs, adminOptions, adminPermissions, adminRevokeRole, adminUpdateSecurityConfig, adminUpsertRole, adminUserRoles } = adminSystemService;
 
   const chatService = createChatService({
     adminPermissionContextForUser,
@@ -1274,19 +1338,24 @@ function createRentalService(options) {
     db,
     fail,
     getById,
+    getRegistrationApprovalCode,
+    hashPassword,
     log,
     nowIso,
     ok,
     parseBoolean,
     query,
     queryOne,
+    randomBytes: (size) => crypto.randomBytes(size),
     removeUserFromManagementGroup,
     requireAdminRole,
     requireUser,
     safeUser,
+    verifyPassword,
     withTransaction
   });
-  const { adminDeleteUser, adminGetUserDetail, adminListUsers, adminSetUserBan, adminSetUserStatus, adminUnbindWechat, getProfile, listMyNotifications, markMyNotificationsRead } = userService;
+  const { adminDeleteUser, adminGetRegistrationApprovalCode, adminGetUserDetail, adminListUsers, adminSetUserBan, adminSetUserStatus, adminUnbindWechat, completeRequiredPasswordReset, getProfile, listMyNotifications, markMyNotificationsRead } = userService;
+  const adminResetUserPassword = userService.adminResetUserPassword;
 
   const faultRequestService = createFaultRequestService({
     assertText,
@@ -1308,6 +1377,11 @@ function createRentalService(options) {
     withTransaction
   });
   const { adminListFaultReports, adminListUserRequests, adminNotifyAffectedFaultUsers, adminResolveFaultReport, adminReviewUserRequest, cancelUserRequest, createUserRequest, listMyFaultReports, listMyUserRequests, reportDeviceFault, requestUserRequestChange, updateUserRequest } = faultRequestService;
+
+  const materialRequestService = createMaterialRequestService({
+    assertText, createUserNotification, fail, getById, log, nowIso, ok, query, requireAdminRole, requireUser, uuid, withTransaction
+  });
+  const { adminListMaterialRequests, adminReviewMaterialRequest, cancelMaterialRequest, createMaterialRequest, listMyMaterialRequests } = materialRequestService;
 
   const maintenanceService = createMaintenanceService({
     assertText, checkConflictInTransaction, createUserNotification, fail, getById, lockDeviceSchedule, log, nowIso, ok, parseBoolean, query, requireAdminRole, uuid, withTransaction
@@ -1389,7 +1463,7 @@ function createRentalService(options) {
     uuid,
     withTransaction
   });
-  const { adminListReturnTasks, adminReviewReturn, autoStartDueReservations, extendBorrow, precheckBorrowExtension, startReservationBatch, startUse, submitReturn, supplementReturnMaterials } = borrowReturnService;
+  const { adminGetReturnPhotoDownload, adminListReturnTasks, adminReviewReturn, autoStartDueReservations, cleanupExpiredReturnPhotos, extendBorrow, precheckBorrowExtension, startReservationBatch, startUse, submitReturn, supplementReturnMaterials } = borrowReturnService;
 
   const reservationReminderService = createReservationReminderService({ autoStartDueReservations, createUserNotification, nowIso, query, uuid });
   const { runReservationReminderLifecycle } = reservationReminderService;
@@ -1398,7 +1472,7 @@ function createRentalService(options) {
   // auth: { sub, scope, role, perms, name }
 
 
-  return { runReservationReminderLifecycle, archiveDailySuccessfulUsage, adminAnalyticsDeviceUsage, adminListReturnTasks, adminReviewReturn, adminCreateMaintenancePlan, adminCreateMaintenanceWorkOrder, adminListMaintenancePlans, adminListMaintenanceWorkOrders, adminMaintenanceOverview, adminUpdateMaintenancePlan, adminUpdateMaintenanceWorkOrder, adminAnalyticsFaults, adminAnalyticsIntelligence, adminAnalyticsOverview, adminAnalyticsTimeHeatmap, adminListIntelligenceActionLogs, adminUpdateIntelligenceAction, adminApproveReservation, adminApproveReservationBatch, adminBulkApproveReservations, adminChangeReservationPlan, adminMarkReservationNoShow, adminReviewReservationCancellation, adminCreateDevice, adminCreateExportJob, adminGetExportJobDownload, adminDashboard, adminDeleteUser, adminExportData, adminGetActivitySummary, adminGetDeviceDetail, adminGetReservationBatch, adminGetSecurityConfig, adminGetUserDetail, adminListDevices, adminListExportJobs, adminListReservationBatches, adminListReservations, adminListRoles, adminListUsers, adminLogin, adminOperationLogs, adminOptions, adminPermissions, adminPreviewDailyUsageReport, adminRunNextExportJob, adminSendDailyUsageReport, adminRevokeRole, adminSetDeviceAvailable, adminSetUserBan, adminSetUserStatus, adminUnbindWechat, adminUpdateDevice, adminUpdateSecurityConfig, adminUpsertRole, adminUserRoles, adminListFaultReports, adminNotifyAffectedFaultUsers, adminResolveFaultReport, adminListUserRequests, adminReviewUserRequest, addChatParticipants, authTokenFromReq, bindWechatAccount, bootstrapSystem, buildWechatReply, canSubscribeChatChannel, canSubscribeReservationAdminChannel, cleanupExpiredTemporaryGroups, cancelReservation, cancelReservationItem, cancelUserRequest, createChatConversation, createLoginChallenge, createReservation, createUserRequest, dissolveChatConversation, leaveChatConversation, getCalendarDay, getCalendarEvents, getReportConfig, getDeviceDetail, getDeviceTimeSlots, getLoginChallengeStatus, getProfile, getReservationBatch, getReservationSlotOptions, getSystemNotice, getStaffContacts, handleWechatMessage, listChatConversations, listChatMessages, listChatUsers, listDevices, listMyNotifications, listMyFaultReports, listMyUserRequests, listReservationBatches, loginUser, markChatConversationRead, markMyNotificationsRead, myRecords, precheckBorrowExtension, precheckReservation, registerUser, removeChatParticipant, reportDeviceFault, requestUserRequestChange, resolveRealtimePrincipal, safeFilename, sendChatMessage, sendWechatCustomMessage, shouldBlockIpAccess, autoStartDueReservations, extendBorrow, startReservationBatch, startUse, streamChatEvents, submitReturn, supplementReturnMaterials, pushDailyUsageReport, runMaintenanceWindowLifecycle, updateUserRequest, usageStats, verifyWechatHandshake };
+  return { runReservationReminderLifecycle, archiveDailySuccessfulUsage, adminAnalyticsDeviceUsage, adminGetRegistrationApprovalCode, adminGetReturnPhotoDownload, adminListReturnTasks, adminReviewReturn, adminCreateMaintenancePlan, adminCreateMaintenanceWorkOrder, adminListMaintenancePlans, adminListMaintenanceWorkOrders, adminMaintenanceOverview, adminUpdateMaintenancePlan, adminUpdateMaintenanceWorkOrder, adminAnalyticsFaults, adminAnalyticsIntelligence, adminAnalyticsOverview, adminAnalyticsTimeHeatmap, adminListIntelligenceActionLogs, adminUpdateIntelligenceAction, adminApproveReservation, adminApproveReservationBatch, adminBulkApproveReservations, adminChangeReservationPlan, adminMarkReservationNoShow, adminReviewReservationCancellation, adminCreateDevice, adminCreateExportJob, adminGetExportJobDownload, adminDashboard, adminDeleteUser, adminExportData, adminGetActivitySummary, adminGetDeviceDetail, adminGetOperationsOverview, adminGetReservationBatch, adminGetSecurityConfig, adminGetUserDetail, adminListDevices, adminListExportJobs, adminListReservationBatches, adminListReservations, adminListRoles, adminListUsers, adminLogin, adminOperationLogs, adminOptions, adminPermissions, adminPreviewDailyUsageReport, adminResetUserPassword, adminRunNextExportJob, adminSendDailyUsageReport, adminRevokeRole, adminSetDeviceAvailable, adminSetUserBan, adminSetUserStatus, adminUnbindWechat, adminUpdateDevice, adminUpdateSecurityConfig, adminUpsertRole, adminUserRoles, adminListFaultReports, adminNotifyAffectedFaultUsers, adminResolveFaultReport, adminListUserRequests, adminReviewUserRequest, adminListMaterialRequests, adminReviewMaterialRequest, addChatParticipants, authTokenFromReq, bindWechatAccount, bootstrapSystem, buildWechatReply, canSubscribeChatChannel, canSubscribeReservationAdminChannel, cleanupExpiredReturnPhotos, cleanupExpiredTemporaryGroups, completeRequiredPasswordReset, cancelReservation, cancelReservationItem, cancelUserRequest, cancelMaterialRequest, createChatConversation, createLoginChallenge, createReservation, createUserRequest, createMaterialRequest, dissolveChatConversation, isPasswordResetRequired, leaveChatConversation, getCalendarDay, getCalendarEvents, getReportConfig, getDeviceDetail, getDeviceTimeSlots, getLoginChallengeStatus, getProfile, getReservationBatch, getReservationSlotOptions, getSystemNotice, getStaffContacts, handleWechatMessage, listChatConversations, listChatMessages, listChatUsers, listDevices, listMyNotifications, listMyFaultReports, listMyUserRequests, listMyMaterialRequests, listReservationBatches, loginUser, markChatConversationRead, markMyNotificationsRead, myRecords, precheckBorrowExtension, precheckReservation, registerUser, removeChatParticipant, reportDeviceFault, requestUserRequestChange, resolveRealtimePrincipal, safeFilename, sendChatMessage, sendWechatCustomMessage, shouldBlockIpAccess, autoStartDueReservations, extendBorrow, startReservationBatch, startUse, streamChatEvents, submitReturn, supplementReturnMaterials, pushDailyUsageReport, runMaintenanceWindowLifecycle, updateUserRequest, usageStats, verifyWechatHandshake };
 }
 
 module.exports = { createRentalService };

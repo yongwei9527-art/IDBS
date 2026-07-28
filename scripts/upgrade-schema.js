@@ -446,6 +446,10 @@ const REQUIRED_INDEXES = [
 
 const REQUIRED_COLUMNS = [
   { table: 'users', column: 'deleted_at', definition: "timestamptz" },
+  { table: 'users', column: 'password_reset_required', definition: "boolean not null default false" },
+  { table: 'users', column: 'temporary_password_expires_at', definition: "timestamptz" },
+  { table: 'users', column: 'major', definition: "text" },
+  { table: 'users', column: 'mentor_name', definition: "text" },
   { table: 'devices', column: 'deleted_at', definition: "timestamptz" },
   { table: 'devices', column: 'created_by', definition: "uuid references users(id) on delete set null" },
   { table: 'devices', column: 'updated_by', definition: "uuid references users(id) on delete set null" },
@@ -510,10 +514,12 @@ const REQUIRED_COLUMNS = [
   { table: 'borrow_records', column: 'actual_end_time', definition: 'timestamptz' },
   { table: 'borrow_records', column: 'return_archive_folder', definition: 'text' },
   { table: 'borrow_records', column: 'return_archive_photos', definition: "jsonb not null default '[]'::jsonb" },
+  { table: 'borrow_records', column: 'return_photo_metadata', definition: "jsonb not null default '[]'::jsonb" },
   { table: 'borrow_records', column: 'return_material_required', definition: 'boolean not null default false' },
   { table: 'borrow_records', column: 'return_material_deadline', definition: 'timestamptz' },
   { table: 'borrow_records', column: 'return_supplement_note', definition: 'text' },
   { table: 'borrow_records', column: 'return_supplement_photos', definition: "jsonb not null default '[]'::jsonb" },
+  { table: 'borrow_records', column: 'return_supplement_photo_metadata', definition: "jsonb not null default '[]'::jsonb" },
   { table: 'borrow_records', column: 'return_supplemented_at', definition: 'timestamptz' },
   { table: 'borrow_records', column: 'return_material_late', definition: 'boolean not null default false' },
   { table: 'devices', column: 'return_mode', definition: "text not null default 'image_required'" },

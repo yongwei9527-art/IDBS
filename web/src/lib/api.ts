@@ -53,7 +53,17 @@ function readBuildApiOrigin(): string {
   return normalizeApiOrigin(import.meta.env.VITE_API_ORIGIN);
 }
 
+function usesUsbViteProxy(): boolean {
+  return typeof window !== 'undefined'
+    && import.meta.env.DEV
+    && window.location.origin === 'http://127.0.0.1:5173';
+}
+
 export function getApiOrigin(): string {
+  if (usesUsbViteProxy()) return '';
+  // A user-selected server takes precedence. The build-time value remains a
+  // safe fallback for managed offline APKs that have not opened the hidden
+  // server setting yet.
   return readStoredApiOrigin() || readBuildApiOrigin();
 }
 
@@ -139,8 +149,8 @@ export function friendlyApiMessage(status: number, raw?: string): string {
   if (hinted) return hinted;
   if (status === 0) return '网络连接异常，请确认服务已启动后重试。';
   if (status === 400) return hasChinese(text) ? text : '提交内容不完整或格式不正确，请补全后重试。';
-  if (status === 401) return '登录已失效，请重新登录。';
-  if (status === 403) return '当前账号没有权限执行该操作。';
+  if (status === 401) return hasChinese(text) ? text : '登录已失效，请重新登录。';
+  if (status === 403) return hasChinese(text) ? text : '当前账号没有权限执行该操作。';
   if (status === 404) return '请求的资源不存在或已被删除。';
   if (status === 409) return hasChinese(text) ? text : '当前状态不允许执行该操作，请刷新后重试。';
   if (status === 413) return '上传或提交内容过大，请压缩后重试。';
@@ -190,6 +200,43 @@ export async function uploadImage(file: File): Promise<string> {
   return body?.url || body?.data?.url || '';
 }
 
+export async function downloadAuthenticatedFile(path: string, filename: string) {
+  async function fetchFile(allowRefresh: boolean): Promise<Response> {
+    const accessToken = tokenStore.get();
+    let response: Response;
+    try {
+      response = await fetch(getApiBase() + path, {
+        credentials: requestCredentials(),
+        headers: accessToken ? { Authorization: 'Bearer ' + accessToken } : {}
+      });
+    } catch (error) {
+      throw createApiError(0, error instanceof Error ? error.message : String(error));
+    }
+    if (response.status === 401 && allowRefresh) {
+      const newToken = await refreshTokenOnly();
+      if (newToken) return fetchFile(false);
+    }
+    if (!response.ok) {
+      if (response.status === 401 && !allowRefresh) tokenStore.clear();
+      const body = await response.json().catch(() => null);
+      throw createApiError(response.status, normalizeApiBodyMessage(body), body);
+    }
+    return response;
+  }
+
+  const response = await fetchFile(true);
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename || 'download';
+  anchor.rel = 'noopener';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 async function doRequest<T>(path: string, options: ApiOptions, allowRefresh: boolean): Promise<T> {
   const { token, headers, ...rest } = options;
   const accessToken = token ?? tokenStore.get();
@@ -197,6 +244,7 @@ async function doRequest<T>(path: string, options: ApiOptions, allowRefresh: boo
   try {
     res = await fetch(getApiBase() + path, {
       ...rest,
+      cache: rest.cache ?? 'no-store',
       credentials: rest.credentials ?? requestCredentials(),
       headers: {
         'Content-Type': 'application/json',
@@ -214,11 +262,16 @@ async function doRequest<T>(path: string, options: ApiOptions, allowRefresh: boo
   else if (ct.includes('text/')) body = await res.text();
 
   if (!res.ok) {
+    if (res.status === 403 && Number(body?.code) === 1005 && typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('laboratory-management-system:password-reset-required'));
+    }
     if (res.status === 401 && allowRefresh && !path.startsWith('/auth/')) {
       const newToken = await refreshTokenOnly();
       if (newToken) return doRequest<T>(path, options, false);
     }
-    if (res.status === 401) tokenStore.clear();
+    const finalProtected401 = res.status === 401 && !allowRefresh && !path.startsWith('/auth/');
+    const invalidRefresh401 = res.status === 401 && path === '/auth/refresh';
+    if (finalProtected401 || invalidRefresh401) tokenStore.clear();
     throw createApiError(res.status, normalizeApiBodyMessage(body), body);
   }
 
@@ -230,27 +283,28 @@ let _refreshing: Promise<string | null> | null = null;
 async function refreshTokenOnly(): Promise<string | null> {
   if (_refreshing) return _refreshing;
   _refreshing = (async () => {
+    let response: Response;
     try {
-      const r = await fetch(getApiBase() + '/auth/refresh', {
+      response = await fetch(getApiBase() + '/auth/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: requestCredentials(),
         body: '{}'
       });
-      if (!r.ok) {
-        tokenStore.clear();
-        return null;
-      }
-      const j = await r.json();
-      const tok = j?.data?.access_token ?? j?.access_token;
-      if (tok) tokenStore.set(tok);
-      return tok ?? null;
-    } catch {
-      tokenStore.clear();
-      return null;
-    } finally {
-      _refreshing = null;
+    } catch (error) {
+      throw createApiError(0, error instanceof Error ? error.message : String(error));
     }
-  })();
+    const body = await response.json().catch(() => null);
+    if (!response.ok) {
+      if (response.status === 401) tokenStore.clear();
+      throw createApiError(response.status, normalizeApiBodyMessage(body), body);
+    }
+    const token = body?.data?.access_token ?? body?.access_token;
+    if (!token) throw createApiError(502, 'Refresh response did not include an access token.', body);
+    tokenStore.set(token);
+    return token;
+  })().finally(() => {
+    _refreshing = null;
+  });
   return _refreshing;
 }

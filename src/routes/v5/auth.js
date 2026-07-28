@@ -48,6 +48,15 @@ function createV5AuthRouter(service, { refreshSessions } = {}) {
     phone: z.string().min(6, '手机号格式不正确。').max(20, '手机号格式不正确。'),
     password: z.string().min(6, '密码至少需要 6 位。').max(128, '密码过长。')
   });
+  const registrationSchema = z.object({
+    name: z.string().min(1, '\u8bf7\u8f93\u5165\u59d3\u540d\u3002').max(50),
+    student_no: z.string().min(1, '\u8bf7\u8f93\u5165\u5b66\u53f7\u3002').max(50),
+    phone: z.string().min(6, '\u624b\u673a\u53f7\u683c\u5f0f\u4e0d\u6b63\u786e\u3002').max(20),
+    major: z.string().min(1, '\u8bf7\u8f93\u5165\u4e13\u4e1a\u3002').max(80),
+    mentor_name: z.string().min(1, '\u8bf7\u8f93\u5165\u5bfc\u5e08\u59d3\u540d\u3002').max(80),
+    password: z.string().min(12, '\u5bc6\u7801\u81f3\u5c11\u9700\u8981 12 \u4f4d\u3002').max(128),
+    approval_code: z.string().max(32).optional().default('')
+  });
 
   /**
    * 把 2.x 登录返回的 user/role/permissions 转成 v5 JWT payload + 双 token。
@@ -58,6 +67,7 @@ function createV5AuthRouter(service, { refreshSessions } = {}) {
       scope: userRole === 'super_admin' ? 'admin' : (userRole === 'admin' ? 'admin' : 'user'),
       role: userRole,
       perms: perms || [],
+      password_reset_required: Boolean(user?.password_reset_required),
       name: user?.name || 'admin'
     };
     const access = issueJwt(accessPayload, { type: 'access' });
@@ -104,6 +114,18 @@ function createV5AuthRouter(service, { refreshSessions } = {}) {
     return toV5LoginBundle(result, req, res);
   }));
 
+  router.post('/auth/register', validate({ body: registrationSchema }), wrapV5(async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const result = await service.registerUser(req.validated.body, contextFromReq(req));
+    if (!result || result.ok === false) {
+      throw new AppError(result?.message || '\u6ce8\u518c\u5931\u8d25\u3002', {
+        status: result?.status || 400,
+        code: result?.code || 2001
+      });
+    }
+    return toV5LoginBundle(result, req, res);
+  }));
+
   router.get('/auth/wechat/challenge', wrapV5(async (req) => {
     const result = await service.createLoginChallenge(req.query || {}, contextFromReq(req, 'wechat'));
     if (!result || result.ok === false) {
@@ -138,7 +160,15 @@ function createV5AuthRouter(service, { refreshSessions } = {}) {
     const currentToken = cookieValue(req, refreshCookieName) || String(req.body?.refresh_token || '').trim();
     const payload = verifyJwt(currentToken, { type: 'refresh' });
     if (!payload) throw new AppError('刷新登录凭证无效或已过期', { status: 401, code: 1001 });
-    const accessPayload = { sub: payload.sub, scope: payload.scope, role: payload.role, perms: payload.perms || [], name: payload.name };
+    const passwordResetRequired = await service.isPasswordResetRequired(payload);
+    const accessPayload = {
+      sub: payload.sub,
+      scope: payload.scope,
+      role: payload.role,
+      perms: payload.perms || [],
+      password_reset_required: passwordResetRequired,
+      name: payload.name
+    };
     const access = issueJwt(accessPayload, { type: 'access' });
     const nextRefresh = issueJwt({ ...accessPayload, type: 'refresh' }, { type: 'refresh' });
     const nextPayload = verifyJwt(nextRefresh, { type: 'refresh' });
@@ -154,6 +184,21 @@ function createV5AuthRouter(service, { refreshSessions } = {}) {
     return { access_token: access, token_type: 'Bearer', expires_in: 900 };
   }));
 
+  router.post('/auth/password-reset/complete', requireAuth, validate({ body: z.object({
+    current_password: z.string().min(1, '\u8bf7\u8f93\u5165\u5f53\u524d\u4e34\u65f6\u5bc6\u7801\u3002').max(128, '\u5bc6\u7801\u8fc7\u957f\u3002'),
+    new_password: z.string().min(12, '\u65b0\u5bc6\u7801\u81f3\u5c11\u9700\u8981 12 \u4f4d\u3002').max(128, '\u65b0\u5bc6\u7801\u6700\u591a 128 \u4f4d\u3002')
+  }) }), wrapV5(async (req, res) => {
+    const result = await service.completeRequiredPasswordReset(req.validated.body, req.auth);
+    if (!result || result.ok === false) {
+      throw new AppError(result?.message || '\u5bc6\u7801\u4fee\u6539\u5931\u8d25\u3002', {
+        status: result?.status || 400,
+        code: result?.code || 2001
+      });
+    }
+    setRefreshCookie(req, res, '', 0);
+    return result.data || result;
+  }));
+
   router.post('/auth/logout', wrapV5(async (req, res) => {
     const currentToken = cookieValue(req, refreshCookieName) || String(req.body?.refresh_token || '').trim();
     const payload = verifyJwt(currentToken, { type: 'refresh' });
@@ -165,7 +210,8 @@ function createV5AuthRouter(service, { refreshSessions } = {}) {
   }));
 
   // 当前用户资料（需 access JWT）
-  router.get('/me', requireAuth, wrapV5(async (req) => {
+  router.get('/me', requireAuth, wrapV5(async (req, res) => {
+    res.setHeader('Cache-Control', 'private, no-store');
     if (req.auth.sub === 'admin') {
       return { id: 'admin', name: 'admin', role: 'super_admin', permissions: ['*'] };
     }

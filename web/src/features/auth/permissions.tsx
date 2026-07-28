@@ -1,7 +1,7 @@
-import { Navigate } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 import { useAuth } from './use-auth';
 import { APP_PATHS } from '@/lib/app-paths';
+import { AuthRouteStatus, RedirectWithStatus } from './auth-guard';
 
 export const PERMISSIONS = {
   STATS_VIEW: 'stats.view',
@@ -141,10 +141,11 @@ export function RequirePermission({
   const capability = useCapability();
   const passAny = !any?.length || capability.canAny(any);
   const passAll = !all?.length || capability.canAll(all);
-  if (!capability.isLoggedIn) return null;
-  if (!capability.isAdminLike) return <Navigate to={APP_PATHS.devices as any} replace />;
+  if (!capability.isReady) return <AuthRouteStatus mode="loading" message="正在验证访问权限…" />;
+  if (!capability.isLoggedIn) return <RedirectWithStatus to={APP_PATHS.login} message="登录状态已失效，正在前往登录页…" />;
+  if (!capability.isAdminLike) return <RedirectWithStatus to={APP_PATHS.devices} message="当前账号没有后台访问权限，正在返回设备列表…" />;
   if (passAny && passAll) return <>{children}</>;
-  return <Navigate to={unavailableDestination(capability.adminLandingPath) as any} replace />;
+  return <RedirectWithStatus to={unavailableDestination(capability.adminLandingPath)} message="当前账号无法访问此页面，正在前往可用页面…" />;
 }
 
 export function RequireSuperAdmin({
@@ -155,10 +156,11 @@ export function RequireSuperAdmin({
   description?: string;
 }) {
   const capability = useCapability();
-  if (!capability.isLoggedIn) return null;
-  if (!capability.isAdminLike) return <Navigate to={APP_PATHS.devices as any} replace />;
+  if (!capability.isReady) return <AuthRouteStatus mode="loading" message="正在验证访问权限…" />;
+  if (!capability.isLoggedIn) return <RedirectWithStatus to={APP_PATHS.login} message="登录状态已失效，正在前往登录页…" />;
+  if (!capability.isAdminLike) return <RedirectWithStatus to={APP_PATHS.devices} message="当前账号没有后台访问权限，正在返回设备列表…" />;
   if (capability.isSuperAdmin) return <>{children}</>;
-  return <Navigate to={unavailableDestination(capability.adminLandingPath) as any} replace />;
+  return <RedirectWithStatus to={unavailableDestination(capability.adminLandingPath)} message="只有最高权限管理员可以访问此页面，正在前往可用页面…" />;
 }
 
 

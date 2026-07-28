@@ -17,6 +17,9 @@ function createV5BorrowRouter(service) {
   router.put('/user-requests/:id', requireAuth, wrapV5(async (req) => unwrap(await service.updateUserRequest({ ...req.body, request_id: req.params.id }, serviceAuth(req)))));
   router.patch('/user-requests/:id/cancel', requireAuth, wrapV5(async (req) => unwrap(await service.cancelUserRequest({ ...req.body, request_id: req.params.id }, serviceAuth(req)))));
   router.post('/user-requests/:id/change-request', requireAuth, wrapV5(async (req) => unwrap(await service.requestUserRequestChange({ ...req.body, request_id: req.params.id }, serviceAuth(req)))));
+  router.get('/material-requests', requireAuth, wrapV5(async (req) => unwrap(await service.listMyMaterialRequests(req.query || {}, serviceAuth(req)))));
+  router.post('/material-requests', requireAuth, wrapV5(async (req) => unwrap(await service.createMaterialRequest(req.body || {}, serviceAuth(req)))));
+  router.patch('/material-requests/:id/cancel', requireAuth, wrapV5(async (req) => unwrap(await service.cancelMaterialRequest({ ...req.body, request_id: req.params.id }, serviceAuth(req)))));
   return router;
 }
 

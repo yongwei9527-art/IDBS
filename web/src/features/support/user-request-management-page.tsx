@@ -11,6 +11,7 @@ import { PERMISSIONS, useCapability } from '@/features/auth/permissions';
 import { buildChatSearch } from '@/features/chat/chat-context';
 import { useAdminUserRequests, useReviewUserRequest, type AdminUserRequestRow } from '@/features/platform/operations-api';
 import { toFriendlyError } from '@/lib/friendly-error';
+import { AdminMaterialRequestsPanel } from '@/features/materials/admin-material-requests-panel';
 
 const STATUS_LABEL: Record<string, string> = {
   pending: '待确认',
@@ -346,6 +347,7 @@ export function AdminRequestsPage() {
           })}
         </div>
       </section>
+      {canReviewGeneralRequests ? <AdminMaterialRequestsPanel /> : null}
     </div>
   );
 }

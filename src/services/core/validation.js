@@ -10,6 +10,8 @@ const FIELD_LABELS = {
   device_code: '设备编号',
   device_id: '设备',
   id: '记录',
+  major: '专业',
+  mentor_name: '导师姓名',
   name: '名称',
   new_admin_password: '管理员入口密码',
   openid: '微信身份',
@@ -59,7 +61,7 @@ function assertOptionalEmail(value) {
 }
 
 function assertPassword(value) {
-  const password = assertText(value, 'password', 100);
+  const password = assertText(value, 'password', 128);
   if (password.length < 6) {
     throw new AppError('密码至少需要 6 位。', { status: 400, code: 2001 });
   }

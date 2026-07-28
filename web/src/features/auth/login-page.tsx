@@ -1,8 +1,9 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useAuth } from './use-auth';
+import { AuthRouteStatus } from './auth-guard';
 import './login-page.css';
 import { APP_PATHS } from '@/lib/app-paths';
 import { getApiOrigin, normalizeApiOrigin, saveApiOrigin } from '@/lib/api';
@@ -28,6 +29,14 @@ const copy = {
   timeout: "请求超时，请检查网络后重试。",
   passwordTooShort: "密码至少需要 6 位。",
   serverRequired: "请填写服务器地址（域名或 IP）。"
+} as const;
+
+const extraCopy = {
+  accountRequired: '\u8bf7\u8f93\u5165\u624b\u673a\u53f7\u548c\u5bc6\u7801\u3002',
+  revealServer: '\u8d26\u53f7\u548c\u5bc6\u7801\u5747\u4e3a\u7a7a\u65f6\uff0c\u8fde\u7eed\u70b9\u51fb\u4e09\u6b21\u767b\u5f55\u53ef\u4fee\u6539\u670d\u52a1\u5668\u5730\u5740\u3002',
+  confirmServer: '\u786e\u8ba4\u5e76\u4fdd\u5b58',
+  serverSaved: '\u670d\u52a1\u5668\u5730\u5740\u5df2\u4fdd\u5b58\uff0c\u4e0b\u6b21\u6253\u5f00\u4ecd\u4f1a\u4f7f\u7528\u8be5\u5730\u5740\u3002',
+  sessionHint: '\u767b\u5f55\u72b6\u6001\u4f1a\u5b89\u5168\u4fdd\u7559\uff1b\u7cfb\u7edf\u4e0d\u4f1a\u4fdd\u5b58\u60a8\u8f93\u5165\u7684\u660e\u6587\u5bc6\u7801\u3002'
 } as const;
 
 function safeRedirectTarget(raw: string | null) {
@@ -80,13 +89,73 @@ export function LoginPage() {
   const [server, setServer] = useState(() => getApiOrigin().replace(/^https?:\/\//i, ''));
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [registration, setRegistration] = useState({
+    name: '',
+    student_no: '',
+    phone: '',
+    major: '',
+    mentor_name: '',
+    password: '',
+    approval_code: ''
+  });
+  const [registrationConfirmation, setRegistrationConfirmation] = useState('');
+  const [showServerEditor, setShowServerEditor] = useState(false);
+  const [serverStatus, setServerStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const blankSubmitGesture = useRef({ count: 0, lastAt: 0 });
   const normalizedServer = normalizeApiOrigin(server);
+
+  useEffect(() => {
+    if (!auth.isReady || !auth.isLoggedIn) return;
+    void navigate({
+      to: auth.passwordResetRequired
+        ? APP_PATHS.passwordResetRequired
+        : (getLoginRedirect() || APP_PATHS.devices),
+      replace: true
+    } as any);
+  }, [auth.isReady, auth.isLoggedIn, auth.passwordResetRequired, navigate]);
+
+  function handleBlankLoginGesture() {
+    const now = Date.now();
+    const previous = blankSubmitGesture.current;
+    const count = now - previous.lastAt <= 2500 ? previous.count + 1 : 1;
+    blankSubmitGesture.current = { count, lastAt: now };
+    if (count >= 3) {
+      blankSubmitGesture.current = { count: 0, lastAt: 0 };
+      setShowServerEditor(true);
+      setServerStatus(null);
+    }
+  }
+
+  function confirmServer() {
+    setError(null);
+    const origin = normalizeApiOrigin(server);
+    if (!origin) {
+      setError(copy.serverRequired);
+      return;
+    }
+    saveApiOrigin(server);
+    setServer(origin.replace(/^https?:\/\//i, ''));
+    setServerStatus(extraCopy.serverSaved);
+    setShowServerEditor(false);
+  }
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     setError(null);
+    setServerStatus(null);
+    const trimmedPhone = phone.trim();
+    if (!trimmedPhone && !password) {
+      handleBlankLoginGesture();
+      return;
+    }
+    blankSubmitGesture.current = { count: 0, lastAt: 0 };
+    if (!trimmedPhone || !password) {
+      setError(extraCopy.accountRequired);
+      return;
+    }
     if (password.trim().length < 6) {
       setError(copy.passwordTooShort);
       return;
@@ -94,17 +163,19 @@ export function LoginPage() {
 
     const origin = normalizeApiOrigin(server);
     if (needsServerAddress() && !origin) {
-      setError(copy.serverRequired);
+      setError(`${copy.serverRequired}${extraCopy.revealServer}`);
       return;
-    }
-    if (server.trim()) {
-      saveApiOrigin(server);
     }
 
     setLoading(true);
     try {
-      await auth.loginUser(phone, password);
-      navigate({ to: getLoginRedirect() || APP_PATHS.devices, replace: true } as any);
+      const bundle = await auth.loginUser(phone, password);
+      navigate({
+        to: bundle.user?.password_reset_required
+          ? APP_PATHS.passwordResetRequired
+          : (getLoginRedirect() || APP_PATHS.devices),
+        replace: true
+      } as any);
     } catch (err) {
       setError(toChineseError(err, copy.loginFailed));
     } finally {
@@ -112,9 +183,77 @@ export function LoginPage() {
     }
   }
 
+  function updateRegistration(field: keyof typeof registration, value: string) {
+    setRegistration((current) => ({ ...current, [field]: value }));
+  }
+
+  async function onRegisterSubmit(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setServerStatus(null);
+    const required = [
+      registration.name,
+      registration.student_no,
+      registration.phone,
+      registration.major,
+      registration.mentor_name,
+      registration.password
+    ];
+    if (required.some((value) => !value.trim())) {
+      setError('请完整填写姓名、学号、手机号、专业、导师姓名和密码。');
+      return;
+    }
+    if (registration.password.length < 12 || registration.password.length > 128) {
+      setError('注册密码必须为 12–128 位。');
+      return;
+    }
+    if (registration.password !== registrationConfirmation) {
+      setError('两次输入的密码不一致。');
+      return;
+    }
+    const origin = normalizeApiOrigin(server);
+    if (needsServerAddress() && !origin) {
+      setError(`${copy.serverRequired}${extraCopy.revealServer}`);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await auth.registerUser({
+        ...registration,
+        phone: registration.phone.trim(),
+        approval_code: registration.approval_code.trim().toUpperCase()
+      });
+      setRegistration((current) => ({ ...current, password: '', approval_code: '' }));
+      setRegistrationConfirmation('');
+      if ('access_token' in result) {
+        await navigate({ to: APP_PATHS.devices, replace: true } as any);
+      } else {
+        setPhone(registration.phone.trim());
+        setMode('login');
+        setServerStatus(result.message);
+      }
+    } catch (requestError) {
+      setError(toChineseError(requestError, '注册失败，请检查填写内容后重试。'));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (!auth.isReady || auth.isLoggedIn) {
+    return (
+      <AuthRouteStatus
+        mode={auth.isLoggedIn ? 'redirecting' : 'loading'}
+        message={auth.isLoggedIn
+          ? (auth.passwordResetRequired ? '账号需要设置新密码，正在进入安全页面…' : '登录状态已恢复，正在进入系统…')
+          : '正在恢复登录状态…'}
+      />
+    );
+  }
+
   return (
     <main className="login-shell">
-      <div className="login-card">
+      <div className={`login-card ${mode === 'register' ? 'login-card--register' : ''}`}>
         <div className="login-brand-row">
           <div className="login-logo" aria-hidden="true">实</div>
           <div>
@@ -125,60 +264,129 @@ export function LoginPage() {
 
         <div className="login-divider" />
 
-        <h2 className="login-title">{copy.title}</h2>
+        <h2 className="login-title">{mode === 'login' ? copy.title : '注册账号'}</h2>
 
-        <form onSubmit={onSubmit} className="login-form">
-          <label className="login-field" htmlFor="login-server">
-            <span>{copy.server}</span>
-            <Input
-              id="login-server"
-              value={server}
-              onChange={(event) => setServer(event.target.value)}
-              placeholder={copy.serverPlaceholder}
-              autoComplete="url"
-              inputMode="url"
-              className="login-input"
-            />
-            <small className="login-field-hint">{copy.serverHint}</small>
-            {server.trim() && normalizedServer ? <small className="login-field-hint">{copy.serverPreview}：{normalizedServer}</small> : null}
-          </label>
+        <form onSubmit={mode === 'login' ? onSubmit : onRegisterSubmit} className="login-form" noValidate>
+          {showServerEditor ? (
+            <section className="login-server-editor" aria-label={copy.server}>
+              <label className="login-field" htmlFor="login-server">
+                <span>{copy.server}</span>
+                <Input
+                  id="login-server"
+                  value={server}
+                  onChange={(event) => {
+                    setServer(event.target.value);
+                    setServerStatus(null);
+                  }}
+                  placeholder={copy.serverPlaceholder}
+                  autoComplete="url"
+                  inputMode="url"
+                  className="login-input"
+                />
+                <small className="login-field-hint">{copy.serverHint}</small>
+                {server.trim() && normalizedServer ? <small className="login-field-hint">{copy.serverPreview}：{normalizedServer}</small> : null}
+              </label>
+              <Button type="button" variant="outline" className="login-server-confirm" onClick={confirmServer}>
+                {extraCopy.confirmServer}
+              </Button>
+            </section>
+          ) : null}
+          {mode === 'login' ? (
+            <>
+              <label className="login-field" htmlFor="login-phone">
+                <span>{copy.phone}</span>
+                <Input
+                  id="login-phone"
+                  value={phone}
+                  onChange={(event) => setPhone(event.target.value)}
+                  placeholder={copy.phonePlaceholder}
+                  autoComplete="tel"
+                  inputMode="tel"
+                  required
+                  className="login-input"
+                />
+              </label>
 
-          <label className="login-field" htmlFor="login-phone">
-            <span>{copy.phone}</span>
-            <Input
-              id="login-phone"
-              value={phone}
-              onChange={(event) => setPhone(event.target.value)}
-              placeholder={copy.phonePlaceholder}
-              autoComplete="tel"
-              inputMode="tel"
-              required
-              className="login-input"
-            />
-          </label>
-
-          <label className="login-field" htmlFor="login-password">
-            <span>{copy.password}</span>
-            <Input
-              id="login-password"
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder={copy.passwordPlaceholder}
-              autoComplete="current-password"
-              required
-              className="login-input"
-            />
-          </label>
+              <label className="login-field" htmlFor="login-password">
+                <span>{copy.password}</span>
+                <Input
+                  id="login-password"
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder={copy.passwordPlaceholder}
+                  autoComplete="current-password"
+                  required
+                  showPassword
+                  className="login-input"
+                />
+              </label>
+            </>
+          ) : (
+            <div className="login-register-grid">
+              <label className="login-field" htmlFor="register-name">
+                <span>姓名</span>
+                <Input id="register-name" value={registration.name} onChange={(event) => updateRegistration('name', event.target.value)} autoComplete="name" className="login-input" />
+              </label>
+              <label className="login-field" htmlFor="register-student-no">
+                <span>学号</span>
+                <Input id="register-student-no" value={registration.student_no} onChange={(event) => updateRegistration('student_no', event.target.value)} className="login-input" />
+              </label>
+              <label className="login-field" htmlFor="register-phone">
+                <span>注册手机号（登录账号）</span>
+                <Input id="register-phone" value={registration.phone} onChange={(event) => updateRegistration('phone', event.target.value)} autoComplete="tel" inputMode="tel" className="login-input" />
+              </label>
+              <label className="login-field" htmlFor="register-major">
+                <span>专业</span>
+                <Input id="register-major" value={registration.major} onChange={(event) => updateRegistration('major', event.target.value)} className="login-input" />
+              </label>
+              <label className="login-field" htmlFor="register-mentor">
+                <span>导师姓名</span>
+                <Input id="register-mentor" value={registration.mentor_name} onChange={(event) => updateRegistration('mentor_name', event.target.value)} className="login-input" />
+              </label>
+              <label className="login-field" htmlFor="register-approval-code">
+                <span>批准码（可选）</span>
+                <Input
+                  id="register-approval-code"
+                  value={registration.approval_code}
+                  onChange={(event) => updateRegistration('approval_code', event.target.value.toUpperCase())}
+                  autoCapitalize="characters"
+                  className="login-input font-mono tracking-wider"
+                />
+                <small className="login-field-hint">有效批准码会立即通过；不填写或无效则进入管理员审批。</small>
+              </label>
+              <label className="login-field" htmlFor="register-password">
+                <span>密码（12–128 位）</span>
+                <Input id="register-password" type="password" showPassword value={registration.password} onChange={(event) => updateRegistration('password', event.target.value)} autoComplete="new-password" className="login-input" />
+              </label>
+              <label className="login-field" htmlFor="register-password-confirmation">
+                <span>再次输入密码</span>
+                <Input id="register-password-confirmation" type="password" showPassword value={registrationConfirmation} onChange={(event) => setRegistrationConfirmation(event.target.value)} autoComplete="new-password" className="login-input" />
+              </label>
+            </div>
+          )}
 
           {error ? <p className="login-error" role="alert">{error}</p> : null}
+          {serverStatus ? <p className="login-success" role="status">{serverStatus}</p> : null}
 
           <Button type="submit" disabled={loading} className="login-submit">
-            {loading ? copy.submitting : copy.submit}
+            {loading ? (mode === 'login' ? copy.submitting : '注册中…') : (mode === 'login' ? copy.submit : '提交注册')}
           </Button>
         </form>
 
-        <p className="login-tip">仅限授权账号使用，如需开通请联系管理员</p>
+        <Button
+          type="button"
+          variant="ghost"
+          className="mt-3 w-full"
+          onClick={() => {
+            setMode((current) => current === 'login' ? 'register' : 'login');
+            setError(null);
+            setServerStatus(null);
+          }}
+        >
+          {mode === 'login' ? '没有账号？注册账号' : '已有账号？返回登录'}
+        </Button>
+        <p className="login-tip">{extraCopy.sessionHint}<br />批准码不会改变账号角色，只用于通过普通用户注册审批</p>
       </div>
     </main>
   );

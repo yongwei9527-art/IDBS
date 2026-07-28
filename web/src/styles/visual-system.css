@@ -3608,3 +3608,152 @@ html[data-runtime-surface='apk'] .ops-main .shadow-xl {
     font-size: .98rem !important;
   }
 }
+
+/* APK scroll and responsive-content invariants. */
+html[data-runtime-surface="apk"] .ops-layout-shell {
+  height: 100dvh !important;
+  min-height: 100dvh !important;
+}
+
+html[data-runtime-surface="apk"] .ops-content-shell {
+  height: 100dvh !important;
+  min-height: 0 !important;
+  overflow: hidden;
+}
+
+html[data-runtime-surface="apk"] .ops-page-area {
+  flex: 1 1 0%;
+  min-height: 0 !important;
+  height: auto !important;
+  max-height: none !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+html[data-runtime-surface="apk"][data-navigation-open="true"] .ops-page-area {
+  overflow-y: hidden !important;
+  touch-action: none;
+}
+
+html[data-runtime-surface="apk"] .ops-sidebar-nav {
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+html[data-runtime-surface="apk"] .ops-main,
+html[data-runtime-surface="apk"] .ops-main > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+html[data-runtime-surface="apk"] .ops-main img,
+html[data-runtime-surface="apk"] .ops-main video {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100dvh - 9rem);
+  object-fit: contain;
+}
+
+html[data-runtime-surface="apk"] .ops-main .recharts-responsive-container,
+html[data-runtime-surface="apk"] .ops-main .recharts-wrapper {
+  min-width: 0 !important;
+  max-width: 100% !important;
+  max-height: min(56dvh, 28rem);
+}
+
+html[data-runtime-surface="apk"] .ops-main .overflow-x-auto {
+  max-width: 100%;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+/* APK calendar grid must fit the viewport without horizontal scrolling. */
+html[data-runtime-surface="apk"] .calendar-board {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden !important;
+  touch-action: pan-y;
+}
+
+html[data-runtime-surface="apk"] .calendar-grid,
+html[data-runtime-surface="apk"] .calendar-weekhead,
+html[data-runtime-surface="apk"] .calendar-grid > .grid {
+  width: 100%;
+  min-width: 0 !important;
+}
+
+html[data-runtime-surface="apk"] .calendar-day-cell,
+html[data-runtime-surface="apk"] .calendar-event-chip {
+  min-width: 0 !important;
+  overflow: hidden;
+}
+
+@media (max-width: 767px) {
+  html[data-runtime-surface="apk"] .calendar-event-time {
+    display: none;
+  }
+}
+/* Night approval workspace surfaces must stay inside the dark palette. */
+:root[data-ambient="night"] .approval-batch-card,
+:root[data-ambient="night"] .approval-item-row {
+  color: var(--text-strong) !important;
+  border-color: var(--line) !important;
+  background: var(--surface-raised) !important;
+}
+
+:root[data-ambient="night"] .approval-batch-card:hover,
+:root[data-ambient="night"] .approval-item-row:hover,
+:root[data-ambient="night"] .approval-action-bar {
+  border-color: var(--line) !important;
+  background: var(--surface-subtle) !important;
+}
+
+:root[data-ambient="night"] .approval-batch-card--active {
+  border-color: hsl(var(--primary) / .72) !important;
+  background: hsl(var(--primary) / .16) !important;
+  box-shadow: inset 3px 0 0 hsl(var(--primary)) !important;
+}
+
+:root[data-ambient="night"] .approval-risk-strip {
+  border-color: var(--line) !important;
+  background: rgb(216 150 20 / .12) !important;
+}
+
+:root[data-ambient="night"] .approval-risk-panel--safe.approval-risk-strip,
+:root[data-ambient="night"] .approval-risk-strip.approval-risk-panel--safe {
+  background: rgb(73 170 25 / .12) !important;
+}
+
+:root[data-ambient="night"] .approval-risk-panel--danger.approval-risk-strip {
+  background: rgb(255 77 79 / .12) !important;
+}
+
+:root[data-ambient="night"] .approval-risk-panel--info.approval-risk-strip {
+  background: rgb(22 119 255 / .14) !important;
+}
+
+:root[data-ambient="night"] .approval-risk-item {
+  color: var(--text-strong) !important;
+  border-color: var(--line) !important;
+  background: rgb(255 255 255 / .035) !important;
+}
+/* Compact the month matrix in short landscape viewports; full details remain in the date dialog. */
+@media (orientation: landscape) and (max-height: 720px) {
+  html[data-runtime-surface="apk"] .calendar-day-cell {
+    min-height: 2.45rem !important;
+    padding: .2rem .3rem !important;
+  }
+
+  html[data-runtime-surface="apk"] .calendar-day-cell > .mb-2 {
+    margin-bottom: 0 !important;
+  }
+
+  html[data-runtime-surface="apk"] .calendar-event-chip,
+  html[data-runtime-surface="apk"] .calendar-more-button {
+    display: none !important;
+  }
+}

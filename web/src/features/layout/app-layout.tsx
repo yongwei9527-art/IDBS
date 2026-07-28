@@ -1,8 +1,9 @@
-import { type MouseEvent, type ReactNode, useEffect, useState } from 'react';
-import { Outlet, Link, useLocation } from '@tanstack/react-router';
+import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from 'react';
+import { Outlet, Link, useLocation, useNavigate } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
+import { App as CapacitorApp } from '@capacitor/app';
 import { useAuth } from '@/features/auth/use-auth';
-import { RequireAuth } from '@/features/auth/auth-guard';
+import { RedirectWithStatus, RequireAuth } from '@/features/auth/auth-guard';
 import { useCapability } from '@/features/auth/permissions';
 import { ADMIN_MODULES } from '@/features/platform/operations-module-registry';
 import {
@@ -17,11 +18,14 @@ import {
   MessageSquare,
   Moon,
   MonitorSmartphone,
+  PackagePlus,
   Sun,
   UserRound,
+  X,
   Wrench
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { APP_PATHS } from '@/lib/app-paths';
 import { Button } from '@/components/ui/button';
 import {
   fetchSystemNotice,
@@ -51,6 +55,8 @@ const navGroups: { label: string; items: NavItem[] }[] = [
       { title: '我的预约', to: '/me/reservations', icon: <ClipboardList className="h-4 w-4" /> },
       { title: '开始/归还', to: '/borrow', icon: <Wrench className="h-4 w-4" /> },
       { title: '故障/诉求', to: '/faults', icon: <AlertTriangle className="h-4 w-4" /> },
+      { title: '材料申请', to: APP_PATHS.materialRequests, icon: <PackagePlus className="h-4 w-4" /> },
+      { title: '个人信息', to: APP_PATHS.myProfile, icon: <UserRound className="h-4 w-4" /> },
       { title: '联系人员', to: '/support/contacts', icon: <UserRound className="h-4 w-4" /> },
       { title: '通知', to: '/notifications', icon: <Bell className="h-4 w-4" /> },
       { title: '聊天', to: '/chat', icon: <MessageSquare className="h-4 w-4" /> }
@@ -99,6 +105,8 @@ const BREADCRUMB_LABEL: Record<string, string> = {
   borrow: '借还',
   chat: '聊天',
   notifications: '通知',
+  profile: '个人信息',
+  materials: '材料申请',
   support: '支持',
   contacts: '联系人员',
   me: '我的'
@@ -127,6 +135,13 @@ function shouldStartCollapsed() {
   return document.documentElement.dataset.runtimeSurface === 'apk' || window.innerWidth < 768;
 }
 
+const NAVIGATION_HISTORY_KEY = '__rentalNavigationOpen';
+
+function usesNavigationDrawer() {
+  if (typeof window === 'undefined') return false;
+  return document.documentElement.dataset.runtimeSurface === 'apk' || window.innerWidth < 768;
+}
+
 export function AppLayout() {
   const [collapsed, setCollapsed] = useState(shouldStartCollapsed);
   const [notice, setNotice] = useState<SystemNotice | null>(null);
@@ -140,6 +155,11 @@ export function AppLayout() {
   const location = useLocation();
   const auth = useAuth();
   const capability = useCapability();
+  const navigate = useNavigate();
+  const navigationTargetRef = useRef<string | null>(null);
+  const navigationBackPendingRef = useRef(false);
+  const drawerOpenRef = useRef(false);
+  const drawerSurface = usesNavigationDrawer();
   const { data: latestNotice } = useQuery({
     queryKey: SYSTEM_NOTICE_QUERY_KEY,
     queryFn: fetchSystemNotice,
@@ -163,14 +183,92 @@ export function AppLayout() {
   const visibleAdminGroups = capability.isAdminLike ? pruneGroups(adminNavGroups) : [];
   // Administrators work from the operating console; only the communication entry remains shared to prevent duplicated device and reservation menus.
   const visibleNavGroups = capability.isAdminLike
-    ? [...visibleAdminGroups, ...navGroups.map((group) => ({ ...group, items: group.items.filter((item) => item.to === '/chat') })).filter((group) => group.items.length > 0)]
+    ? [...visibleAdminGroups, ...navGroups.map((group) => ({ ...group, items: group.items.filter((item) => item.to === '/chat' || item.to === APP_PATHS.myProfile) })).filter((group) => group.items.length > 0)]
     : navGroups;
   const roleLabel = capability.isSuperAdmin ? '系统管理员' : capability.isAdminLike ? '运营权限已启用' : '服务账号';
+  function closeNavigation() {
+    if (usesNavigationDrawer() && window.history.state?.[NAVIGATION_HISTORY_KEY]) {
+      if (!navigationBackPendingRef.current) {
+        navigationBackPendingRef.current = true;
+        window.history.back();
+      }
+      return;
+    }
+    setCollapsed(true);
+  }
+
+  function handleNavigationClick(event: MouseEvent<HTMLAnchorElement>, to: string) {
+    if (!usesNavigationDrawer()) return;
+    if (!collapsed && window.history.state?.[NAVIGATION_HISTORY_KEY]) {
+      event.preventDefault();
+      navigationTargetRef.current = to;
+      closeNavigation();
+      return;
+    }
+    setCollapsed(true);
+  }
+
+  useEffect(() => {
+    if (collapsed || !usesNavigationDrawer()) return undefined;
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.dataset.navigationOpen = 'true';
+    navigationBackPendingRef.current = false;
+    if (!window.history.state?.[NAVIGATION_HISTORY_KEY]) {
+      window.history.pushState(
+        { ...(window.history.state || {}), [NAVIGATION_HISTORY_KEY]: true },
+        '',
+        window.location.href
+      );
+    }
+    function onPopState() {
+      navigationBackPendingRef.current = false;
+      const target = navigationTargetRef.current;
+      navigationTargetRef.current = null;
+      setCollapsed(true);
+      if (target) queueMicrotask(() => navigate({ to: target as any }));
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') closeNavigation();
+    }
+    window.addEventListener('popstate', onPopState);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = previousBodyOverflow;
+      delete document.documentElement.dataset.navigationOpen;
+    };
+  }, [collapsed, navigate]);
+
+  useEffect(() => {
+    drawerOpenRef.current = !collapsed && usesNavigationDrawer();
+  }, [collapsed]);
+
+  useEffect(() => {
+    if (document.documentElement.dataset.runtimeSurface !== 'apk') return undefined;
+    let disposed = false;
+    let listener: { remove: () => Promise<void> } | undefined;
+    void CapacitorApp.addListener('backButton', ({ canGoBack }) => {
+      if (drawerOpenRef.current) {
+        closeNavigation();
+        return;
+      }
+      if (canGoBack) window.history.back();
+      else void CapacitorApp.minimizeApp();
+    }).then((handle) => {
+      if (disposed) void handle.remove();
+      else listener = handle;
+    });
+    return () => {
+      disposed = true;
+      if (listener) void listener.remove();
+    };
+  }, []);
+
   useEffect(() => {
     function onViewportResize() {
-      if (document.documentElement.dataset.runtimeSurface === 'apk' || window.innerWidth < 768) {
-        setCollapsed(true);
-      }
+      if (usesNavigationDrawer()) closeNavigation();
     }
     window.addEventListener('resize', onViewportResize);
     window.addEventListener('orientationchange', onViewportResize);
@@ -220,6 +318,9 @@ export function AppLayout() {
   }, [notice]);
 
   if (!auth.isReady || !auth.isLoggedIn) return <RequireAuth />;
+  if (auth.passwordResetRequired) {
+    return <RedirectWithStatus to={APP_PATHS.passwordResetRequired} message="密码已由管理员重置，正在前往安全改密页面…" />;
+  }
 
   return (
     <div className="ops-layout-shell relative min-h-svh w-full bg-background text-sm text-foreground">
@@ -243,11 +344,19 @@ export function AppLayout() {
         </div>
       )}
 
-      {!collapsed ? <button type="button" aria-label="关闭导航" className="fixed inset-0 z-30 bg-slate-950/20 md:hidden" onClick={() => setCollapsed(true)} /> : null}
-      <aside className={cn('ops-sidebar fixed inset-y-0 left-0 z-40 flex w-[220px] flex-col transition-transform duration-200 ease-out', collapsed ? '-translate-x-full' : 'translate-x-0')}>
-        <div className="ops-sidebar-brand flex h-[56px] items-center px-4">
+      {!collapsed && drawerSurface ? (
+        <button
+          type="button"
+          aria-label={'\u5173\u95ed\u5bfc\u822a'}
+          className="fixed inset-0 z-40 bg-slate-950/35"
+          onClick={closeNavigation}
+        />
+      ) : null}
+      <aside id="app-navigation" className={cn('ops-sidebar fixed inset-y-0 left-0 z-50 flex w-[220px] flex-col transition-transform duration-200 ease-out', collapsed ? '-translate-x-full' : 'translate-x-0')}>
+        <div className="ops-sidebar-brand flex h-[56px] items-center justify-between gap-2 px-4">
           {!collapsed ? (
-            <div className="flex min-w-0 items-center gap-2.5">
+            <>
+              <div className="flex min-w-0 items-center gap-2.5">
               <span className="ops-brand-mark relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden">
                 <span className="ops-brand-mark-glow absolute inset-x-0 top-0 h-1/2" />
                 <GalleryVerticalEnd className="relative h-4 w-4" />
@@ -257,6 +366,19 @@ export function AppLayout() {
                 <span className="ops-brand-subtitle mt-0.5 block text-[11px]">实验室管理</span>
               </div>
             </div>
+              {drawerSurface ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={'\u5173\u95ed\u5bfc\u822a'}
+                  title={'\u5173\u95ed\u5bfc\u822a'}
+                  onClick={closeNavigation}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              ) : null}
+            </>
           ) : (
             <span className="ops-brand-mark mx-auto flex h-8 w-8 items-center justify-center"><GalleryVerticalEnd className="h-4 w-4" /></span>
           )}
@@ -279,7 +401,7 @@ export function AppLayout() {
                         collapsed && 'justify-center'
                       )}
                       title={item.title}
-                      onClick={() => { if (window.innerWidth < 768) setCollapsed(true); }}
+                      onClick={(event) => handleNavigationClick(event, item.to)}
                     >
                       {item.icon}
                       {!collapsed && <span>{item.title}</span>}
@@ -310,7 +432,9 @@ export function AppLayout() {
 
       <div className={cn('ops-content-shell flex min-h-svh min-w-0 flex-1 flex-col transition-[padding] duration-200 ease-out', !collapsed && 'md:pl-[220px]')}>
         <header className="ops-topbar sticky top-0 z-30 flex h-[52px] items-center gap-3 px-4 md:px-5">
-          <Button variant="ghost" size="icon" onClick={() => setCollapsed((v) => !v)} aria-label={collapsed ? "打开导航" : "关闭导航"} title={collapsed ? "打开导航" : "关闭导航"}>
+          <Button variant="ghost" size="icon" onClick={() => { if (collapsed) setCollapsed(false); else closeNavigation(); }}
+            aria-expanded={!collapsed}
+            aria-controls="app-navigation" aria-label={collapsed ? "打开导航" : "关闭导航"} title={collapsed ? "打开导航" : "关闭导航"}>
             <ChevronLeft className={cn('h-4 w-4 transition-transform', collapsed && 'rotate-180')} />
           </Button>
           <Breadcrumb pathname={location.pathname} />
@@ -341,7 +465,5 @@ export function AppLayout() {
     </div>
   );
 }
-
-
 
 

@@ -6,6 +6,7 @@ let lastAdminFaultParams;
 const s = {
   loginUser: async () => ({ ok: true, data: { user: { id: 'u1', name: 'a' }, role: 'user', permissions: ['r.v', 'stats.view', 'stats.export', 'user.manage', 'reservation.view', 'reservation.approve', 'device.view', 'device.manage'] } }),
   getProfile: async () => ({ ok: true, data: { id: 'u1', name: 'a', role: 'user', permissions: ['r.v', 'stats.view', 'stats.export', 'user.manage', 'reservation.view', 'reservation.approve', 'device.view', 'device.manage'] } }),
+  isPasswordResetRequired: async () => false,
   getSystemNotice: async () => ({ ok: true, data: { notice: { enabled: true, title: '使用注意事项', content: '请按预约时间使用设备。', version: 'test' } } }),
   getStaffContacts: async () => ({ ok: true, data: { contacts: [{ name: '管理员', phone: '13800000000', enabled: true }] } }),
   createLoginChallenge: async () => ({ ok: true, data: { code: '12345', expire_minutes: 3 } }),

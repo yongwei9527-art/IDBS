@@ -1,4 +1,4 @@
-﻿require('dotenv').config({ quiet: true });
+require('dotenv').config({ quiet: true });
 
 const crypto = require('crypto');
 const fs = require('fs');
@@ -109,9 +109,15 @@ const server = httpServer.listen(config.port, () => {
     service.bootstrapSystem?.().catch((error) => {
       console.warn('System bootstrap skipped:', error.message || error);
     });
+    service.cleanupExpiredReturnPhotos?.().catch((error) => {
+      console.warn('Return photo retention cleanup skipped:', error.message || error);
+    });
     systemMaintenanceTimer = setInterval(() => {
       service.bootstrapSystem?.().catch((error) => {
         console.warn('System maintenance skipped:', error.message || error);
+      });
+      service.cleanupExpiredReturnPhotos?.().catch((error) => {
+        console.warn('Return photo retention cleanup skipped:', error.message || error);
       });
     }, 60 * 60 * 1000);
     systemMaintenanceTimer.unref?.();

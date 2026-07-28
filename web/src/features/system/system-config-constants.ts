@@ -21,6 +21,7 @@ export type SecurityForm = {
   captcha_expire_minutes: string;
   captcha_hourly_limit: string;
   openid_daily_register_limit: string;
+  registration_approval_code_ttl_minutes: string;
   enable_image_captcha: boolean;
   require_return_photo: boolean;
   block_ip_access_enabled: boolean;
@@ -48,6 +49,7 @@ export const emptySecurityForm: SecurityForm = {
   captcha_expire_minutes: '3',
   captcha_hourly_limit: '3',
   openid_daily_register_limit: '1',
+  registration_approval_code_ttl_minutes: '5',
   enable_image_captcha: false,
   require_return_photo: true,
   block_ip_access_enabled: false,

@@ -7,7 +7,7 @@ export interface AuthBundle {
   expires_in: number;
   role: string;
   permissions: string[];
-  user?: { id: string; name: string; [k: string]: unknown };
+  user?: { id: string; name: string; password_reset_required?: boolean; [k: string]: unknown };
 }
 
 export interface Me {
@@ -15,6 +15,7 @@ export interface Me {
   name: string;
   role: string;
   permissions?: string[];
+  password_reset_required?: boolean;
   [k: string]: unknown;
 }
 
@@ -25,6 +26,37 @@ async function loginUser(phone: string, password: string): Promise<AuthBundle> {
   });
   tokenStore.set(data.access_token);
   return data;
+}
+
+export interface RegisterPayload {
+  name: string;
+  student_no: string;
+  phone: string;
+  major: string;
+  mentor_name: string;
+  password: string;
+  approval_code?: string;
+}
+
+export interface RegisterPendingResult {
+  message: string;
+  need_review: true;
+  status: 'pending';
+}
+
+async function registerUser(payload: RegisterPayload): Promise<AuthBundle | RegisterPendingResult> {
+  const data = await request<AuthBundle | RegisterPendingResult>('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+  return storeBundleIfPresent(data);
+}
+
+async function completeRequiredPasswordReset(currentPassword: string, newPassword: string): Promise<{ message: string }> {
+  return request<{ message: string }>('/auth/password-reset/complete', {
+    method: 'POST',
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword })
+  });
 }
 
 export interface WechatChallenge {
@@ -80,17 +112,13 @@ async function bindWechatAccount(payload: { temp_code: string; name: string; stu
 }
 
 async function refreshToken(): Promise<string | null> {
-  try {
-    const data = await request<{ access_token: string }>('/auth/refresh', {
-      method: 'POST',
-      body: '{}'
-    });
-    tokenStore.set(data.access_token);
-    return data.access_token;
-  } catch {
-    tokenStore.clear();
-    return null;
-  }
+  const data = await request<{ access_token: string }>('/auth/refresh', {
+    method: 'POST',
+    body: '{}'
+  });
+  if (!data.access_token) return null;
+  tokenStore.set(data.access_token);
+  return data.access_token;
 }
 
 function logout(): void {
@@ -106,6 +134,8 @@ async function getMe(): Promise<Me> {
 
 export const authApi = {
   loginUser,
+  registerUser,
+  completeRequiredPasswordReset,
   createWechatChallenge,
   getWechatStatus,
   bindWechatAccount,

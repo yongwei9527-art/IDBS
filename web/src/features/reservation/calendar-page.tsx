@@ -223,7 +223,7 @@ export function CalendarPage() {
           {error ? <p className="rounded-xl bg-destructive/10 p-6 text-center text-sm text-destructive">加载失败：{toFriendlyError(error)}</p> : null}
 
           <div className="calendar-board overflow-x-auto">
-            <div className="min-w-[980px]">
+            <div className="calendar-grid min-w-0 w-full">
               <div className="calendar-weekhead grid grid-cols-7">
                 {WEEKDAYS.map((weekday) => <div key={weekday} className="py-2 text-center text-xs font-semibold text-muted-foreground">{weekday}</div>)}
               </div>
@@ -247,7 +247,7 @@ export function CalendarPage() {
                             <button key={eventKey(event)} type="button" onClick={() => openEvents(key, dayEvents)} className="calendar-event-chip flex w-full items-center gap-1.5 text-left" title={`${eventName(event)} · ${fullDateTimeRange(event.start_time, event.end_time)}`}>
                               <span className="h-5 w-1 shrink-0 rounded-full" style={{ backgroundColor: color }} />
                               <span className="min-w-0 flex-1 truncate text-[11px] font-semibold">{eventName(event)}</span>
-                              <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{tinyTimeRange(event.start_time, event.end_time).split('–')[0]}</span>
+                              <span className="calendar-event-time shrink-0 text-[10px] tabular-nums text-muted-foreground">{tinyTimeRange(event.start_time, event.end_time).split('–')[0]}</span>
                             </button>
                           );
                         })}

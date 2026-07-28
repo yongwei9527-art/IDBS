@@ -25,6 +25,16 @@
   padding: 36px 40px 32px;
 }
 
+.login-card--register {
+  width: min(100%, 720px);
+}
+
+.login-register-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+}
+
 .login-brand-row {
   display: flex;
   align-items: center;
@@ -173,6 +183,7 @@
   .login-shell { padding: 20px 16px; }
   .login-card { padding: 28px 20px 22px; }
   .login-title { font-size: 20px; margin-bottom: 18px; }
+  .login-register-grid { grid-template-columns: 1fr; }
 }
 
 @media (min-width: 700px) and (max-height: 720px) {
@@ -202,6 +213,10 @@ html[data-runtime-surface="apk"] .login-card {
   width: min(100%, 25rem);
   padding: clamp(1.35rem, 5vw, 2rem);
   border-radius: 1rem;
+}
+
+html[data-runtime-surface="apk"] .login-card--register {
+  width: min(100%, 44rem);
 }
 
 html[data-runtime-surface="apk"] .login-brand-row {
@@ -239,11 +254,47 @@ html[data-runtime-surface="apk"] .login-submit {
     padding: 1rem 1.35rem;
   }
 
+  html[data-runtime-surface="apk"] .login-card--register {
+    width: min(100%, 48rem);
+  }
+
   html[data-runtime-surface="apk"] .login-divider {
     margin: .75rem 0;
   }
 
   html[data-runtime-surface="apk"] .login-tip {
     margin-top: .75rem;
+  }
+}
+
+.login-server-editor {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #d9e7ff;
+  border-radius: 8px;
+  background: #f7faff;
+}
+
+.login-server-confirm {
+  width: 100%;
+  min-height: 40px;
+}
+
+.login-success {
+  margin: 0;
+  border: 1px solid #b7eb8f;
+  border-radius: 6px;
+  background: #f6ffed;
+  color: #237804;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+@media (prefers-color-scheme: dark) {
+  .login-server-editor {
+    border-color: rgb(64 128 220 / .5);
+    background: rgb(22 119 255 / .08);
   }
 }

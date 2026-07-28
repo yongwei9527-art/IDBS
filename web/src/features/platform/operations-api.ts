@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { friendlyApiMessage, request, tokenStore } from '@/lib/api';
+import { downloadAuthenticatedFile, friendlyApiMessage, request, tokenStore } from '@/lib/api';
 import { QUERY_STALE } from '@/lib/query-defaults';
 
 // ---------- Dashboard ----------
@@ -28,6 +28,15 @@ export function useAdminDashboard() {
   });
 }
 
+export interface AdminReturnPhoto {
+  id: string;
+  url: string;
+  original_name: string;
+  abnormal: boolean;
+  submitted_at: string;
+  retain_until: string;
+}
+
 export interface AdminReturnTask {
   id: string;
   device_id: string;
@@ -40,10 +49,12 @@ export interface AdminReturnTask {
   return_condition?: string | null;
   return_note?: string | null;
   return_archive_photos?: string[];
+  return_photo_metadata?: AdminReturnPhoto[];
   return_material_required?: boolean;
   return_material_deadline?: string | null;
   return_supplement_note?: string | null;
   return_supplement_photos?: string[];
+  return_supplement_photo_metadata?: AdminReturnPhoto[];
   return_supplemented_at?: string | null;
   return_material_late?: boolean;
   is_overdue?: boolean;
@@ -64,6 +75,13 @@ export function useAdminReturnTasks(enabled = true) {
   });
 }
 
+export async function downloadAbnormalReturnPhoto(recordId: string, photoId: string, filename: string) {
+  return downloadAuthenticatedFile(
+    `/admin/return-photos/${encodeURIComponent(recordId)}/${encodeURIComponent(photoId)}/download`,
+    filename
+  );
+}
+
 export function useReviewReturnTask() {
   const qc = useQueryClient();
   return useMutation({
@@ -80,6 +98,8 @@ export interface AdminUser {
   role: string;
   status: string;
   student_no?: string;
+  major?: string;
+  mentor_name?: string;
   wechat_nickname?: string | null;
   wechat_bound?: boolean;
   wechat_openid_masked?: string;
@@ -180,6 +200,30 @@ export function useDeleteUser() {
   });
 }
 
+export interface AdminPasswordResetResult {
+  message: string;
+  temporary_password: string;
+  temporary_password_expires_at: string;
+  refresh_sessions_revoked: number;
+  access_token_max_minutes: number;
+  password_reset_required: true;
+}
+
+export function useResetUserPassword() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: string }) =>
+      request<AdminPasswordResetResult>(`/admin/users/${encodeURIComponent(vars.id)}/password-reset`, {
+        method: 'POST',
+        body: '{}'
+      }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['admin-users'] });
+      qc.invalidateQueries({ queryKey: ['admin-user-detail', vars.id] });
+    }
+  });
+}
+
 // ---------- Devices ----------
 
 export interface AdminDevice {
@@ -244,6 +288,23 @@ export function useAdminDevices() {
   return useQuery({
     queryKey: ['admin-devices'],
     queryFn: () => request<{ list: AdminDevice[]; total: number }>('/admin/devices')
+  });
+}
+
+export interface RegistrationApprovalCode {
+  code: string;
+  expires_at: string;
+  refresh_seconds: number;
+}
+
+export function useRegistrationApprovalCode(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['registration-approval-code'],
+    enabled: options?.enabled ?? true,
+    queryFn: () => request<RegistrationApprovalCode>('/admin/users/registration-approval-code'),
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false
   });
 }
 
@@ -895,6 +956,7 @@ export interface SecurityConfig {
     captcha_expire_minutes?: number;
     captcha_hourly_limit?: number;
     openid_daily_register_limit?: number;
+    registration_approval_code_ttl_minutes?: number;
     enable_image_captcha?: boolean;
     require_return_photo?: boolean;
     block_ip_access_enabled?: boolean;
@@ -1040,6 +1102,48 @@ export function useAdminActivitySummary() {
   return useQuery({
     queryKey: ['admin-activity-summary'],
     queryFn: () => request<AdminActivitySummary>('/admin/system/activity-summary')
+  });
+}
+
+export interface AdminOperationsProfileRow {
+  id: string;
+  name: string;
+  student_no?: string | null;
+  phone?: string | null;
+  major?: string | null;
+  mentor_name?: string | null;
+  status: string;
+  created_at?: string;
+}
+export interface AdminOperationsOverview {
+  users: {
+    total: number;
+    status_distribution: Record<string, number>;
+    registration_trend: Array<{ date: string; count: number }>;
+    rows: AdminOperationsProfileRow[];
+    limit: number;
+    offset: number;
+    has_more: boolean;
+  };
+  device_usage: {
+    successful: number;
+    failed: number;
+    pending: number;
+    returned: number;
+    in_use: number;
+    overdue: number;
+    abnormal: number;
+  };
+}
+export function useAdminOperationsOverview(options: { limit?: number; offset?: number; enabled?: boolean } = {}) {
+  const limit = options.limit ?? 10;
+  const offset = options.offset ?? 0;
+  const enabled = options.enabled ?? true;
+  return useQuery({
+    queryKey: ['admin-operations-overview', limit, offset],
+    staleTime: QUERY_STALE.systemConfig,
+    queryFn: () => request<AdminOperationsOverview>(`/admin/system/operations-overview?limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`),
+    enabled
   });
 }
 

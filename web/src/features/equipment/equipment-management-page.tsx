@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Activity, Archive, Boxes, CheckCircle2, Edit3, ImagePlus, Search, ShieldAlert, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
 import {
+  downloadAbnormalReturnPhoto,
   useAdminDeviceDetail,
   useAdminDevices,
   useCreateAdminDevice,
@@ -175,9 +176,35 @@ function stringArrayValue(value: unknown) {
   return [];
 }
 
+interface ArchivePhotoMetadata {
+  id: string;
+  url: string;
+  original_name: string;
+  abnormal: boolean;
+  retain_until?: string;
+}
+
+function photoMetadataValue(value: unknown): ArchivePhotoMetadata[] {
+  let source: unknown = value;
+  if (typeof source === 'string') {
+    try { source = JSON.parse(source); } catch { return []; }
+  }
+  if (!Array.isArray(source)) return [];
+  return source.map((item, index) => {
+    const row = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+    return {
+      id: String(row.id || ''),
+      url: String(row.url || ''),
+      original_name: String(row.original_name || `归还照片-${index + 1}`),
+      abnormal: Boolean(row.abnormal),
+      retain_until: row.retain_until ? String(row.retain_until) : undefined
+    };
+  }).filter((item) => item.url);
+}
+
 function BorrowArchiveRows({ rows }: { rows?: Array<Record<string, unknown>> }) {
   const visibleRows = (rows ?? [])
-    .filter((row) => valueText(row.return_archive_folder, '') || stringArrayValue(row.return_archive_photos).length || stringArrayValue(row.return_photos).length)
+    .filter((row) => valueText(row.return_archive_folder, '') || photoMetadataValue(row.return_photo_metadata).length || photoMetadataValue(row.return_supplement_photo_metadata).length || stringArrayValue(row.return_archive_photos).length || stringArrayValue(row.return_photos).length)
     .slice(0, 8);
 
   if (!visibleRows.length) {
@@ -188,7 +215,9 @@ function BorrowArchiveRows({ rows }: { rows?: Array<Record<string, unknown>> }) 
     <div className="grid gap-3 md:grid-cols-2">
       {visibleRows.map((row, index) => {
         const archivePhotos = stringArrayValue(row.return_archive_photos);
-        const photos = (archivePhotos.length ? archivePhotos : stringArrayValue(row.return_photos)).slice(0, 5);
+        const metadata = [...photoMetadataValue(row.return_photo_metadata), ...photoMetadataValue(row.return_supplement_photo_metadata)].slice(0, 10);
+        const fallbackPhotos = (archivePhotos.length ? archivePhotos : stringArrayValue(row.return_photos)).slice(0, 5);
+        const photos = metadata.length ? metadata : fallbackPhotos.map((url, photoIndex) => ({ id: '', url, original_name: `归还照片-${photoIndex + 1}`, abnormal: false }));
         return (
           <article key={String(row.id ?? index)} className="rounded-xl border bg-card p-4">
             <div className="flex items-start justify-between gap-3">
@@ -207,11 +236,27 @@ function BorrowArchiveRows({ rows }: { rows?: Array<Record<string, unknown>> }) 
               {row.return_note ? <span>说明：{valueText(row.return_note)}</span> : null}
             </div>
             {photos.length ? (
-              <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 {photos.map((photo, photoIndex) => (
-                  <a key={photo + photoIndex} href={photo} target="_blank" rel="noreferrer" className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-2xl border bg-muted" title="打开归还照片">
-                    <img src={photo} alt={'归还照片 ' + (photoIndex + 1)} className="h-full w-full object-cover transition group-hover:scale-105" />
-                  </a>
+                  <figure key={`${photo.url}-${photoIndex}`} className="min-w-0 rounded-xl border bg-muted/20 p-2">
+                    <a href={photo.url} target="_blank" rel="noreferrer" className="block" title="打开归还照片">
+                      <img src={photo.url} alt={photo.original_name} className="aspect-[4/3] w-full rounded-lg bg-muted object-contain" />
+                    </a>
+                    <figcaption className="mt-2">
+                      <p className="truncate text-xs font-semibold" title={photo.original_name}>{photo.original_name}</p>
+                      <p className={photo.abnormal ? 'mt-1 text-[11px] text-destructive' : 'mt-1 text-[11px] text-emerald-700 dark:text-emerald-300'}>{photo.abnormal ? '有异常 · 保留14天' : '无异常 · 保留7天'}</p>
+                      {photo.abnormal && photo.id ? (
+                        <Button type="button" size="sm" variant="outline" className="mt-2 w-full" onClick={async () => {
+                          try {
+                            await downloadAbnormalReturnPhoto(String(row.id || ''), photo.id, photo.original_name);
+                            toast.success('异常照片已开始下载');
+                          } catch (error) {
+                            toast.error('下载失败：' + toFriendlyError(error));
+                          }
+                        }}>下载异常照片</Button>
+                      ) : null}
+                    </figcaption>
+                  </figure>
                 ))}
               </div>
             ) : (

@@ -43,7 +43,11 @@
     "deps:opt": "powershell -ExecutionPolicy Bypass -File scripts/install-opt-deps.ps1",
     "android:build": "npm --prefix web run android:debug",
     "android:sync": "npm --prefix web run android:sync",
-    "android:open": "npm --prefix web run android:open"
+    "android:open": "npm --prefix web run android:open",
+    "android:live": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/android-live.ps1",
+    "android:live:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/android-live.ps1 -Stop",
+    "android:live:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/android-live.ps1 -Status",
+    "android:layout-audit": "node scripts/android-layout-audit.js"
   },
   "dependencies": {
     "cors": "^2.8.6",
