@@ -461,7 +461,7 @@ export function AdminSystemPage() {
   }
 
   return (
-    <div className="system-config-page flex flex-col gap-6">
+    <div className="ops-page-stack system-config-page">
       <OpsPageHeader title="系统设置与授权" className="ops-page-header--compact" />
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
@@ -561,7 +561,7 @@ export function AdminSystemPage() {
                 </div>
                 <div className='mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3'>
                   {(operationsUsers?.rows ?? []).map((user) => (
-                    <article key={user.id} className='rounded-xl border bg-muted/15 p-3 shadow-sm'>
+                    <article key={user.id} className='rounded-lg border bg-muted/15 p-3 shadow-none'>
                       <div className='flex items-start justify-between gap-3'>
                         <div className='min-w-0'>
                           <div className='truncate text-sm font-semibold'>{user.name || '-'}</div>
@@ -577,8 +577,8 @@ export function AdminSystemPage() {
                       </dl>
                     </article>
                   ))}
-                  {isOperationsLoading && <div className='rounded-xl border border-dashed p-4 text-center text-sm text-muted-foreground'>正在加载注册用户资料…</div>}
-                  {!isOperationsLoading && (operationsUsers?.rows ?? []).length === 0 && <div className='rounded-xl border border-dashed p-4 text-center text-sm text-muted-foreground'>暂无注册用户资料</div>}
+                  {isOperationsLoading && <div className='rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground'>正在加载注册用户资料…</div>}
+                  {!isOperationsLoading && (operationsUsers?.rows ?? []).length === 0 && <div className='rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground'>暂无注册用户资料</div>}
                 </div>
               </div>
             </div>
@@ -662,7 +662,7 @@ export function AdminSystemPage() {
             </label>
           </div>
           {form.system_notice_enabled && form.system_notice_content.trim() ? (
-            <div className="relative mt-3 overflow-hidden rounded-xl border border-primary/20 bg-muted/25 p-3 pl-4">
+            <div className="relative mt-3 overflow-hidden rounded-lg border border-primary/20 bg-muted/25 p-3 pl-4">
               <span className="absolute inset-y-0 left-0 w-1 bg-primary" />
               <div className="flex items-center gap-2 text-xs font-semibold text-primary"><span>用户端预览</span><span className="badge-pill badge-info">置顶</span></div>
               <div className="mt-1 font-semibold text-foreground">{form.system_notice_title.trim() || '实验室使用公告'}</div>
@@ -885,7 +885,7 @@ export function AdminSystemPage() {
               <Input placeholder="备注" value={editRole.note} onChange={(e) => setEditRole((current) => ({ ...current, note: e.target.value }))} />
             </div>
             {editRole.role_key === 'super_admin' ? (
-              <div className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-200">
+              <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-200">
                 超级管理员拥有全部系统权限，不能按业务模块删减。请仅将此角色授予系统负责人。
               </div>
             ) : (
@@ -896,7 +896,7 @@ export function AdminSystemPage() {
                   const allChecked = moduleKeys.length > 0 && enabledCount === moduleKeys.length;
                   const partialChecked = enabledCount > 0 && !allChecked;
                   return (
-                    <section key={module.key} className="rounded-xl border bg-muted/20 p-3">
+                    <section key={module.key} className="rounded-lg border bg-muted/20 p-3">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <h4 className="text-sm font-bold">{module.label}</h4>

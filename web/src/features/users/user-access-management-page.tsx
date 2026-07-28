@@ -144,7 +144,7 @@ function RegistrationApprovalCodeCard() {
         <button
           type="button"
           aria-label="长按复制注册批准码"
-          className="min-h-12 min-w-48 select-none rounded-lg border bg-card px-4 py-2 text-left font-mono text-lg font-bold tracking-[0.18em] shadow-sm touch-manipulation"
+          className="min-h-12 min-w-48 select-none rounded-lg border bg-card px-4 py-2 text-left font-mono text-lg font-bold tracking-[0.18em] shadow-none touch-manipulation"
           onPointerDown={beginPress}
           onPointerUp={cancelPress}
           onPointerLeave={cancelPress}
@@ -452,7 +452,7 @@ export function AdminUsersPage() {
           {usersQuery.error && <p className="py-8 text-center text-destructive">用户加载失败：{toFriendlyError(usersQuery.error)}</p>}
           {!usersQuery.isLoading && filteredUsers.length === 0 && <OpsEmptyState title="暂无用户" />}
           <div className="hidden lg:block">
-            <div className="user-admin-table overflow-x-auto rounded-xl border">
+            <div className="user-admin-table overflow-x-auto rounded-lg border">
             <div className="user-admin-table-head hidden min-w-[720px] md:grid">
               <span>用户</span>
               <span>联系方式</span>
@@ -508,7 +508,7 @@ export function AdminUsersPage() {
               const lockedAdmin = !canOperateUser(user);
               const statusText = user.is_banned ? '???' : STATUS_LABEL[user.status] ?? user.status ?? '-';
               return (
-                <article key={user.id} className={['rounded-xl border border-border bg-card p-3 shadow-sm', selectedId === user.id ? 'ring-1 ring-primary/40' : '', lockedAdmin ? 'opacity-90' : ''].filter(Boolean).join(' ')}>
+                <article key={user.id} className={['rounded-lg border border-border bg-card p-3 shadow-none', selectedId === user.id ? 'ring-1 ring-primary/40' : '', lockedAdmin ? 'opacity-90' : ''].filter(Boolean).join(' ')}>
                   <div className="flex items-start justify-between gap-3">
                     <button type="button" className="min-w-0 text-left" onClick={() => setSelectedId(user.id)}>
                       <p className="truncate font-semibold text-foreground">{displayName(user)}</p>
@@ -547,7 +547,7 @@ export function AdminUsersPage() {
               <Button size="sm" variant="outline" disabled={isMutating} onClick={() => handleRejectUser(selectedUser)}>驳回</Button>
             ) : null}
             {canOperateUser(selectedUser) && canManageUsers && selectedUser.status !== 'disabled' ? (
-              <Button size="sm" variant="outline" disabled={isMutating} onClick={() => handleSetStatus(selectedUser, 'disabled')}>停用</Button>
+              <Button size="sm" variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive/5" disabled={isMutating} onClick={() => handleSetStatus(selectedUser, 'disabled')}>停用</Button>
             ) : null}
             {canOperateUser(selectedUser) && canManageUsers && selectedUser.status === 'disabled' ? (
               <Button size="sm" variant="outline" disabled={isMutating} onClick={() => handleSetStatus(selectedUser, 'active')}>启用账号</Button>
@@ -614,9 +614,9 @@ function SuperAdminOperationsOverview({ onOpenUser }: { onOpenUser: (id: string)
         </div>
         {query.error ? <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">运营概览加载失败：{toFriendlyError(query.error)}</p> : <>
           <section aria-label="用户统计" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            {userMetrics.map(([label, value, tone]) => <div key={label} className="rounded-xl border border-border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">{label}</p><p className={'mt-1 text-2xl font-bold tabular-nums ' + tone}>{value}</p></div>)}
+            {userMetrics.map(([label, value, tone]) => <div key={label} className="rounded-lg border border-border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">{label}</p><p className={'mt-1 text-2xl font-bold tabular-nums ' + tone}>{value}</p></div>)}
           </section>
-          <section aria-labelledby="registration-trend-heading" className="rounded-xl border border-border bg-muted/15 p-3">
+          <section aria-labelledby="registration-trend-heading" className="rounded-lg border border-border bg-muted/15 p-3">
             <div className="mb-3 flex items-baseline justify-between gap-2"><h3 id="registration-trend-heading" className="text-sm font-semibold text-foreground">近 14 天注册趋势</h3><span className="text-xs text-muted-foreground">每日新增</span></div>
             {trend.length ? <div className="grid h-24 grid-cols-[repeat(14,minmax(0,1fr))] items-end gap-1" aria-label="近十四天每日注册人数">
               {trend.slice(-14).map((point) => <div key={point.date} className="flex h-full min-w-0 flex-col justify-end gap-1 text-center" title={point.date + '：' + point.count + ' 人'}><span className="text-[10px] font-medium tabular-nums text-foreground">{point.count || ''}</span><span className="min-h-1 rounded-sm bg-primary/75" style={{ height: Math.max(4, Math.round((point.count / maxTrendCount) * 64)) + 'px' }} /><span className="truncate text-[9px] text-muted-foreground">{formatDate(point.date)}</span></div>)}
@@ -627,10 +627,10 @@ function SuperAdminOperationsOverview({ onOpenUser }: { onOpenUser: (id: string)
           </div></section>
           <section aria-labelledby="recent-users-heading">
             <div className="mb-3 flex items-baseline justify-between gap-2"><h3 id="recent-users-heading" className="text-sm font-semibold text-foreground">最近注册用户</h3><span className="text-xs text-muted-foreground">点击卡片查看用户档案</span></div>
-            {users?.rows.length ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{users.rows.map((user) => <button key={user.id} type="button" onClick={() => onOpenUser(user.id)} className="rounded-xl border border-border bg-card p-3 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            {users?.rows.length ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{users.rows.map((user) => <button key={user.id} type="button" onClick={() => onOpenUser(user.id)} className="rounded-lg border border-border bg-card p-3 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <div className="flex items-start justify-between gap-2"><span className="min-w-0 truncate font-semibold text-foreground">{user.name || user.phone || user.id}</span><span className={'badge-pill shrink-0 ' + statusTone(user.status)}>{STATUS_LABEL[user.status] ?? user.status}</span></div>
               <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs"><div className="min-w-0"><dt className="text-muted-foreground">专业</dt><dd className="truncate text-foreground">{user.major || '-'}</dd></div><div className="min-w-0"><dt className="text-muted-foreground">导师</dt><dd className="truncate text-foreground">{user.mentor_name || '-'}</dd></div><div className="min-w-0"><dt className="text-muted-foreground">学号</dt><dd className="truncate text-foreground">{user.student_no || '-'}</dd></div><div className="min-w-0"><dt className="text-muted-foreground">注册时间</dt><dd className="truncate text-foreground">{formatDate(user.created_at)}</dd></div></dl>
-            </button>)}</div> : <p className="rounded-xl border border-dashed border-border px-3 py-5 text-center text-sm text-muted-foreground">暂无最近注册用户</p>}
+            </button>)}</div> : <p className="rounded-lg border border-dashed border-border px-3 py-5 text-center text-sm text-muted-foreground">暂无最近注册用户</p>}
           </section>
         </>}
       </CardContent>
@@ -679,7 +679,7 @@ function UserRecordSection({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const visible = rows.slice(0, 12);
   return (
-    <div className="rounded-xl border bg-muted/20 p-2.5">
+    <div className="rounded-lg border bg-muted/20 p-2.5">
       <div className="mb-1.5 flex items-center justify-between">
         <span className="text-sm font-semibold">{label}</span>
         <span className="text-xs text-muted-foreground">{rows.length}</span>
@@ -732,7 +732,7 @@ function FulfillmentPanel({ fulfillment }: { fulfillment?: AdminUserDetail['fulf
   if (!fulfillment) return null;
   const restricted = fulfillment.restriction_status === 'restricted';
   return (
-    <section className="rounded-xl border bg-muted/15 p-3">
+    <section className="rounded-lg border bg-muted/15 p-3">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold">履约</h3>
         <span className={restricted ? 'badge-pill badge-warn' : 'badge-pill badge-success'}>{restricted ? '受限' : '正常'}</span>
