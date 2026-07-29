@@ -7,17 +7,16 @@
 使用或部署前，请先阅读 [免责声明](./DISCLAIMER.md)。
 
 
-## v5.0.3 Android 消息通知与权限
+## v5.0.4 Android 消息提醒体验与测试
 
-本版在 Android 安装包中加入最小化的消息提醒能力：
+本版完善 Android 安装包中的消息提醒体验，并补充实时事件隔离测试：
 
-- **网络访问**：保留 `android.permission.INTERNET`，用于 API、WebSocket 实时消息和图片上传；
-- **图片选择**：继续使用系统照片/文件选择器，用户主动选择图片后再授予单次访问权限；**不申请**全相册读取、旧存储或相机权限；
-- **消息提醒**：Android 13 及以上会在应用完成实时连接后请求 `POST_NOTIFICATIONS`；收到其他成员的实时聊天消息时显示系统本地通知，发送者本人不会收到重复提醒；
-- **隐私保护**：通知不包含聊天正文、发送者姓名、密码、Token 或 Cookie；锁屏显示采用私密级别；
-- **当前边界**：该通知依赖应用保持在线和 WebSocket 连接。若需要后台、锁屏或应用被关闭后的可靠推送，仍需配置 Firebase Cloud Messaging（FCM）及服务端设备令牌管理。
+- **由用户主动开启**：首次使用不会自动弹出系统通知授权；请在应用的“通知中心”选择“开启消息提醒”。已拒绝时页面会说明需要前往系统设置开启并支持重新检查状态；
+- **最小权限与隐私**：仅申请网络访问和 Android 13 及以上的通知权限。通知不包含聊天正文、发送者姓名、密码、Token 或 Cookie；锁屏显示采用私密级别；
+- **在线范围**：App 在线且 WebSocket 实时连接正常时，收到其他成员的新聊天消息会显示通用系统提醒；发送者本人不会收到重复提醒。后台、锁屏或应用被关闭后的可靠推送仍需 Firebase Cloud Messaging（FCM）及服务端设备令牌管理；
+- **事件测试**：新增 is_sender 服务层测试，确保通知通道只向发送者标注自身消息，聊天/SSE 的共享消息载荷不泄露该字段。
 
-Android **debug 签名内部测试包**将随 [GitHub Releases](https://github.com/yongwei9527-art/IDBS/releases) 的 v5.0.3 发布。该包适合测试安装，不应视为已配置正式 release signing key 的生产包。
+Android **debug 签名内部测试包**会随 [GitHub Releases](https://github.com/yongwei9527-art/IDBS/releases) 的 v5.0.4 发布。该包适合测试安装，不应视为已配置正式 release signing key 的生产包。
 
 ## v5.0.2 用户运营与移动端适配
 
