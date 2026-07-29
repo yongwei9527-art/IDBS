@@ -16,7 +16,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -57,7 +57,7 @@ jobs:
       CORS_ORIGIN: http://127.0.0.1:3000
       API_RATE_LIMIT_MAX: 1000
       AUTH_RATE_LIMIT_MAX: 100
-RESET_LABORATORY_MANAGEMENT_SYSTEM_SCHEMA: 1
+      RESET_LABORATORY_MANAGEMENT_SYSTEM_SCHEMA: 1
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -65,7 +65,7 @@ RESET_LABORATORY_MANAGEMENT_SYSTEM_SCHEMA: 1
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: |
             package-lock.json
