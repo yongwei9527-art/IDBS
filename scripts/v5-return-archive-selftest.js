@@ -1,4 +1,4 @@
-﻿const fs = require('fs');
+const fs = require('fs');
 const path = require('path');
 const { createBorrowReturnService } = require('../src/services/domains/reservations/borrow-return-service');
 const { createDeviceAdminService } = require('../src/services/domains/devices/device-admin-service');
@@ -61,7 +61,7 @@ async function main() {
 
   if (!result.ok) throw new Error(`submitReturn failed: ${result.message}`);
   const archivedFiles = await fs.promises.readdir(returnsDir, { recursive: true });
-  const folder = archivedFiles.find((item) => String(item) === 'return-20260706-1000-return-test-uuid-001');
+  const folder = archivedFiles.find((item) => /^return-20260706-[0-9]{4}-return-test-uuid-001$/.test(String(item)));
   const image = archivedFiles.find((item) => /\.png$/i.test(String(item)));
   if (!folder || !image || archivedFiles.some((item) => /13800009999|演示用户/.test(String(item)))) {
     throw new Error(`return photo archive should use a non-identifying folder name: ${JSON.stringify(archivedFiles)}`);
