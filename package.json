@@ -31,7 +31,7 @@
     "db:transfer-owner": "node scripts/transfer-public-owner.js",
     "v5:permission-audit": "node scripts/v5-permission-matrix-audit.js",
     "v5:click-audit": "node scripts/v5-click-audit.js",
-    "v5:quality": "npm run check && npm run unit && npm run v5:typecheck && npm run v5:build && npm run v5:selftest && npm run v5:permission-audit && npm run v5:click-audit",
+    "v5:quality": "npm run check && npm run v5:typecheck && npm run v5:build && npm run unit && npm run v5:selftest && npm run v5:permission-audit && npm run v5:click-audit",
     "e2e:isolated": "node scripts/run-isolated-e2e.js",
     "db:backup": "node scripts/backup-database.js",
     "db:backup:verify": "node scripts/backup-database.js --verify-latest",
