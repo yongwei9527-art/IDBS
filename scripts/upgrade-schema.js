@@ -606,7 +606,7 @@ const REQUIRED_STATEMENTS = [
   },
   {
     label: 'migrate legacy ops administrators to duty_admin',
-    sql: `do $
+    sql: `do $$
       begin
         if to_regclass('public.admin_roles') is not null then
           update admin_roles
@@ -626,7 +626,7 @@ const REQUIRED_STATEMENTS = [
           delete from user_roles using roles legacy where user_roles.role_id = legacy.id and legacy.role_key = 'ops';
           delete from roles where role_key = 'ops';
         end if;
-      end$`
+      end$$`
   },
   {
     label: 'seed permissions',
