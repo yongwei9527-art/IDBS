@@ -49,3 +49,11 @@ scripts/_*.js
 web/android/.gradle/
 web/android/**/build/
 web/android/local.properties
+
+# Android release signing material (local or CI only)
+web/android/keystore.properties
+web/android/*.jks
+web/android/*.keystore
+web/android/*.p12
+web/android/*.pfx
+web/android/app/google-services.json

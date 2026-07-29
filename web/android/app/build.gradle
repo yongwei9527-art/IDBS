@@ -1,3 +1,38 @@
+import java.util.Properties
+
+// Release credentials are intentionally external to the repository. CI values take precedence
+// over the ignored local keystore.properties file.
+def releaseKeystoreProperties = new Properties()
+def releaseKeystorePropertiesFile = rootProject.file('keystore.properties')
+if (releaseKeystorePropertiesFile.exists()) {
+    releaseKeystorePropertiesFile.withInputStream { stream ->
+        releaseKeystoreProperties.load(stream)
+    }
+}
+
+def releaseSigningValue = { String environmentKey, String propertyKey ->
+    def environmentValue = System.getenv(environmentKey)
+    if (environmentValue != null && !environmentValue.trim().isEmpty()) {
+        return environmentValue.trim()
+    }
+    def propertyValue = releaseKeystoreProperties.getProperty(propertyKey)
+    return propertyValue != null && !propertyValue.trim().isEmpty() ? propertyValue.trim() : null
+}
+
+def releaseSigning = [
+    storeFile: releaseSigningValue('ANDROID_RELEASE_STORE_FILE', 'RELEASE_STORE_FILE'),
+    storePassword: releaseSigningValue('ANDROID_RELEASE_STORE_PASSWORD', 'RELEASE_STORE_PASSWORD'),
+    keyAlias: releaseSigningValue('ANDROID_RELEASE_KEY_ALIAS', 'RELEASE_KEY_ALIAS'),
+    keyPassword: releaseSigningValue('ANDROID_RELEASE_KEY_PASSWORD', 'RELEASE_KEY_PASSWORD')
+]
+def missingReleaseSigningFields = releaseSigning.findAll { key, value -> value == null }.keySet()
+def releaseSigningConfigured = missingReleaseSigningFields.isEmpty()
+def releaseStoreFile = releaseSigningConfigured ? rootProject.file(releaseSigning.storeFile) : null
+
+if (releaseSigningConfigured && !releaseStoreFile.isFile()) {
+    throw new GradleException('The configured Android release keystore file cannot be found.')
+}
+
 apply plugin: 'com.android.application'
 
 android {
@@ -16,8 +51,21 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        if (releaseSigningConfigured) {
+            release {
+                storeFile releaseStoreFile
+                storePassword releaseSigning.storePassword
+                keyAlias releaseSigning.keyAlias
+                keyPassword releaseSigning.keyPassword
+            }
+        }
+    }
     buildTypes {
         release {
+            if (releaseSigningConfigured) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
@@ -51,4 +99,14 @@ try {
     }
 } catch(Exception e) {
     logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}
+
+
+gradle.taskGraph.whenReady { graph ->
+    def releaseTaskRequested = graph.allTasks.any { task -> task.name.toLowerCase().contains('release') }
+    if (releaseTaskRequested && !releaseSigningConfigured) {
+        throw new GradleException(
+            'Android release signing is not configured. Configure the ignored web/android/keystore.properties file or CI environment variables. Missing fields: ' + missingReleaseSigningFields.join(', ')
+        )
+    }
 }

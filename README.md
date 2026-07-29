@@ -1,6 +1,6 @@
 # 实验室管理系统
 
-> **Current release: 实验室管理系统 0.1.** The canonical API and realtime contract is [docs/v5-api-contract.md](./docs/v5-api-contract.md). `/v5/` and `/api/v5` are stable compatibility paths, not the product version.
+> **应用版本：实验室管理系统 0.1。当前 GitHub 发布标签：v5.0.4。** The canonical API and realtime contract is [docs/v5-api-contract.md](./docs/v5-api-contract.md). `/v5/` and `/api/v5` are stable compatibility paths, not the product version.
 
 实验室管理系统 是一套面向 Ubuntu VPS 的设备预约、借还、图片归还、微信绑定和后台管理系统。后端使用 Node.js + Express，数据库使用 PostgreSQL，前端静态页面位于 `public/`。
 
@@ -17,6 +17,17 @@
 - **事件测试**：新增 is_sender 服务层测试，确保通知通道只向发送者标注自身消息，聊天/SSE 的共享消息载荷不泄露该字段。
 
 Android **debug 签名内部测试包**会随 [GitHub Releases](https://github.com/yongwei9527-art/IDBS/releases) 的 v5.0.4 发布。该包适合测试安装，不应视为已配置正式 release signing key 的生产包。
+
+## 正式 Android release 签名与自动发布
+
+仓库现在提供无秘密的正式签名基础设施：release 构建必须使用外置签名材料，缺少任一签名字段会直接失败，绝不会回退为 debug 签名。
+
+- 本机：将 web/android/keystore.properties.example 复制为已忽略的 web/android/keystore.properties，并仅在本机填写签名材料；keystore 文件也必须保存在仓库外。
+- CI：推送新的 v* 标签时，.github/workflows/android-release.yml 会从 GitHub Secrets 临时恢复 keystore，构建签名 APK 与 AAB、生成 SHA256SUMS.txt 并创建 GitHub Release。
+- GitHub Secrets：ANDROID_RELEASE_KEYSTORE_BASE64、ANDROID_RELEASE_STORE_PASSWORD、ANDROID_RELEASE_KEY_ALIAS、ANDROID_RELEASE_KEY_PASSWORD。只在仓库或 Environment 的 Secrets 中设置，绝不写入代码、文档或聊天。
+- 只有配置上述签名材料并通过构建验证后，新的 tag 才会产出正式签名包；当前 v5.0.4 仍是 debug 签名内部测试包。
+
+后台、锁屏或应用关闭后的可靠消息推送仍需要单独的 Firebase 项目配置、设备令牌管理和服务端凭据；这些材料尚未提供，因此没有将任何 Firebase 凭据或配置文件加入仓库。
 
 ## v5.0.2 用户运营与移动端适配
 

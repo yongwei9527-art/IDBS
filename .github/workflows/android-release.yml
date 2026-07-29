@@ -1,0 +1,90 @@
+name: Android signed release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm --prefix web ci
+
+      - name: Restore release signing material
+        shell: bash
+        env:
+          ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
+          ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+        run: |
+          for required in ANDROID_RELEASE_KEYSTORE_BASE64 ANDROID_RELEASE_STORE_PASSWORD ANDROID_RELEASE_KEY_ALIAS ANDROID_RELEASE_KEY_PASSWORD; do
+            test -n "${!required}" || { echo "Required Android release signing secret is not configured: $required"; exit 1; }
+          done
+          umask 077
+          key_store="$RUNNER_TEMP/laboratory-management-system-release.jks"
+          printf '%s' "$ANDROID_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$key_store"
+          test -s "$key_store" || { echo 'Decoded Android release keystore is empty.'; exit 1; }
+          {
+            echo "ANDROID_RELEASE_STORE_FILE=$key_store"
+            echo "ANDROID_RELEASE_STORE_PASSWORD=$ANDROID_RELEASE_STORE_PASSWORD"
+            echo "ANDROID_RELEASE_KEY_ALIAS=$ANDROID_RELEASE_KEY_ALIAS"
+            echo "ANDROID_RELEASE_KEY_PASSWORD=$ANDROID_RELEASE_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+      - name: Build signed APK and AAB
+        run: |
+          npm --prefix web run build:android
+          cd web
+          npx cap sync android
+          cd android
+          ./gradlew assembleRelease bundleRelease
+
+      - name: Create checksums
+        shell: bash
+        run: |
+          cd web/android/app/build/outputs
+          sha256sum apk/release/app-release.apk bundle/release/app-release.aab > "$GITHUB_WORKSPACE/SHA256SUMS.txt"
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release-${{ github.ref_name }}
+          path: |
+            web/android/app/build/outputs/apk/release/app-release.apk
+            web/android/app/build/outputs/bundle/release/app-release.aab
+            SHA256SUMS.txt
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            web/android/app/build/outputs/apk/release/app-release.apk
+            web/android/app/build/outputs/bundle/release/app-release.aab
+            SHA256SUMS.txt
