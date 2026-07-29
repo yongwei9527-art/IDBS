@@ -5,6 +5,7 @@ import {
   downloadAbnormalReturnPhoto,
   useAdminDeviceDetail,
   useAdminDevices,
+  useBatchDeleteAdminDevices as useBulkDeleteDevices,
   useCreateAdminDevice,
   useReservationSlotOptions,
   useSetAdminDeviceAvailable,
@@ -138,9 +139,9 @@ function slotTotal(device: AdminDevice) {
 
 function DetailRows({ rows, columns }: { rows?: Array<Record<string, unknown>>; columns: Array<{ key: string; label: string; time?: boolean }> }) {
   const visibleRows = rows?.slice(0, 10) ?? [];
-  if (!visibleRows.length) return <p className="rounded-2xl border bg-muted/30 p-4 text-sm text-muted-foreground">暂无记录</p>;
+  if (!visibleRows.length) return <p className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">暂无记录</p>;
   return (
-    <div className="overflow-x-auto rounded-2xl border">
+    <div className="overflow-x-auto rounded-lg border">
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b bg-muted/40 text-left text-muted-foreground">
@@ -208,7 +209,7 @@ function BorrowArchiveRows({ rows }: { rows?: Array<Record<string, unknown>> }) 
     .slice(0, 8);
 
   if (!visibleRows.length) {
-    return <p className="rounded-2xl border bg-muted/30 p-4 text-sm text-muted-foreground">暂无归还图片档案</p>;
+    return <p className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">暂无归还图片档案</p>;
   }
 
   return (
@@ -219,7 +220,7 @@ function BorrowArchiveRows({ rows }: { rows?: Array<Record<string, unknown>> }) 
         const fallbackPhotos = (archivePhotos.length ? archivePhotos : stringArrayValue(row.return_photos)).slice(0, 5);
         const photos = metadata.length ? metadata : fallbackPhotos.map((url, photoIndex) => ({ id: '', url, original_name: `归还照片-${photoIndex + 1}`, abnormal: false }));
         return (
-          <article key={String(row.id ?? index)} className="rounded-xl border bg-card p-4">
+          <article key={String(row.id ?? index)} className="rounded-lg border bg-card p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-xs font-semibold text-primary">归还档案</p>
@@ -238,7 +239,7 @@ function BorrowArchiveRows({ rows }: { rows?: Array<Record<string, unknown>> }) 
             {photos.length ? (
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 {photos.map((photo, photoIndex) => (
-                  <figure key={`${photo.url}-${photoIndex}`} className="min-w-0 rounded-xl border bg-muted/20 p-2">
+                  <figure key={`${photo.url}-${photoIndex}`} className="min-w-0 rounded-lg border bg-muted/20 p-2">
                     <a href={photo.url} target="_blank" rel="noreferrer" className="block" title="打开归还照片">
                       <img src={photo.url} alt={photo.original_name} className="aspect-[4/3] w-full rounded-lg bg-muted object-contain" />
                     </a>
@@ -260,7 +261,7 @@ function BorrowArchiveRows({ rows }: { rows?: Array<Record<string, unknown>> }) 
                 ))}
               </div>
             ) : (
-              <p className="mt-3 rounded-2xl bg-muted/40 px-3 py-2 text-xs text-muted-foreground">该记录未上传归还图片。</p>
+              <p className="mt-3 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">该记录未上传归还图片。</p>
             )}
           </article>
         );
@@ -277,6 +278,7 @@ export function AdminDevicesPage() {
   const createDevice = useCreateAdminDevice();
   const updateDevice = useUpdateAdminDevice();
   const setAvailable = useSetAdminDeviceAvailable();
+  const bulkDeleteDevices = useBulkDeleteDevices();
   const initialParams = new URLSearchParams(window.location.search);
   const [editingId, setEditingId] = useState('');
   const [detailId, setDetailId] = useState('');
@@ -287,9 +289,11 @@ export function AdminDevicesPage() {
   const [statusFilter, setStatusFilter] = useState(initialParams.get('status') ?? '');
   const [keyword, setKeyword] = useState(initialParams.get('device_code') ?? initialParams.get('device') ?? '');
   const [uploading, setUploading] = useState(false);
+  const [selectedDeviceIds, setSelectedDeviceIds] = useState<Set<string>>(() => new Set());
   const detail = useAdminDeviceDetail(detailId);
   const list = data?.list ?? [];
   const canManage = capability.canManageDevices;
+  const canBulkDelete = capability.isSuperAdmin;
   const canViewReturnArchive = capability.canViewReturnArchive;
   const busy = createDevice.isPending || updateDevice.isPending || uploading;
 
@@ -304,6 +308,8 @@ export function AdminDevicesPage() {
   }), [keyword, list, statusFilter]);
   const totalPages = Math.max(1, Math.ceil(filteredList.length / DEVICE_PAGE_SIZE));
   const visibleList = filteredList.slice((page - 1) * DEVICE_PAGE_SIZE, page * DEVICE_PAGE_SIZE);
+  const selectedDevices = canBulkDelete ? list.filter((device) => selectedDeviceIds.has(device.id)) : [];
+  const allFilteredSelected = filteredList.length > 0 && filteredList.every((device) => selectedDeviceIds.has(device.id));
 
   const statusCounts = useMemo(() => list.reduce<Record<string, number>>((acc, device) => {
     const key = device.status || 'unknown';
@@ -332,6 +338,33 @@ export function AdminDevicesPage() {
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
+
+  useEffect(() => {
+    if (!data?.list) return;
+    const validIds = new Set(data.list.map((device) => device.id));
+    setSelectedDeviceIds((current) => {
+      const next = new Set([...current].filter((id) => validIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [data?.list]);
+
+  function toggleDeviceSelection(deviceId: string) {
+    setSelectedDeviceIds((current) => {
+      const next = new Set(current);
+      if (next.has(deviceId)) next.delete(deviceId);
+      else next.add(deviceId);
+      return next;
+    });
+  }
+
+  function toggleFilteredDevices() {
+    setSelectedDeviceIds((current) => {
+      const next = new Set(current);
+      if (allFilteredSelected) filteredList.forEach((device) => next.delete(device.id));
+      else filteredList.forEach((device) => next.add(device.id));
+      return next;
+    });
+  }
 
   function patchForm(patch: Partial<DeviceForm>) {
     setForm((prev) => ({ ...prev, ...patch }));
@@ -431,7 +464,7 @@ export function AdminDevicesPage() {
       title: '确认调整设备状态',
       description: `设备 ${device.device_code} 将设为${STATUS_LABEL[status]}，用户将不能继续新预约。`,
       confirmText: '确认调整',
-      tone: 'warning'
+      tone: status === 'disabled' ? 'danger' : 'warning'
     });
     if (!ok) return;
     updateDevice.mutate(
@@ -450,8 +483,68 @@ export function AdminDevicesPage() {
     });
   }
 
+  async function handleBulkDeleteDevices() {
+    if (!canBulkDelete || !selectedDevices.length || bulkDeleteDevices.isPending) return;
+    const targets = selectedDevices;
+    const ok = await confirm({
+      title: `批量删除 ${targets.length} 台设备`,
+      description: (
+        <div className="space-y-2">
+          <p>删除后无法恢复，请确认这些设备已无待处理预约、借用或故障记录。</p>
+          <p className="text-xs text-muted-foreground">
+            {targets.slice(0, 6).map((device) => `${device.device_code} ${device.name}`).join('、')}
+            {targets.length > 6 ? ` 等 ${targets.length} 台设备` : ''}
+          </p>
+        </div>
+      ),
+      confirmText: `确认删除 ${targets.length} 台`,
+      tone: 'danger'
+    });
+    if (!ok) return;
+
+    try {
+      const result = await bulkDeleteDevices.mutateAsync(targets.map((device) => device.id));
+      setSelectedDeviceIds((current) => {
+        const next = new Set(current);
+        result.deleted_ids.forEach((id) => next.delete(id));
+        return next;
+      });
+      if (detailId && result.deleted_ids.includes(detailId)) setDetailId('');
+      if (editingId && result.deleted_ids.includes(editingId)) {
+        setFormOpen(false);
+        resetForm();
+      }
+      if (result.deleted_ids.length) toast.success(`已删除 ${result.deleted_ids.length} 台设备`);
+      if (result.failed_ids.length) toast.error(`${result.failed_ids.length} 台设备删除失败，请检查关联记录或权限。`);
+    } catch (error) {
+      toast.error(`批量删除设备失败：${toFriendlyError(error)}`);
+    }
+  }
+
+  function renderDeviceActions(device: AdminDevice) {
+    return (
+      <div className="flex flex-wrap gap-2">
+        {canManage ? <Button size="sm" variant="outline" onClick={() => editDevice(device)}><Edit3 className="h-4 w-4" /> 编辑</Button> : null}
+        <Button size="sm" variant="outline" onClick={() => {
+          if (detailId === device.id) setDetailId('');
+          else { setDetailId(device.id); setDetailTab('overview'); }
+        }}>
+          <Activity className="h-4 w-4" /> {detailId === device.id ? '收起详情' : '查看详情'}
+        </Button>
+        {canManage && device.status === 'available' ? (
+          <>
+            <Button size="sm" variant="outline" disabled={updateDevice.isPending} onClick={() => quickStatus(device, 'maintenance')}><Wrench className="h-4 w-4" /> 维修</Button>
+            <Button size="sm" variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive/5" disabled={updateDevice.isPending} onClick={() => quickStatus(device, 'disabled')}>停用</Button>
+          </>
+        ) : canManage ? (
+          <Button size="sm" disabled={setAvailable.isPending} onClick={() => recover(device)}>恢复可预约</Button>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col gap-4">
+    <div className="ops-page-stack equipment-management-page">
       <ActionDialog />
       <OpsPageHeader title="设备台账" className="ops-page-header--compact">
         {canManage ? <Button size="sm" onClick={() => { resetForm(); setFormOpen(true); }}>新增设备</Button> : null}
@@ -498,19 +591,38 @@ export function AdminDevicesPage() {
                 }
               />
 
-              <div className="grid gap-3 xl:grid-cols-2 2xl:grid-cols-3">
+              {canBulkDelete && filteredList.length ? (
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted/25 px-3 py-2 text-sm">
+                  <label className="flex min-h-9 cursor-pointer items-center gap-2">
+                    <input type="checkbox" className="h-4 w-4 shrink-0 accent-primary" checked={allFilteredSelected} onChange={toggleFilteredDevices} />
+                    <span>{allFilteredSelected ? '取消选择当前过滤结果' : `全选当前过滤结果 (${filteredList.length})`}</span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">已选择 {selectedDevices.length} 台</span>
+                    <Button size="sm" variant="destructive" disabled={!selectedDevices.length || bulkDeleteDevices.isPending} onClick={handleBulkDeleteDevices}>
+                      {bulkDeleteDevices.isPending ? '删除中…' : `批量删除${selectedDevices.length ? ` (${selectedDevices.length})` : ''}`}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="grid gap-3 lg:hidden">
                 {visibleList.map((device) => (
                   <article
                     key={device.id}
                     className={[
-                      'rounded-2xl border p-3 transition hover:-translate-y-0.5 hover:shadow-md',
-                      detailId === device.id ? 'border-primary bg-primary/5' : 'border-input bg-card/80 hover:border-primary/40'
+                      'rounded-lg border p-3 transition hover:shadow-none',
+                      detailId === device.id ? 'border-primary bg-primary/5' : 'border-input bg-card/80 hover:border-primary/40',
+                      selectedDeviceIds.has(device.id) ? 'ring-1 ring-primary/50' : ''
                     ].join(' ')}
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-base font-bold text-foreground">{device.name}</p>
-                        <p className="mt-1 font-mono text-xs font-semibold text-primary">{device.device_code}</p>
+                      <div className="flex min-w-0 items-start gap-2">
+                        {canBulkDelete ? <input type="checkbox" className="mt-1 h-4 w-4 shrink-0 accent-primary" checked={selectedDeviceIds.has(device.id)} onChange={() => toggleDeviceSelection(device.id)} aria-label={`选择设备 ${device.device_code} ${device.name}`} /> : null}
+                        <div className="min-w-0">
+                          <p className="truncate text-base font-bold text-foreground">{device.name}</p>
+                          <p className="mt-1 font-mono text-xs font-semibold text-primary">{device.device_code}</p>
+                        </div>
                       </div>
                       <div className="flex flex-wrap justify-end gap-1.5">
                         <span className={`badge-pill badge-${STATUS_TONE[device.status] ?? 'muted'}`}>{STATUS_LABEL[device.status] ?? device.status}</span>
@@ -519,33 +631,44 @@ export function AdminDevicesPage() {
                     </div>
                     <p className="mt-2 truncate text-xs text-muted-foreground">{device.category || '未分类'} · {device.location || '未知位置'}</p>
                     <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                      <div className="rounded-xl bg-muted/40 px-3 py-2"><p className="text-muted-foreground">负责人</p><p className="mt-1 truncate font-semibold text-foreground">{device.manager || '未指定'}</p></div>
-                      <div className="rounded-xl bg-muted/40 px-3 py-2"><p className="text-muted-foreground">时段</p><p className="mt-1 truncate font-semibold text-foreground">{slotTotal(device) || '默认'}</p></div>
-                      <div className="rounded-xl bg-muted/40 px-3 py-2"><p className="text-muted-foreground">归还</p><p className="mt-1 truncate font-semibold text-foreground">{RETURN_MODE_LABEL[String(device.return_mode || 'image_required')] ?? '图片必传'}</p></div>
+                      <div className="rounded-lg bg-muted/40 px-3 py-2"><p className="text-muted-foreground">负责人</p><p className="mt-1 truncate font-semibold text-foreground">{device.manager || '未指定'}</p></div>
+                      <div className="rounded-lg bg-muted/40 px-3 py-2"><p className="text-muted-foreground">时段</p><p className="mt-1 truncate font-semibold text-foreground">{slotTotal(device) || '默认'}</p></div>
+                      <div className="rounded-lg bg-muted/40 px-3 py-2"><p className="text-muted-foreground">归还</p><p className="mt-1 truncate font-semibold text-foreground">{RETURN_MODE_LABEL[String(device.return_mode || 'image_required')] ?? '图片必传'}</p></div>
                     </div>
-                    <div className="mt-3 grid gap-1.5 rounded-xl border bg-muted/20 px-3 py-2 text-xs sm:grid-cols-2">
+                    <div className="mt-3 grid gap-1.5 rounded-lg border bg-muted/20 px-3 py-2 text-xs sm:grid-cols-2">
                       <p className="truncate text-muted-foreground">当前：<strong className="text-foreground">{device.current_borrow ? valueText(device.current_borrow.user_name) : '无人使用'}</strong></p>
                       <p className="truncate text-muted-foreground" title={device.next_reservation ? fullDateTimeRange(String(device.next_reservation.start_time || ''), String(device.next_reservation.end_time || '')) : ''}>下次：<strong className="text-foreground">{device.next_reservation ? `${tinyTimeRange(String(device.next_reservation.start_time || ''), String(device.next_reservation.end_time || ''))} · ${valueText(device.next_reservation.user_name)}` : '暂无预约'}</strong></p>
                     </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {canManage ? <Button size="sm" variant="outline" onClick={() => editDevice(device)}><Edit3 className="h-4 w-4" /> 编辑</Button> : null}
-                      <Button size="sm" variant="outline" onClick={() => {
-                        if (detailId === device.id) setDetailId('');
-                        else { setDetailId(device.id); setDetailTab('overview'); }
-                      }}>
-                        <Activity className="h-4 w-4" /> {detailId === device.id ? '收起详情' : '查看详情'}
-                      </Button>
-                      {canManage && device.status === 'available' ? (
-                        <>
-                          <Button size="sm" variant="outline" disabled={updateDevice.isPending} onClick={() => quickStatus(device, 'maintenance')}><Wrench className="h-4 w-4" /> 维修</Button>
-                          <Button size="sm" variant="destructive" disabled={updateDevice.isPending} onClick={() => quickStatus(device, 'disabled')}>停用</Button>
-                        </>
-                      ) : canManage ? (
-                        <Button size="sm" disabled={setAvailable.isPending} onClick={() => recover(device)}>恢复可预约</Button>
-                      ) : null}
-                    </div>
+                    <div className="mt-3">{renderDeviceActions(device)}</div>
                   </article>
                 ))}
+              </div>
+
+              <div className="hidden overflow-x-auto rounded-lg border lg:block">
+                <table className="w-full min-w-[900px] text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/40 text-left text-muted-foreground">
+                      {canBulkDelete ? <th className="w-12 px-3 py-2"><input type="checkbox" className="h-4 w-4 accent-primary" checked={allFilteredSelected} onChange={toggleFilteredDevices} aria-label="全选当前过滤设备" /></th> : null}
+                      <th className="px-3 py-2 font-medium">设备</th>
+                      <th className="px-3 py-2 font-medium">状态</th>
+                      <th className="px-3 py-2 font-medium">分类 / 位置</th>
+                      <th className="px-3 py-2 font-medium">当前 / 下次</th>
+                      <th className="px-3 py-2 font-medium">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleList.map((device) => (
+                      <tr key={device.id} className={`border-b last:border-0 ${selectedDeviceIds.has(device.id) ? 'bg-primary/[0.04]' : ''}`}>
+                        {canBulkDelete ? <td className="px-3 py-3 align-top"><input type="checkbox" className="h-4 w-4 accent-primary" checked={selectedDeviceIds.has(device.id)} onChange={() => toggleDeviceSelection(device.id)} aria-label={`选择设备 ${device.device_code} ${device.name}`} /></td> : null}
+                        <td className="px-3 py-3 align-top"><p className="font-semibold text-foreground">{device.name}</p><p className="mt-1 font-mono text-xs text-primary">{device.device_code}</p></td>
+                        <td className="px-3 py-3 align-top"><span className={`badge-pill badge-${STATUS_TONE[device.status] ?? 'muted'}`}>{STATUS_LABEL[device.status] ?? device.status}</span></td>
+                        <td className="px-3 py-3 align-top"><p>{device.category || '未分类'}</p><p className="mt-1 text-xs text-muted-foreground">{device.location || '未知位置'}</p></td>
+                        <td className="px-3 py-3 align-top text-xs"><p>当前：{device.current_borrow ? valueText(device.current_borrow.user_name) : '无人使用'}</p><p className="mt-1 text-muted-foreground">下次：{device.next_reservation ? `${tinyTimeRange(String(device.next_reservation.start_time || ''), String(device.next_reservation.end_time || ''))} · ${valueText(device.next_reservation.user_name)}` : '暂无预约'}</p></td>
+                        <td className="px-3 py-3 align-top">{renderDeviceActions(device)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
               {filteredList.length > DEVICE_PAGE_SIZE ? (
                 <div className="mt-4 flex items-center justify-end gap-2 border-t pt-4">
@@ -656,7 +779,7 @@ export function AdminDevicesPage() {
                   </label>
                 </div>
 
-                <details className="equipment-optional-section rounded-xl border">
+                <details className="equipment-optional-section rounded-lg border">
                   <summary className="cursor-pointer px-3 py-2.5 text-sm font-semibold">说明、须知与封面 <span>选填</span></summary>
                   <div className="grid gap-3 border-t p-3">
                     <label className="grid gap-1 text-sm">
@@ -674,7 +797,7 @@ export function AdminDevicesPage() {
                         <ImagePlus className="h-4 w-4" /> 上传封面
                         <input disabled={!canManage} className="sr-only" type="file" accept="image/*" onChange={(e) => handleUpload(e.target.files?.[0])} />
                       </span>
-                      {form.cover_photo ? <img src={form.cover_photo} alt="设备封面预览" className="h-28 w-full rounded-xl object-cover" /> : null}
+                      {form.cover_photo ? <img src={form.cover_photo} alt="设备封面预览" className="h-28 w-full rounded-lg object-cover" /> : null}
                     </label>
                   </div>
                 </details>

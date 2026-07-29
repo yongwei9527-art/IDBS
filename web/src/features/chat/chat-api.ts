@@ -59,6 +59,23 @@ export interface ChatAttachment {
   size?: number;
 }
 
+export interface ChatAnnouncement {
+  id: string;
+  conversation_id: string;
+  sender_id?: string;
+  title: string;
+  content: string;
+  publisher_name?: string;
+  created_at: string;
+}
+
+export interface ChatAnnouncementHistory {
+  conversation_id: string;
+  latest: ChatAnnouncement | null;
+  announcements: ChatAnnouncement[];
+  can_edit: boolean;
+}
+
 export interface ChatThread {
   conversation?: ChatConversation;
   messages: ChatMessage[];
@@ -150,6 +167,31 @@ export function useChatMessages(conversationId: string) {
     ...thread,
     data: thread.data?.messages ?? []
   };
+}
+
+export function useChatAnnouncements(conversationId: string, enabled = true) {
+  return useQuery({
+    staleTime: 10_000,
+    queryKey: ['chat-announcements', conversationId],
+    queryFn: () => request<ChatAnnouncementHistory>(`/chat/conversations/${conversationId}/announcements`),
+    enabled: enabled && !!conversationId
+  });
+}
+
+export function usePublishChatAnnouncement(conversationId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { title: string; content: string }) =>
+      request<{ announcement: ChatAnnouncement }>(`/chat/conversations/${conversationId}/announcements`, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['chat-announcements', conversationId] });
+      qc.invalidateQueries({ queryKey: ['chat-messages', conversationId] });
+      qc.invalidateQueries({ queryKey: ['chat-conversations'] });
+    }
+  });
 }
 
 export function useSendChatMessage(conversationId: string) {

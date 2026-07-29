@@ -27,6 +27,8 @@ function loadConfig(env = process.env) {
     wechatAppId: env.WECHAT_APP_ID || '',
     wechatAppSecret: env.WECHAT_APP_SECRET || '',
     wechatAdminOpenids: env.WECHAT_ADMIN_OPENIDS || '',
+    // JSON service-account secret for Firebase Cloud Messaging HTTP v1. Never log or commit it.
+    fcmServiceAccountJson: env.FCM_SERVICE_ACCOUNT_JSON || '',
     uploadDir: resolveUploadDir(env.UPLOAD_DIR, rootDir),
     databaseUrl: env.DATABASE_URL || '',
     pgssl: parseBoolean(env.PGSSL),

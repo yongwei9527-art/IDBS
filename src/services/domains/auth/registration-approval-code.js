@@ -1,7 +1,8 @@
 function createRegistrationApprovalCodeService({
   crypto,
   secret,
-  windowMs = 5 * 60_000
+  windowMs = 60_000,
+  generation = 0
 }) {
   function slotAt(now = Date.now()) {
     return Math.floor(Number(now) / windowMs);
@@ -10,7 +11,7 @@ function createRegistrationApprovalCodeService({
   function codeForSlot(slot) {
     const digest = crypto
       .createHmac('sha256', secret)
-      .update(`registration-approval:${slot}`)
+      .update(`registration-approval:${generation}:${slot}`)
       .digest();
     const alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
     const chars = [
@@ -29,7 +30,9 @@ function createRegistrationApprovalCodeService({
       code: codeForSlot(slot),
       expires_at: new Date((slot + 1) * windowMs).toISOString(),
       server_time: new Date(now).toISOString(),
-      refresh_seconds: windowMs / 1000
+      refresh_seconds: windowMs / 1000,
+      ttl_minutes: windowMs / 60_000,
+      generation
     };
   }
 

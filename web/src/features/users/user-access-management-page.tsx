@@ -13,10 +13,14 @@ import {
   useAdminUserDetail,
   useAdminUsers,
   useAdminOperationsOverview,
+  useBatchDeleteUsers,
   useDeleteUser,
   useRevokeRole,
   useResetUserPassword,
   useRegistrationApprovalCode,
+  useRefreshRegistrationApprovalCode,
+  useUpdateRegistrationApprovalCodeTtl,
+  registrationApprovalCodeRemainingMs,
   useSetUserBan,
   useSetUserStatus,
   useUnbindUserWechat,
@@ -59,16 +63,29 @@ const FILTERS = [
 
 function RegistrationApprovalCodeCard() {
   const query = useRegistrationApprovalCode();
-  const [now, setNow] = useState(Date.now());
+  const refreshCode = useRefreshRegistrationApprovalCode();
+  const updateTtl = useUpdateRegistrationApprovalCodeTtl();
+  const [, setClockTick] = useState(0);
+  const [ttlMinutes, setTtlMinutes] = useState('1');
   const [revealed, setRevealed] = useState(false);
   const pressTimer = useRef<number | null>(null);
   const revealTimer = useRef<number | null>(null);
   const didLongPress = useRef(false);
-  const expiresAt = new Date(query.data?.expires_at || 0).getTime();
-  const remainingSeconds = Math.max(0, Math.ceil((expiresAt - now) / 1000));
+  const remainingSeconds = Math.ceil(registrationApprovalCodeRemainingMs(query.data) / 1000);
+  const parsedTtlMinutes = Number(ttlMinutes);
+  const isTtlValid = Number.isInteger(parsedTtlMinutes) && parsedTtlMinutes >= 1 && parsedTtlMinutes <= 1440;
+  const isTtlUnchanged = parsedTtlMinutes === query.data?.ttl_minutes;
+  const isMutating = refreshCode.isPending || updateTtl.isPending;
 
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    if (query.data?.ttl_minutes) {
+      setTtlMinutes(String(query.data.ttl_minutes));
+      setClockTick((current) => current + 1);
+    }
+  }, [query.data?.ttl_minutes]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClockTick((current) => current + 1), 1000);
     return () => {
       window.clearInterval(timer);
       if (pressTimer.current !== null) window.clearTimeout(pressTimer.current);
@@ -120,6 +137,32 @@ function RegistrationApprovalCodeCard() {
     }, 650);
   }
 
+  async function handleManualRefresh() {
+    try {
+      await refreshCode.mutateAsync();
+      setClockTick((current) => current + 1);
+      setRevealed(false);
+      toast.success('批准码已手动刷新，旧批准码立即失效。');
+    } catch (error) {
+      toast.error(toFriendlyError(error, '批准码刷新失败'));
+    }
+  }
+
+  async function handleSaveTtl() {
+    if (!isTtlValid) {
+      toast.error('有效期必须是 1 到 1440 之间的整数分钟。');
+      return;
+    }
+    try {
+      await updateTtl.mutateAsync(parsedTtlMinutes);
+      setClockTick((current) => current + 1);
+      setRevealed(false);
+      toast.success(`批准码有效期已设为 ${parsedTtlMinutes} 分钟，并已生成新批准码。`);
+    } catch (error) {
+      toast.error(toFriendlyError(error, '有效期保存失败'));
+    }
+  }
+
   function handleCodeClick() {
     if (didLongPress.current) {
       didLongPress.current = false;
@@ -136,29 +179,81 @@ function RegistrationApprovalCodeCard() {
 
   return (
     <Card className="border-primary/25 bg-primary/[0.035]">
-      <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-sm font-semibold">普通用户注册批准码</p>
-          <p className="mt-1 text-xs text-muted-foreground">仅有用户审批权限的管理员可见。注册人填写有效批准码后立即通过普通用户审批。</p>
+      <CardContent className="space-y-4 p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold">普通用户注册批准码</p>
+            <p className="mt-1 text-xs text-muted-foreground">仅有用户审批权限的管理员可见。注册人填写有效批准码后立即通过普通用户审批。</p>
+          </div>
+          <button
+            type="button"
+            aria-label="长按复制注册批准码"
+            className="min-h-12 min-w-48 select-none rounded-lg border bg-card px-4 py-2 text-left font-mono text-lg font-bold tracking-[0.18em] shadow-none touch-manipulation disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={!query.data?.code || query.isLoading}
+            onPointerDown={beginPress}
+            onPointerUp={cancelPress}
+            onPointerLeave={cancelPress}
+            onPointerCancel={cancelPress}
+            onContextMenu={(event) => event.preventDefault()}
+            onClick={handleCodeClick}
+          >
+            <span className="block [overflow-wrap:anywhere]" data-sensitive-approval-code>
+              {query.isLoading ? '读取中…' : query.data?.code ? (revealed ? query.data.code : '•••• •••• ••••') : '暂不可用'}
+            </span>
+            <span className="mt-1 block font-sans text-[11px] font-normal tracking-normal text-muted-foreground">
+              {query.data
+                ? remainingSeconds > 0
+                  ? `${remainingSeconds} 秒后更新 · 点击显示 10 秒 · 长按复制`
+                  : '正在自动更新批准码…'
+                : '请稍后重试'}
+            </span>
+          </button>
         </div>
-        <button
-          type="button"
-          aria-label="长按复制注册批准码"
-          className="min-h-12 min-w-48 select-none rounded-lg border bg-card px-4 py-2 text-left font-mono text-lg font-bold tracking-[0.18em] shadow-none touch-manipulation"
-          onPointerDown={beginPress}
-          onPointerUp={cancelPress}
-          onPointerLeave={cancelPress}
-          onPointerCancel={cancelPress}
-          onContextMenu={(event) => event.preventDefault()}
-          onClick={handleCodeClick}
-        >
-          <span className="block [overflow-wrap:anywhere]" data-sensitive-approval-code>
-            {query.isLoading ? '读取中…' : query.data?.code ? (revealed ? query.data.code : '•••• •••• ••••') : '暂不可用'}
-          </span>
-          <span className="mt-1 block font-sans text-[11px] font-normal tracking-normal text-muted-foreground">
-            {query.data ? `${remainingSeconds} 秒后更新 · 点击显示 10 秒 · 长按复制` : '请稍后重试'}
-          </span>
-        </button>
+
+        <div className="flex flex-col gap-3 border-t pt-3 sm:flex-row sm:items-end">
+          <label className="flex-1 space-y-1.5">
+            <span className="text-xs font-medium">批准码有效期（分钟）</span>
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={1440}
+              step={1}
+              value={ttlMinutes}
+              disabled={isMutating || query.isLoading}
+              aria-invalid={!isTtlValid}
+              onChange={(event) => setTtlMinutes(event.target.value)}
+            />
+            <span className={`block text-[11px] ${isTtlValid ? 'text-muted-foreground' : 'text-destructive'}`}>
+              {isTtlValid ? '可设置 1—1440 分钟；到期后系统自动生成新批准码。' : '请输入 1—1440 之间的整数分钟。'}
+            </span>
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              disabled={!query.data || !isTtlValid || isTtlUnchanged || isMutating}
+              onClick={() => void handleSaveTtl()}
+            >
+              {updateTtl.isPending ? '保存中…' : '保存时限'}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={isMutating || query.isLoading}
+              onClick={() => void handleManualRefresh()}
+            >
+              {refreshCode.isPending ? '刷新中…' : '手动刷新'}
+            </Button>
+          </div>
+        </div>
+
+        {query.error ? (
+          <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+            批准码读取失败：{toFriendlyError(query.error)}
+          </p>
+        ) : null}
       </CardContent>
     </Card>
   );
@@ -171,6 +266,8 @@ export function AdminUsersPage() {
   const [keyword, setKeyword] = useState('');
   const [statusFilter, setStatusFilter] = useState(initialStatus);
   const [selectedId, setSelectedId] = useState<string>();
+  const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(() => new Set());
+  const [batchDeleting, setBatchDeleting] = useState(false);
   const usersQuery = useAdminUsers();
   const rolesQuery = useAdminRoles({ enabled: capability.isSuperAdmin });
   const detailQuery = useAdminUserDetail(selectedId);
@@ -178,6 +275,7 @@ export function AdminUsersPage() {
   const setBan = useSetUserBan();
   const unbindWechat = useUnbindUserWechat();
   const deleteUser = useDeleteUser();
+  const batchDeleteUsers = useBatchDeleteUsers();
   const upsertRole = useUpsertRole();
   const revokeRole = useRevokeRole();
   const resetPassword = useResetUserPassword();
@@ -210,7 +308,7 @@ export function AdminUsersPage() {
   }, [users]);
 
   const selectedUser = detailQuery.data?.user ?? users.find((user) => user.id === selectedId);
-  const isMutating = setStatus.isPending || setBan.isPending || unbindWechat.isPending || deleteUser.isPending || upsertRole.isPending || revokeRole.isPending || resetPassword.isPending;
+  const isMutating = setStatus.isPending || setBan.isPending || unbindWechat.isPending || deleteUser.isPending || batchDeleteUsers.isPending || upsertRole.isPending || revokeRole.isPending || resetPassword.isPending;
   const canApproveUsers = capability.canAny([PERMISSIONS.USER_APPROVE, PERMISSIONS.USER_MANAGE]);
   const canViewRegistrationApprovalCode = capability.isSuperAdmin || capability.can(PERMISSIONS.USER_APPROVE);
   const canManageUsers = capability.can(PERMISSIONS.USER_MANAGE);
@@ -228,7 +326,44 @@ export function AdminUsersPage() {
     canManageRoles
     && user.role === 'admin'
   );
+  const deletableFilteredUsers = capability.isSuperAdmin
+    ? filteredUsers.filter((user) => canDeleteUser(user))
+    : [];
+  const selectedDeletableUsers = capability.isSuperAdmin
+    ? users.filter((user) => selectedUserIds.has(user.id) && canDeleteUser(user))
+    : [];
+  const allFilteredUsersSelected = deletableFilteredUsers.length > 0
+    && deletableFilteredUsers.every((user) => selectedUserIds.has(user.id));
 
+  useEffect(() => {
+    if (!usersQuery.data) return;
+    const validIds = new Set(usersQuery.data.filter((user) => user.role !== 'super_admin').map((user) => user.id));
+    setSelectedUserIds((current) => {
+      const next = new Set([...current].filter((id) => validIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [usersQuery.data]);
+
+  function toggleUserSelection(userId: string) {
+    setSelectedUserIds((current) => {
+      const next = new Set(current);
+      if (next.has(userId)) next.delete(userId);
+      else next.add(userId);
+      return next;
+    });
+  }
+
+  function toggleFilteredUsers() {
+    setSelectedUserIds((current) => {
+      const next = new Set(current);
+      if (allFilteredUsersSelected) {
+        deletableFilteredUsers.forEach((user) => next.delete(user.id));
+      } else {
+        deletableFilteredUsers.forEach((user) => next.add(user.id));
+      }
+      return next;
+    });
+  }
 
   function handleSetStatus(user: AdminUser, status: string) {
     setStatus.mutate(
@@ -349,6 +484,45 @@ export function AdminUsersPage() {
     });
   }
 
+  async function handleBatchDeleteUsers() {
+    if (!capability.isSuperAdmin || !selectedDeletableUsers.length || batchDeleting) return;
+    const targets = selectedDeletableUsers;
+    const ok = await confirm({
+      title: `批量删除 ${targets.length} 位用户`,
+      description: (
+        <div className="space-y-2">
+          <p>删除后无法恢复。超级管理员账号已自动排除，不会被删除。</p>
+          <p className="text-xs text-muted-foreground">
+            {targets.slice(0, 6).map(displayName).join('、')}
+            {targets.length > 6 ? ` 等 ${targets.length} 位用户` : ''}
+          </p>
+        </div>
+      ),
+      confirmText: `确认删除 ${targets.length} 位`,
+      tone: 'danger'
+    });
+    if (!ok) return;
+
+    setBatchDeleting(true);
+    try {
+      const result = await batchDeleteUsers.mutateAsync(targets.map((user) => user.id));
+      const deletedIds = result.deleted_ids;
+      const failedNames = targets.filter((user) => result.failed_ids.includes(user.id)).map(displayName);
+      setSelectedUserIds((current) => {
+        const next = new Set(current);
+        deletedIds.forEach((id) => next.delete(id));
+        return next;
+      });
+      if (selectedId && deletedIds.includes(selectedId)) setSelectedId(undefined);
+      if (deletedIds.length) toast.success(`已删除 ${deletedIds.length} 位用户`);
+      if (failedNames.length) toast.error(`${failedNames.length} 位用户删除失败：${failedNames.slice(0, 3).join('、')}${failedNames.length > 3 ? ' 等' : ''}`);
+    } catch (error) {
+      toast.error(`批量删除用户失败：${toFriendlyError(error)}`);
+    } finally {
+      setBatchDeleting(false);
+    }
+  }
+
   async function handleGrantAdmin(user: AdminUser) {
     if (!canGrantAdmin(user)) {
       toast.error('仅可对正常状态的普通用户授予管理员权限。');
@@ -438,16 +612,42 @@ export function AdminUsersPage() {
               </div>
             }
             actions={
-              <Input
-                value={keyword}
-                onChange={(event) => setKeyword(event.target.value)}
-                placeholder="姓名 / 手机 / 学号"
-                clearable
-                onClear={() => setKeyword('')}
-                className="w-full sm:w-80"
-              />
+              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+                <Input
+                  value={keyword}
+                  onChange={(event) => setKeyword(event.target.value)}
+                  placeholder="姓名 / 手机 / 学号"
+                  clearable
+                  onClear={() => setKeyword('')}
+                  className="w-full sm:w-80"
+                />
+                {capability.isSuperAdmin ? (
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={!selectedDeletableUsers.length || batchDeleting}
+                    onClick={handleBatchDeleteUsers}
+                  >
+                    {batchDeleting ? '删除中…' : `批量删除${selectedDeletableUsers.length ? ` (${selectedDeletableUsers.length})` : ''}`}
+                  </Button>
+                ) : null}
+              </div>
             }
           />
+          {capability.isSuperAdmin && deletableFilteredUsers.length ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted/25 px-3 py-2 text-sm">
+              <label className="flex min-h-9 cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 shrink-0 accent-primary"
+                  checked={allFilteredUsersSelected}
+                  onChange={toggleFilteredUsers}
+                />
+                <span>{allFilteredUsersSelected ? '取消选择当前结果' : `选择当前结果 (${deletableFilteredUsers.length})`}</span>
+              </label>
+              <span className="text-xs text-muted-foreground">已选择 {selectedDeletableUsers.length} 位 · 超级管理员不可删除</span>
+            </div>
+          ) : null}
           {usersQuery.isLoading && <p className="py-8 text-center text-muted-foreground">加载中…</p>}
           {usersQuery.error && <p className="py-8 text-center text-destructive">用户加载失败：{toFriendlyError(usersQuery.error)}</p>}
           {!usersQuery.isLoading && filteredUsers.length === 0 && <OpsEmptyState title="暂无用户" />}
@@ -470,10 +670,21 @@ export function AdminUsersPage() {
                   key={user.id}
                   className={['user-admin-row', selectedId === user.id ? 'user-admin-row--active' : '', lockedAdmin ? 'user-admin-row--locked' : ''].filter(Boolean).join(' ')}
                 >
-                  <button type="button" className="user-admin-cell user-admin-cell--name text-left" onClick={() => setSelectedId(user.id)}>
-                    <span className="user-admin-name">{displayName(user)}</span>
-                    <span className="user-admin-sub md:hidden">{user.phone || '-'} · {ROLE_LABEL[user.role] ?? user.role ?? '-'}</span>
-                  </button>
+                  <div className="user-admin-cell user-admin-cell--name flex min-w-0 items-center gap-2 text-left">
+                    {canDeleteUser(user) ? (
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 shrink-0 accent-primary"
+                        checked={selectedUserIds.has(user.id)}
+                        onChange={() => toggleUserSelection(user.id)}
+                        aria-label={`选择用户 ${displayName(user)}`}
+                      />
+                    ) : null}
+                    <button type="button" className="min-w-0 text-left" onClick={() => setSelectedId(user.id)}>
+                      <span className="user-admin-name">{displayName(user)}</span>
+                      <span className="user-admin-sub md:hidden">{user.phone || '-'} · {ROLE_LABEL[user.role] ?? user.role ?? '-'}</span>
+                    </button>
+                  </div>
                   <div className="user-admin-cell">
                     <span className="user-admin-main">{user.phone || '-'}</span>
                     <span className="user-admin-sub">{user.student_no || '-'}</span>
@@ -506,25 +717,28 @@ export function AdminUsersPage() {
           <div className="space-y-3 lg:hidden">
             {filteredUsers.map((user) => {
               const lockedAdmin = !canOperateUser(user);
-              const statusText = user.is_banned ? '???' : STATUS_LABEL[user.status] ?? user.status ?? '-';
+              const statusText = user.is_banned ? '已封禁' : STATUS_LABEL[user.status] ?? user.status ?? '-';
               return (
-                <article key={user.id} className={['rounded-lg border border-border bg-card p-3 shadow-none', selectedId === user.id ? 'ring-1 ring-primary/40' : '', lockedAdmin ? 'opacity-90' : ''].filter(Boolean).join(' ')}>
+                <article key={user.id} className={['rounded-lg border border-border bg-card p-3 shadow-none', selectedId === user.id ? 'ring-1 ring-primary/40' : '', selectedUserIds.has(user.id) ? 'border-primary/60 bg-primary/[0.03]' : '', lockedAdmin ? 'opacity-90' : ''].filter(Boolean).join(' ')}>
                   <div className="flex items-start justify-between gap-3">
-                    <button type="button" className="min-w-0 text-left" onClick={() => setSelectedId(user.id)}>
-                      <p className="truncate font-semibold text-foreground">{displayName(user)}</p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">{ROLE_LABEL[user.role] ?? user.role ?? '-'}</p>
-                    </button>
+                    <div className="flex min-w-0 items-start gap-2">
+                      {canDeleteUser(user) ? <input type="checkbox" className="mt-1 h-4 w-4 shrink-0 accent-primary" checked={selectedUserIds.has(user.id)} onChange={() => toggleUserSelection(user.id)} aria-label={`选择用户 ${displayName(user)}`} /> : null}
+                      <button type="button" className="min-w-0 text-left" onClick={() => setSelectedId(user.id)}>
+                        <p className="truncate font-semibold text-foreground">{displayName(user)}</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">{ROLE_LABEL[user.role] ?? user.role ?? '-'}</p>
+                      </button>
+                    </div>
                     <span className={'badge-pill shrink-0 ' + (user.is_banned ? 'badge-danger' : statusTone(user.status))}>{statusText}</span>
                   </div>
                   <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
-                    <div className="min-w-0"><dt className="text-muted-foreground">???</dt><dd className="truncate text-foreground">{user.phone || '-'}</dd></div>
-                    <div className="min-w-0"><dt className="text-muted-foreground">??</dt><dd className="truncate text-foreground">{user.student_no || '-'}</dd></div>
-                    <div className="min-w-0"><dt className="text-muted-foreground">??</dt><dd className="truncate text-foreground">{user.wechat_bound ? '???' : '???'}</dd></div>
-                    <div className="min-w-0"><dt className="text-muted-foreground">????</dt><dd className="truncate text-foreground">{formatDate(user.created_at)}</dd></div>
+                    <div className="min-w-0"><dt className="text-muted-foreground">手机</dt><dd className="truncate text-foreground">{user.phone || '-'}</dd></div>
+                    <div className="min-w-0"><dt className="text-muted-foreground">学号</dt><dd className="truncate text-foreground">{user.student_no || '-'}</dd></div>
+                    <div className="min-w-0"><dt className="text-muted-foreground">微信</dt><dd className="truncate text-foreground">{user.wechat_bound ? '已绑定' : '未绑定'}</dd></div>
+                    <div className="min-w-0"><dt className="text-muted-foreground">注册时间</dt><dd className="truncate text-foreground">{formatDate(user.created_at)}</dd></div>
                   </dl>
                   <div className="mt-3 flex flex-wrap justify-end gap-2 border-t border-border pt-3">
-                    <Button size="sm" variant="outline" onClick={() => setSelectedId(user.id)}>????</Button>
-                    {canApproveUsers && (user.status === 'pending' || user.status === 'rejected') && canOperateUser(user) ? <Button size="sm" disabled={isMutating} onClick={() => handleSetStatus(user, 'active')}>??</Button> : null}
+                    <Button size="sm" variant="outline" onClick={() => setSelectedId(user.id)}>查看档案</Button>
+                    {canApproveUsers && (user.status === 'pending' || user.status === 'rejected') && canOperateUser(user) ? <Button size="sm" disabled={isMutating} onClick={() => handleSetStatus(user, 'active')}>通过</Button> : null}
                   </div>
                 </article>
               );

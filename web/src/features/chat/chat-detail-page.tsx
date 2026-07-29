@@ -1,25 +1,27 @@
 ﻿import { useMemo, useState, useRef, useEffect, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocation, useNavigate } from '@tanstack/react-router';
-import { ArrowLeft, ImagePlus, Info, Link2, LogOut, MessageSquare, SendHorizonal, Trash2, UserMinus, UserPlus, Users, X } from 'lucide-react';
+import { ArrowLeft, ImagePlus, Info, Link2, LogOut, Megaphone, MessageSquare, SendHorizonal, Trash2, UserMinus, UserPlus, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { useActionDialog } from '@/components/ui/action-dialog';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent } from '@/components/ui/card';
 import { useAuth } from '@/features/auth/use-auth';
 import { uploadImage } from '@/lib/api';
 import { useWs } from '@/lib/ws';
 import {
   useAddChatParticipants,
+  useChatAnnouncements,
   useChatThread,
   useChatUsers,
   useDissolveChatConversation,
   useLeaveChatConversation,
   useMarkChatRead,
+  usePublishChatAnnouncement,
   useRemoveChatParticipant,
   useSendChatMessage,
   type ChatConversation,
+  type ChatAnnouncementHistory,
   type ChatMessage,
   type ChatUser
 } from './chat-api';
@@ -35,7 +37,7 @@ function contextIdPrefix(type?: string) {
 function chatRoleLabel(role?: string | null) {
   const labels: Record<string, string> = { owner: '群主', admin: '管理员', member: '成员', super_admin: '最高权限管理员', user: '用户' };
   if (!role) return '成员';
-  return labels[role] || (/[^\x00-\x7F]/.test(role) ? role : '成员');
+  return labels[role] || (Array.from(role).some((character) => character.charCodeAt(0) > 0x7f) ? role : '成员');
 }
 
 function MessageBubble({ msg, isMine }: { msg: ChatMessage; isMine: boolean }) {
@@ -53,6 +55,22 @@ function MessageBubble({ msg, isMine }: { msg: ChatMessage; isMine: boolean }) {
     metadata.request_id ? `需求 ${formatCompactId(String(metadata.request_id), 8, 4, 'REQ')}` : '',
     msg.related_id && ![metadata.device_code, metadata.reservation_id, metadata.batch_id, metadata.fault_id, metadata.request_id].includes(msg.related_id) ? formatCompactId(String(msg.related_id), 8, 4, 'REF') : ''
   ].filter(Boolean).map(String);
+  if (msg.message_type === 'announcement') {
+    return (
+      <div className="flex justify-center py-2">
+        <div className="w-full max-w-xl rounded-xl border border-primary/20 bg-primary/[0.035] p-3 text-sm">
+          <p className="flex items-center gap-2 font-semibold text-primary">
+            <Megaphone className="h-4 w-4" />
+            {String(metadata.title || '实验室总群公告')}
+          </p>
+          <p className="mt-2 whitespace-pre-wrap break-words leading-6 text-foreground">{msg.content}</p>
+          <p className="mt-2 text-right text-[10px] text-muted-foreground">
+            {msg.sender_name || '管理员'} · {new Date(msg.created_at).toLocaleString('zh-CN', { hour12: false })}
+          </p>
+        </div>
+      </div>
+    );
+  }
   if (msg.message_type === 'system') {
     return (
       <div className="flex justify-center py-1">
@@ -68,7 +86,7 @@ function MessageBubble({ msg, isMine }: { msg: ChatMessage; isMine: boolean }) {
       <div className={cn('max-w-[75%] rounded-lg px-3 py-2 text-sm', isMine ? 'bg-primary text-primary-foreground' : 'bg-muted')}>
         {!isMine && msg.sender_name && <p className="mb-0.5 text-xs font-medium text-muted-foreground">{msg.sender_name}</p>}
         {isCard && (
-          <div className="mb-1 rounded-lg border bg-background/90 p-3 text-foreground shadow-sm">
+          <div className="mb-1 rounded-lg border border-border bg-background/90 p-3 text-foreground">
             <p className="mb-1 flex items-center gap-1 text-xs font-semibold text-primary"><Link2 className="h-3.5 w-3.5" />{chatCardLabel(msg.message_type)}卡片</p>
             <p className="font-semibold">{cardTitle}</p>
             {cardDetail ? <p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">{cardDetail}</p> : null}
@@ -108,6 +126,9 @@ export function ChatDetailPage() {
   const conversation = thread.data?.conversation;
   const messages = thread.data?.messages ?? [];
   const currentUser = thread.data?.current_user;
+  const isManagementGroup = conversation?.system_key === 'lab_management';
+  const announcements = useChatAnnouncements(id, isManagementGroup);
+  const publishAnnouncement = usePublishChatAnnouncement(id);
   const sendMutation = useSendChatMessage(id);
   const markRead = useMarkChatRead(id);
   const leaveConversation = useLeaveChatConversation(id);
@@ -115,11 +136,14 @@ export function ChatDetailPage() {
   const ws = useWs();
   const [input, setInput] = useState('');
   const [showInfo, setShowInfo] = useState(false);
+  const [showAnnouncements, setShowAnnouncements] = useState(false);
+  const [showLatestAnnouncement, setShowLatestAnnouncement] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [activeContext, setActiveContext] = useState<ChatContextCard | null>(() => parseChatContext());
   const [contextCardSent, setContextCardSent] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const autoOpenedAnnouncementRef = useRef('');
   const title = conversationTitle(conversation);
 
   useEffect(() => {
@@ -127,6 +151,10 @@ export function ChatDetailPage() {
     const unsub = ws.onMessage((m: any) => {
       if ((m.type === 'new_message' || m.type === 'conversation_changed') && m.channel === `chat:${id}`) {
         qc.invalidateQueries({ queryKey: ['chat-messages', id] });
+        qc.invalidateQueries({ queryKey: ['chat-conversations'] });
+      }
+      if (m.type === 'announcement_published' && m.channel === `chat:${id}`) {
+        qc.invalidateQueries({ queryKey: ['chat-announcements', id] });
         qc.invalidateQueries({ queryKey: ['chat-conversations'] });
       }
       if (m.type === 'conversation_deleted' && m.payload?.conversation_id === id) {
@@ -139,6 +167,14 @@ export function ChatDetailPage() {
   }, [id, nav, qc, ws]);
 
   useEffect(() => { if (id) markRead.mutate(); }, [id]);
+  useEffect(() => {
+    const latest = announcements.data?.latest;
+    if (!isManagementGroup || !latest) return;
+    const announcementKey = `${id}:${latest.id}`;
+    if (autoOpenedAnnouncementRef.current === announcementKey) return;
+    autoOpenedAnnouncementRef.current = announcementKey;
+    setShowLatestAnnouncement(true);
+  }, [announcements.data?.latest, id, isManagementGroup]);
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [messages]);
   useEffect(() => {
     const nextContext = parseChatContext();
@@ -239,20 +275,42 @@ export function ChatDetailPage() {
   }
 
   return (
-    <div className="mx-auto grid h-[calc(100vh-6rem)] max-w-5xl gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+    <div className="mx-auto grid h-[calc(100vh-6rem)] w-full max-w-6xl gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
       <ActionDialog />
-      <div className="ops-card flex min-h-0 flex-col overflow-hidden">
-        <div className="flex items-center gap-2 border-b px-3 py-2">
+      <LatestAnnouncementDialog
+        open={showLatestAnnouncement}
+        announcement={announcements.data?.latest}
+        onClose={() => setShowLatestAnnouncement(false)}
+      />
+      <AnnouncementDialog
+        open={showAnnouncements}
+        history={announcements.data}
+        loading={announcements.isLoading}
+        publishing={publishAnnouncement.isPending}
+        onClose={() => setShowAnnouncements(false)}
+        onPublish={async (payload) => {
+          await publishAnnouncement.mutateAsync(payload);
+          setShowAnnouncements(false);
+        }}
+      />
+      <div className="ops-card flex min-h-0 flex-col overflow-hidden shadow-none">
+        <div className="flex min-h-14 items-center gap-2 border-b border-border px-4 py-2">
           <button onClick={() => nav({ to: '/chat' } as any)} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
             <ArrowLeft className="h-4 w-4" />
           </button>
           {conversation?.type === 'group' ? <Users className="h-4 w-4 text-muted-foreground" /> : <MessageSquare className="h-4 w-4 text-muted-foreground" />}
           <span className="truncate text-sm font-medium">{title}</span>
-          {conversation?.type === 'group' && <span className="text-xs text-muted-foreground">{conversation.participants?.length ?? 0} 人</span>}
+          {conversation?.type === 'group' && !isManagementGroup && <span className="text-xs text-muted-foreground">{conversation.participants?.length ?? 0} 人</span>}
           {conversation?.is_temporary_group && conversation?.remaining_label ? (
             <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">{conversation.remaining_label}</span>
           ) : null}
-          <Button type="button" size="sm" variant="ghost" className="ml-auto lg:hidden" onClick={() => setShowInfo((v) => !v)}>
+          {isManagementGroup ? (
+            <Button type="button" size="sm" variant="ghost" className="ml-auto gap-1.5" onClick={() => setShowAnnouncements(true)}>
+              <Megaphone className="h-4 w-4" />
+              <span className="hidden sm:inline">群公告</span>
+            </Button>
+          ) : null}
+          <Button type="button" size="sm" variant="ghost" className={cn('lg:hidden', !isManagementGroup && 'ml-auto')} onClick={() => setShowInfo((v) => !v)}>
             <Info className="h-4 w-4" />
           </Button>
         </div>
@@ -278,12 +336,12 @@ export function ChatDetailPage() {
           {thread.isLoading ? (
             <p className="py-8 text-center text-sm text-muted-foreground">加载消息中…</p>
           ) : messages.length === 0 ? (
-            <Card className="ops-card"><CardContent className="py-8 text-center text-muted-foreground">暂无消息</CardContent></Card>
+            <div className="flex min-h-48 flex-col items-center justify-center text-center text-sm text-muted-foreground"><MessageSquare className="mb-3 h-8 w-8 text-muted-foreground/55" />暂无消息，发送一条消息开始沟通。</div>
           ) : (
             messages.map((m) => <MessageBubble key={m.id} msg={m} isMine={m.sender_id === auth.me?.id || m.sender_id === currentUser?.id} />)
           )}
         </div>
-        <form onSubmit={send} className="flex items-center gap-2 border-t p-2">
+        <form onSubmit={send} className="flex min-h-14 items-center gap-2 border-t border-border px-3 py-2">
           <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => sendImage(event.target.files?.[0])} />
           <Button type="button" size="icon" variant="ghost" disabled={uploadingImage || sendMutation.isPending} onClick={() => fileInputRef.current?.click()}>
             <ImagePlus className="h-4 w-4" />
@@ -295,16 +353,194 @@ export function ChatDetailPage() {
         </form>
       </div>
 
-      <div className={cn('ops-card min-h-0 overflow-y-auto p-4 lg:block', showInfo ? 'block' : 'hidden')}>
+      <div className={cn('ops-card min-h-0 overflow-y-auto p-4 shadow-none lg:block', showInfo ? 'block' : 'hidden')}>
         <ConversationInfo
           conversation={conversation}
           currentUser={(currentUser ?? auth.me) as ChatUser | undefined}
+          latestAnnouncement={announcements.data?.latest}
           onLeave={leaveGroup}
           onDissolve={dissolveGroup}
           leaving={leaveConversation.isPending}
           dissolving={dissolveConversation.isPending}
         />
       </div>
+    </div>
+  );
+}
+
+function LatestAnnouncementDialog({ open, announcement, onClose }: {
+  open: boolean;
+  announcement?: ChatAnnouncementHistory['latest'];
+  onClose: () => void;
+}) {
+  if (!open || !announcement) return null;
+
+  return (
+    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/55 p-3 backdrop-blur-[2px]" onMouseDown={onClose}>
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="latest-chat-announcement-title"
+        className="w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-background shadow-2xl"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="flex items-center gap-3 border-b border-border px-5 py-4">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <Megaphone className="h-5 w-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium text-primary">实验管理总群</p>
+            <h2 id="latest-chat-announcement-title" className="font-semibold">最新公告</h2>
+          </div>
+          <Button type="button" size="icon" variant="ghost" onClick={onClose} title="关闭最新公告">
+            <X className="h-4 w-4" />
+          </Button>
+        </header>
+        <div className="max-h-[65vh] overflow-y-auto px-5 py-5">
+          <h3 className="text-lg font-semibold text-foreground">{announcement.title || '群公告'}</h3>
+          <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-7 text-foreground">{announcement.content}</p>
+          <p className="mt-5 text-xs text-muted-foreground">
+            {announcement.publisher_name || '管理员'} · {new Date(announcement.created_at).toLocaleString('zh-CN', { hour12: false })}
+          </p>
+        </div>
+        <footer className="flex justify-end border-t border-border px-5 py-3">
+          <Button type="button" onClick={onClose}>我知道了</Button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function AnnouncementDialog({ open, history, loading, publishing, onClose, onPublish }: {
+  open: boolean;
+  history?: ChatAnnouncementHistory;
+  loading: boolean;
+  publishing: boolean;
+  onClose: () => void;
+  onPublish: (payload: { title: string; content: string }) => Promise<unknown>;
+}) {
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+  const latest = history?.latest;
+
+  useEffect(() => {
+    if (!open) return;
+    setTitle(latest?.title || '实验室总群公告');
+    setContent(latest?.content || '');
+  }, [latest?.content, latest?.id, latest?.title, open]);
+
+  if (!open) return null;
+
+  async function saveAnnouncement() {
+    if (!content.trim()) {
+      toast.warning('请填写公告内容');
+      return;
+    }
+    try {
+      await onPublish({ title: title.trim() || '实验室总群公告', content: content.trim() });
+      toast.success('群公告已发布，并保留了上一版本');
+    } catch (error) {
+      toast.error(`公告发布失败：${toFriendlyError(error)}`);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 p-3 backdrop-blur-[2px]" onMouseDown={onClose}>
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="chat-announcement-title"
+        className="flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="flex items-center gap-3 border-b border-border px-4 py-3 sm:px-5">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <Megaphone className="h-4 w-4" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 id="chat-announcement-title" className="font-semibold">实验室总群公告</h2>
+            <p className="text-xs text-muted-foreground">查看当前公告和历史版本</p>
+          </div>
+          <Button type="button" size="icon" variant="ghost" onClick={onClose} title="关闭群公告">
+            <X className="h-4 w-4" />
+          </Button>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
+          {loading ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">正在加载群公告…</p>
+          ) : (
+            <div className="space-y-5">
+              {history?.can_edit ? (
+                <section className="rounded-xl border border-primary/20 bg-primary/[0.035] p-4">
+                  <div className="mb-3">
+                    <h3 className="text-sm font-semibold">编辑最新公告</h3>
+                    <p className="mt-0.5 text-xs text-muted-foreground">保存会生成一个新版本，旧公告仍可在下方查看。</p>
+                  </div>
+                  <label className="block text-xs font-medium text-muted-foreground">
+                    公告标题
+                    <Input
+                      className="mt-1"
+                      value={title}
+                      onChange={(event) => setTitle(event.target.value)}
+                      maxLength={120}
+                      placeholder="填写公告标题"
+                    />
+                  </label>
+                  <label className="mt-3 block text-xs font-medium text-muted-foreground">
+                    公告内容
+                    <textarea
+                      className="mt-1 min-h-32 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 text-sm leading-6 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                      value={content}
+                      onChange={(event) => setContent(event.target.value)}
+                      maxLength={3000}
+                      placeholder="填写需要所有群成员查看的公告"
+                    />
+                  </label>
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <span className="text-xs text-muted-foreground">{content.length}/3000</span>
+                    <Button type="button" size="sm" disabled={publishing || !content.trim()} onClick={saveAnnouncement}>
+                      <Megaphone className="h-4 w-4" />
+                      {publishing ? '发布中…' : '保存并发布'}
+                    </Button>
+                  </div>
+                </section>
+              ) : null}
+
+              <section>
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <h3 className="text-sm font-semibold">公告记录</h3>
+                  <span className="text-xs text-muted-foreground">共 {history?.announcements.length ?? 0} 条</span>
+                </div>
+                {!history?.announcements.length ? (
+                  <div className="rounded-xl border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
+                    暂无群公告
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {history.announcements.map((announcement, index) => (
+                      <article key={announcement.id} className={cn('rounded-xl border p-4', index === 0 ? 'border-primary/25 bg-primary/[0.025]' : 'border-border bg-card')}>
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-semibold">{announcement.title || '群公告'}</h4>
+                              {index === 0 ? <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">当前</span> : null}
+                            </div>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {announcement.publisher_name || '管理员'} · {new Date(announcement.created_at).toLocaleString('zh-CN', { hour12: false })}
+                            </p>
+                          </div>
+                        </div>
+                        <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-foreground">{announcement.content}</p>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </div>
+          )}
+        </div>
+      </section>
     </div>
   );
 }
@@ -317,8 +553,8 @@ function ChatContextPanel({ context, sent, sending, onSend, onClear }: {
   onClear: () => void;
 }) {
   return (
-    <div className="border-b bg-primary/5 px-3 py-2">
-      <div className="flex flex-col gap-2 rounded-lg border bg-background/80 p-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="border-b border-border bg-primary/[0.035] px-4 py-2">
+      <div className="flex flex-col gap-2 rounded-md border border-border bg-background/80 p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <p className="flex items-center gap-1 text-xs font-semibold text-primary"><Link2 className="h-3.5 w-3.5" />业务上下文 · {chatCardLabel(context.message_type)}</p>
           <p className="mt-1 truncate text-sm font-medium">{context.title}</p>
@@ -337,9 +573,10 @@ function ChatContextPanel({ context, sent, sending, onSend, onClear }: {
   );
 }
 
-function ConversationInfo({ conversation, currentUser, onLeave, onDissolve, leaving, dissolving }: {
+function ConversationInfo({ conversation, currentUser, latestAnnouncement, onLeave, onDissolve, leaving, dissolving }: {
   conversation?: ChatConversation;
   currentUser?: ChatUser;
+  latestAnnouncement?: ChatAnnouncementHistory['latest'];
   onLeave: () => void;
   onDissolve: () => void;
   leaving: boolean;
@@ -357,6 +594,7 @@ function ConversationInfo({ conversation, currentUser, onLeave, onDissolve, leav
   const meInGroup = participants.find((p) => p.id === currentUser?.id);
   const isGroup = conversation?.type === 'group';
   const isSystem = Boolean(conversation?.is_system || conversation?.system_key);
+  const isManagementGroup = conversation?.system_key === 'lab_management';
   const isOwner = Boolean(conversation?.created_by && conversation.created_by === currentUser?.id) || meInGroup?.participant_role === 'owner';
   // 仅最高权限管理员可以管理额外创建的群；固定管理总群由系统维护成员。
   const canManageCustomGroup = isGroup && !isSystem && currentUser?.role === 'super_admin';
@@ -413,34 +651,54 @@ function ConversationInfo({ conversation, currentUser, onLeave, onDissolve, leav
         <h2 className="text-base font-semibold">会话信息</h2>
         <p className="mt-1 text-sm text-muted-foreground">{conversationTitle(conversation)}</p>
       </div>
-      <div className="ops-surface rounded-2xl p-3 text-sm">
-        <div className="flex items-center justify-between"><span className="text-muted-foreground">类型</span><span>{conversation.type === 'group' ? '群聊' : '单聊'}</span></div>
-        <div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">成员</span><span>{participants.length} 人</span></div>
-        {isSystem && <p className="mt-2 text-xs text-muted-foreground">实验室管理总群由系统维护成员，无需手动管理。</p>}
-        {conversation?.is_temporary_group ? (
-          <p className="mt-2 text-xs text-amber-700">
-            临时会话 · {conversation.remaining_label || "2 天后自动结束"}
-            {conversation.expires_at
-              ? "（" + new Date(conversation.expires_at).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }) + "）"
-              : ""}
-            ，到期后系统将结束会话并清除聊天记录。
+      {isManagementGroup ? (
+        <section className="rounded-lg border border-primary/20 bg-primary/[0.035] p-3">
+          <p className="flex items-center gap-2 text-sm font-semibold text-primary">
+            <Megaphone className="h-4 w-4" />
+            最新公告
           </p>
-        ) : null}
-      </div>
-      {isGroup && (
-        <div className="flex flex-wrap gap-2">
-          {canLeave && <Button size="sm" variant="outline" disabled={leaving} onClick={onLeave}><LogOut className="h-4 w-4" />退出群聊</Button>}
-          {canDissolve && <Button size="sm" variant="destructive" disabled={dissolving} onClick={onDissolve}><Trash2 className="h-4 w-4" />解散群聊</Button>}
+          {latestAnnouncement ? (
+            <>
+              <h3 className="mt-3 font-semibold text-foreground">{latestAnnouncement.title || '群公告'}</h3>
+              <p className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-foreground">{latestAnnouncement.content}</p>
+              <p className="mt-3 text-xs text-muted-foreground">
+                {latestAnnouncement.publisher_name || '管理员'} · {new Date(latestAnnouncement.created_at).toLocaleString('zh-CN', { hour12: false })}
+              </p>
+            </>
+          ) : (
+            <p className="mt-3 text-sm text-muted-foreground">暂无公告</p>
+          )}
+        </section>
+      ) : (
+        <div className="rounded-lg border border-border bg-muted/20 p-3 text-sm">
+          <div className="flex items-center justify-between"><span className="text-muted-foreground">类型</span><span>{conversation.type === 'group' ? '群聊' : '单聊'}</span></div>
+          <div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">成员</span><span>{participants.length} 人</span></div>
+          {isSystem && <p className="mt-2 text-xs text-muted-foreground">实验室管理总群由系统维护成员，无需手动管理。</p>}
+          {conversation?.is_temporary_group ? (
+            <p className="mt-2 text-xs text-amber-700">
+              临时会话 · {conversation.remaining_label || "2 天后自动结束"}
+              {conversation.expires_at
+                ? "（" + new Date(conversation.expires_at).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }) + "）"
+                : ""}
+              ，到期后系统将结束会话并清除聊天记录。
+            </p>
+          ) : null}
         </div>
       )}
-      <div>
+      {isGroup && !isManagementGroup && (
+        <div className="flex flex-wrap gap-2">
+          {canLeave && <Button size="sm" variant="outline" disabled={leaving} onClick={onLeave}><LogOut className="h-4 w-4" />退出群聊</Button>}
+          {canDissolve && <Button size="sm" variant="outline" className="border-destructive/35 text-destructive hover:bg-destructive/5 hover:text-destructive" disabled={dissolving} onClick={onDissolve}><Trash2 className="h-4 w-4" />解散群聊</Button>}
+        </div>
+      )}
+      {!isManagementGroup && <div>
         <h3 className="mb-2 text-sm font-medium">成员</h3>
-        <div className="ops-surface max-h-72 overflow-y-auto rounded-2xl">
+        <div className="max-h-72 overflow-y-auto rounded-lg border border-border">
           {participants.map((member) => (
-            <div key={member.id} className="flex items-center gap-2 border-b px-3 py-2 last:border-0">
+            <div key={member.id} className="flex min-h-12 items-center gap-2 border-b border-border px-3 py-2 last:border-0">
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{member.name}{member.id === currentUser?.id ? '（我）' : ''}</p>
-                <p className="truncate text-xs text-muted-foreground">{member.phone || '-'} · {chatRoleLabel(member.participant_role || member.role)}</p>
+                <p className="truncate text-xs text-muted-foreground">{member.phone ? `${member.phone} · ` : ''}{chatRoleLabel(member.participant_role || member.role)}</p>
               </div>
               {canKick && member.id !== currentUser?.id && member.role !== 'super_admin' && (
                 <Button size="sm" variant="ghost" disabled={removeParticipant.isPending} onClick={() => remove(member)}><UserMinus className="h-4 w-4" /></Button>
@@ -448,16 +706,16 @@ function ConversationInfo({ conversation, currentUser, onLeave, onDissolve, leav
             </div>
           ))}
         </div>
-      </div>
+      </div>}
       {canManageCustomGroup && (
         <div className="border-t pt-4">
           <h3 className="mb-2 flex items-center gap-2 text-sm font-medium"><UserPlus className="h-4 w-4" />添加成员</h3>
           <Input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索联系人" inputSize="sm" clearable onClear={() => setKeyword('')} />
-          <div className="ops-surface mt-2 max-h-48 overflow-y-auto rounded-2xl">
+          <div className="mt-2 max-h-48 overflow-y-auto rounded-lg border border-border">
             {usersQuery.isLoading ? <p className="p-3 text-center text-xs text-muted-foreground">加载联系人中…</p>
               : candidates.length === 0 ? <p className="p-3 text-center text-xs text-muted-foreground">暂无可添加联系人</p>
               : candidates.map((user) => (
-                <label key={user.id} className="flex cursor-pointer items-center gap-2 border-b px-3 py-2 text-sm last:border-0 hover:bg-accent/60">
+                <label key={user.id} className="flex min-h-11 cursor-pointer items-center gap-2 border-b border-border px-3 py-2 text-sm last:border-0 hover:bg-muted/55">
                   <input type="checkbox" checked={selectedIds.includes(user.id)} onChange={() => toggleCandidate(user.id)} />
                   <span className="min-w-0 flex-1 truncate">{user.name} <span className="text-xs text-muted-foreground">{user.phone}</span></span>
                 </label>
@@ -470,11 +728,16 @@ function ConversationInfo({ conversation, currentUser, onLeave, onDissolve, leav
   );
 }
 
+function isTechnicalConversationId(value?: string | null) {
+  return Boolean(value && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value.trim()));
+}
+
 function conversationTitle(conversation?: ChatConversation) {
   if (!conversation) return '会话';
-  if (conversation.title) return conversation.title;
+  const title = conversation.title?.trim();
+  if (title && !isTechnicalConversationId(title)) return title;
   if (conversation.type === 'group') return '群聊';
-  const names = conversation.participants?.map((p) => p.name).filter(Boolean) ?? [];
+  const names = conversation.participants?.map((participant) => participant.name?.trim()).filter((name): name is string => Boolean(name) && !isTechnicalConversationId(name)) ?? [];
   return names.length ? names.join('、') : '单聊';
 }
 

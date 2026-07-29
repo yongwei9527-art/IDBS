@@ -24,7 +24,7 @@ import {
 import { buildChatSearch } from '@/features/chat/chat-context';
 import { compactTimeRange, fullDateTimeRange } from '@/lib/time-format';
 import { toFriendlyError } from '@/lib/friendly-error';
-import { OpsBadge, OpsMetricCard, OpsRiskBadge, OpsSectionHeader, OpsTimeBlock } from '@/components/ops/design-system';
+import { OpsBadge, OpsRiskBadge, OpsSectionHeader } from '@/components/ops/design-system';
 
 const STATUS_LABEL: Record<string, string> = {
   available: '可预约',
@@ -94,15 +94,6 @@ function riskLevel(status?: string, allowReservation?: boolean): 'low' | 'medium
   return 'low';
 }
 
-function riskText(status?: string, allowReservation?: boolean) {
-  if (status === 'disabled') return '设备已停用，暂不开放预约。';
-  if (status === 'abnormal_pending') return '存在异常待处理，建议联系管理员确认。';
-  if (status === 'maintenance') return '设备维护中，恢复后再预约。';
-  if (allowReservation === false) return '设备暂停预约，用户端仅可查看。';
-  if (status === 'in_use') return '设备正在使用，请关注后续排期。';
-  return '设备状态正常，可按开放时段预约。';
-}
-
 function lifecycleSteps(status?: string) {
   if (status === 'maintenance') return ['入库', '可预约', '维护中', '恢复可预约'];
   if (status === 'abnormal_pending') return ['入库', '使用中', '异常待处理', '维护确认', '恢复可预约'];
@@ -120,7 +111,7 @@ function LifecyclePanel({ status }: { status?: string }) {
         const current = step === active;
         const done = activeIndex < 0 ? index === 0 : index < activeIndex;
         return (
-          <div key={String(step) + '-' + index} className={['rounded-2xl border p-3 text-sm', current ? 'border-primary bg-primary/10 text-primary' : done ? 'bg-muted/40 text-foreground' : 'bg-background text-muted-foreground'].join(' ')}>
+          <div key={String(step) + '-' + index} className={['rounded-lg border border-border/60 p-3 text-sm', current ? 'border-primary bg-primary/10 text-primary' : done ? 'bg-muted/40 text-foreground' : 'bg-background text-muted-foreground'].join(' ')}>
             <p className="text-xs font-semibold">{index + 1}</p>
             <p className="mt-1 font-semibold">{step}</p>
           </div>
@@ -133,8 +124,21 @@ function LifecyclePanel({ status }: { status?: string }) {
 function SlotBlocks({ device }: { device: { reservation_slot_options?: Array<{ key: string; label?: string; start?: string; end?: string; start_time?: string; end_time?: string }>; reservation_slot_keys?: string[] } }) {
   const slots = device.reservation_slot_options ?? [];
   const keys = device.reservation_slot_keys ?? [];
-  if (slots.length) return <div className="flex flex-wrap gap-1.5">{slots.map((slot) => <OpsTimeBlock key={slot.key} compact label={slot.label || slot.key} title={slot.start || slot.start_time ? compactTimeRange(String(slot.start ?? slot.start_time), String(slot.end ?? slot.end_time ?? '')) : slot.key} />)}</div>;
-  if (keys.length) return <div className="flex flex-wrap gap-1.5">{keys.map((key) => <OpsTimeBlock key={key} compact label={key} title={key} />)}</div>;
+  if (slots.length) return (
+    <div className="flex flex-wrap gap-2">
+      {slots.map((slot) => {
+        const start = slot.start ?? slot.start_time;
+        const end = slot.end ?? slot.end_time;
+        const range = start ? compactTimeRange(String(start), String(end ?? '')) : '';
+        return (
+          <span key={slot.key} className="inline-flex min-h-11 items-center rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs font-medium leading-4 text-foreground">
+            {slot.label || slot.key}{range ? <span className="ml-1 whitespace-nowrap text-muted-foreground">· {range}</span> : null}
+          </span>
+        );
+      })}
+    </div>
+  );
+  if (keys.length) return <div className="flex flex-wrap gap-2">{keys.map((key) => <span key={key} className="inline-flex min-h-11 items-center rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs font-medium">{key}</span>)}</div>;
   return <span className="text-sm text-muted-foreground">系统默认时段</span>;
 }
 
@@ -149,7 +153,7 @@ function userText(row: DeviceReservationSnapshot | DeviceBorrowSnapshot) {
 }
 
 function EmptyState({ children }: { children: React.ReactNode }) {
-  return <p className="rounded-2xl border border-dashed bg-muted/20 px-4 py-5 text-center text-sm text-muted-foreground">{children}</p>;
+  return <p className="rounded-lg border border-dashed border-border/60 bg-muted/20 px-4 py-5 text-center text-sm text-muted-foreground">{children}</p>;
 }
 
 function ReservationList({ rows, empty }: { rows: DeviceReservationSnapshot[]; empty: string }) {
@@ -157,7 +161,7 @@ function ReservationList({ rows, empty }: { rows: DeviceReservationSnapshot[]; e
   return (
     <div className="space-y-2">
       {rows.slice(0, 8).map((item, index) => (
-        <div key={String(item.item_id ?? item.id ?? index)} className="rounded-2xl border bg-card/70 p-3">
+        <div key={String(item.item_id ?? item.id ?? index)} className="border-b border-border/60 py-3 last:border-b-0">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <p className="font-medium">{reservationTitle(item)}</p>
@@ -179,7 +183,7 @@ function Occupancy14Days({ rows }: { rows: DeviceReservationSnapshot[] }) {
   return (
     <div className="grid gap-2 sm:grid-cols-2">
       {rows.slice(0, 14).map((item, index) => (
-        <div key={String(item.item_id ?? item.id ?? index)} className="rounded-2xl border bg-secondary/25 p-3">
+        <div key={String(item.item_id ?? item.id ?? index)} className="rounded-lg border border-border/60 bg-muted/30 p-3">
           <p className="text-sm font-semibold">{formatDate(item.start_time)}</p>
           <p className="mt-1 text-xs text-muted-foreground"><span title={fullDateTimeRange(item.start_time, item.end_time)}>{compactTimeRange(item.start_time, item.end_time)}</span></p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -197,7 +201,7 @@ function FaultList({ rows }: { rows: DeviceFaultSnapshot[] }) {
   return (
     <div className="space-y-2">
       {rows.map((fault, index) => (
-        <div key={String(fault.id ?? index)} className="rounded-2xl border bg-card/70 p-3">
+        <div key={String(fault.id ?? index)} className="border-b border-border/60 py-3 last:border-b-0">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <p className="font-medium">{FAULT_TYPE_LABEL[fault.issue_type ?? ''] ?? fault.issue_type ?? '故障上报'}</p>
@@ -222,19 +226,19 @@ export function DeviceDetailPage() {
   const nextReservation = detail?.next_reservation ?? device?.next_reservation ?? null;
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-4">
-      <button onClick={() => nav({ to: '/devices' } as any)} className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
+    <div className="mx-auto flex max-w-6xl flex-col gap-5">
+      <button onClick={() => nav({ to: '/devices' } as any)} className="inline-flex min-h-11 w-fit items-center gap-2 rounded-lg px-2 text-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground">
         <ArrowLeft className="h-4 w-4" /> 返回设备列表
       </button>
 
-      {isLoading ? <Card className="ops-card"><CardContent className="py-8 text-center text-muted-foreground">设备详情加载中…</CardContent></Card> : null}
-      {error ? <Card className="ops-card"><CardContent className="py-8 text-center text-destructive">加载失败：{toFriendlyError(error)}</CardContent></Card> : null}
+      {isLoading ? <Card className="ops-card rounded-xl border-border/60 shadow-none"><CardContent className="py-8 text-center text-muted-foreground">设备详情加载中…</CardContent></Card> : null}
+      {error ? <Card className="ops-card rounded-xl border-border/60 shadow-none"><CardContent className="py-8 text-center text-destructive">加载失败：{toFriendlyError(error)}</CardContent></Card> : null}
 
       {device ? (
         <>
-          <Card className="ops-card overflow-hidden">
+          <Card className="ops-card overflow-hidden rounded-xl border-border/60 shadow-none">
             {device.cover_photo ? <img src={device.cover_photo} alt={device.name} className="h-44 w-full object-cover md:h-52" /> : null}
-            <CardHeader className="p-5 pb-3">
+            <CardHeader className="p-4 pb-3 sm:p-5 sm:pb-3">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <CardTitle className="text-2xl">{device.name}</CardTitle>
@@ -247,19 +251,19 @@ export function DeviceDetailPage() {
                 {statusBadge(device.status)}
               </div>
             </CardHeader>
-            <CardContent className="space-y-3 p-5 pt-0">
+            <CardContent className="space-y-5 p-4 pt-0 sm:p-5 sm:pt-0">
               <div className="grid gap-3 md:grid-cols-3">
-                <div className="rounded-2xl border bg-secondary/25 p-3">
+                <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
                   <p className="flex items-center gap-1 text-xs font-medium text-muted-foreground"><Activity className="h-3 w-3" />当前使用</p>
                   <p className="mt-1 text-sm font-semibold">{currentBorrow ? userText(currentBorrow) : '暂无正在使用'}</p>
                   {currentBorrow ? <p className="mt-1 text-xs text-muted-foreground">借用：{formatTime(currentBorrow.borrow_time)}</p> : null}
                 </div>
-                <div className="rounded-2xl border bg-secondary/25 p-3">
+                <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
                   <p className="flex items-center gap-1 text-xs font-medium text-muted-foreground"><CalendarDays className="h-3 w-3" />下一预约</p>
                   <p className="mt-1 text-sm font-semibold">{nextReservation ? reservationTitle(nextReservation) : '暂无后续预约'}</p>
                   {nextReservation ? <p className="mt-1 text-xs text-muted-foreground">{nextReservation.user_name ? userText(nextReservation) : nextReservation.purpose || '已占用'}</p> : null}
                 </div>
-                <div className="rounded-2xl border bg-secondary/25 p-3">
+                <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
                   <p className="flex items-center gap-1 text-xs font-medium text-muted-foreground"><Clock className="h-3 w-3" />最近归还</p>
                   <p className="mt-1 text-sm font-semibold">{formatTime(device.last_return_time)}</p>
                   <p className="mt-1 text-xs text-muted-foreground">状态：{device.last_condition || '未记录'}</p>
@@ -267,13 +271,13 @@ export function DeviceDetailPage() {
               </div>
 
               <div className="grid gap-3 md:grid-cols-4">
-                <OpsMetricCard label="生命周期" value={lifecycleLabel(device.status)} hint={riskText(device.status, device.allow_reservation)} tone={riskLevel(device.status, device.allow_reservation) === 'low' ? 'success' : riskLevel(device.status, device.allow_reservation) === 'medium' ? 'warning' : 'danger'} />
-                <OpsMetricCard label="近期预约" value={detail.reservations.length} hint="待使用或进行中" tone="info" />
-                <OpsMetricCard label="14天占用" value={detail.occupancy_14_days.length} hint="近两周占用" />
-                <OpsMetricCard label="故障记录" value={detail.recent_fault_reports.length} hint="近期上报" tone={detail.recent_fault_reports.length ? 'warning' : 'success'} />
+                <div><p className="text-xs text-muted-foreground">生命周期</p><p className="mt-1 font-semibold">{lifecycleLabel(device.status)}</p></div>
+                <div><p className="text-xs text-muted-foreground">近期预约</p><p className="mt-1 font-semibold tabular-nums">{detail.reservations.length}</p></div>
+                <div><p className="text-xs text-muted-foreground">14天占用</p><p className="mt-1 font-semibold tabular-nums">{detail.occupancy_14_days.length}</p></div>
+                <div><p className="text-xs text-muted-foreground">故障记录</p><p className="mt-1 font-semibold tabular-nums">{detail.recent_fault_reports.length}</p></div>
               </div>
 
-              <section className="rounded-xl border bg-muted/20 p-4">
+              <section className="border-y border-border/60 py-4">
                 <OpsSectionHeader
                   title="设备生命周期"
                   action={<OpsRiskBadge level={riskLevel(device.status, device.allow_reservation)} />}
@@ -281,17 +285,17 @@ export function DeviceDetailPage() {
                 <div className="mt-4"><LifecyclePanel status={device.status} /></div>
               </section>
 
-              <section className="rounded-xl border bg-background/70 p-4">
+              <section className="border-y border-border/60 py-4">
                 <OpsSectionHeader title="开放预约时段" description="悬停查看完整时段。" action={<OpsBadge tone={device.allow_reservation === false ? 'warning' : 'success'}>{device.allow_reservation === false ? '暂停预约' : '开放预约'}</OpsBadge>} />
                 <div className="mt-3"><SlotBlocks device={device} /></div>
               </section>
 
               {device.recent_return_photos?.length ? (
-                <section className="rounded-xl border bg-background/70 p-4">
+                <section className="border-y border-border/60 py-4">
                   <OpsSectionHeader title="最近归还照片" description="用于预约前确认设备外观；照片到期后自动清理。" />
                   <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     {device.recent_return_photos.map((photo) => (
-                      <figure key={photo.id} className="min-w-0 rounded-xl border bg-card p-2">
+                      <figure key={photo.id} className="min-w-0 rounded-lg border border-border/60 bg-card p-2">
                         <img src={photo.url} alt={photo.original_name} className="aspect-[4/3] w-full rounded-lg bg-muted object-contain" />
                         <figcaption className="mt-2">
                           <p className="truncate text-xs font-semibold" title={photo.original_name}>{photo.original_name}</p>
@@ -305,18 +309,19 @@ export function DeviceDetailPage() {
                 </section>
               ) : null}
 
-              {device.description ? <p className="text-sm"><FileText className="mr-1 inline h-3 w-3 text-muted-foreground" />{device.description}</p> : null}
-              {device.usage_notice ? <p className="rounded-2xl bg-primary/5 px-3 py-2 text-sm text-muted-foreground">使用须知：{device.usage_notice}</p> : null}
+              {device.description ? <section className="border-t border-border/60 pt-4"><OpsSectionHeader title="设备说明" /><p className="mt-2 text-sm leading-6 text-muted-foreground"><FileText className="mr-1 inline h-3 w-3" />{device.description}</p></section> : null}
+              {device.usage_notice ? <section className="border-t border-border/60 pt-4"><OpsSectionHeader title="使用须知" /><p className="mt-2 border-l-2 border-primary/50 bg-primary/5 px-3 py-2 text-sm leading-6 text-muted-foreground">{device.usage_notice}</p></section> : null}
 
               <div className="flex flex-wrap gap-2">
-                <Button disabled={device.allow_reservation === false} onClick={() => nav({ to: '/reserve', search: { device: code } } as any)}>
+                <Button className="min-h-11" disabled={device.allow_reservation === false} onClick={() => nav({ to: '/reserve', search: { device: code } } as any)}>
                   立即预约
                 </Button>
-                <Button variant="outline" onClick={() => nav({ to: '/faults', search: { device: code } } as any)}>
+                <Button variant="outline" className="min-h-11" onClick={() => nav({ to: '/faults', search: { device: code } } as any)}>
                   <AlertTriangle className="h-4 w-4" /> 上报故障
                 </Button>
                 <Button
-                  variant="outline"
+                  variant="ghost"
+                  className="min-h-11"
                   onClick={() => nav({
                     to: '/chat',
                     search: buildChatSearch({
@@ -337,7 +342,7 @@ export function DeviceDetailPage() {
           </Card>
 
           <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
-            <Card className="ops-card">
+            <Card className="ops-card rounded-xl border-border/60 shadow-none">
               <CardHeader className="p-4 pb-2">
                 <CardTitle className="flex items-center gap-2 text-base"><CalendarDays className="h-4 w-4 text-primary" />14 天占用</CardTitle>
               </CardHeader>
@@ -346,7 +351,7 @@ export function DeviceDetailPage() {
               </CardContent>
             </Card>
 
-            <Card className="ops-card">
+            <Card className="ops-card rounded-xl border-border/60 shadow-none">
               <CardHeader className="p-4 pb-2">
                 <CardTitle className="flex items-center gap-2 text-base"><UserRound className="h-4 w-4 text-primary" />近期预约</CardTitle>
               </CardHeader>
@@ -356,7 +361,7 @@ export function DeviceDetailPage() {
             </Card>
           </div>
 
-          <Card className="ops-card">
+          <Card className="ops-card rounded-xl border-border/60 shadow-none">
             <CardHeader className="p-4 pb-2">
               <CardTitle className="flex items-center gap-2 text-base"><AlertTriangle className="h-4 w-4 text-primary" />近期故障</CardTitle>
             </CardHeader>

@@ -346,7 +346,7 @@ export function AdminMaintenancePage() {
                     <Button size="sm" variant="outline" disabled={updateOrder.isPending} onClick={() => updateOrderStatus(order, 'completed')}>
                       <Wrench className="h-3.5 w-3.5" /> 完成
                     </Button>
-                    <Button size="sm" variant="ghost" disabled={updateOrder.isPending} onClick={() => updateOrderStatus(order, 'cancelled')}>取消</Button>
+                    <Button size="sm" variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive/5" disabled={updateOrder.isPending} onClick={() => updateOrderStatus(order, 'cancelled')}>取消</Button>
                   </div>
                 ) : null}
               </article>

@@ -1,4 +1,4 @@
-﻿import { briefDateTime } from '@/lib/time-format';
+import { briefDateTime } from '@/lib/time-format';
 import { useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { MessageSquare } from 'lucide-react';
@@ -331,7 +331,7 @@ export function AdminRequestsPage() {
                             <Button size="sm" variant="outline" disabled={review.isPending} onClick={() => handleReview(row, 'pending')}>退回待修改</Button>
                           ) : null}
                           {row.status !== 'closed' && row.status !== 'cancelled' ? (
-                            <Button size="sm" variant="outline" disabled={review.isPending} onClick={() => handleReview(row, 'closed')}>关闭</Button>
+                            <Button size="sm" variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive/5" disabled={review.isPending} onClick={() => handleReview(row, 'closed')}>关闭</Button>
                           ) : null}
                         </div>
                       </>

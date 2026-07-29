@@ -111,7 +111,7 @@ export function AdminStatsPage() {
   const hasTasks = Number(workload?.pending_reservations || 0) + Number(workload?.pending_faults || 0) + Number(workload?.overdue_borrows || 0) + Number(data?.summary.risk_devices || 0) > 0;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="ops-page-stack operations-analysis-page">
       <OpsPageHeader title="运营分析" className="ops-page-header--compact">
         <div className="flex flex-wrap items-center gap-2">
           <div className="ops-segment-group">
@@ -123,8 +123,8 @@ export function AdminStatsPage() {
         </div>
       </OpsPageHeader>
 
-      {overview.error && <Card><CardContent className="py-4 text-sm text-destructive">运营数据加载失败：{toFriendlyError(overview.error)}</CardContent></Card>}
-      {intelligence.error && <Card><CardContent className="py-4 text-sm text-destructive">待办数据加载失败：{toFriendlyError(intelligence.error)}</CardContent></Card>}
+      {overview.error && <Card className="ops-card"><CardContent className="py-4 text-sm text-destructive">运营数据加载失败：{toFriendlyError(overview.error)}</CardContent></Card>}
+      {intelligence.error && <Card className="ops-card"><CardContent className="py-4 text-sm text-destructive">待办数据加载失败：{toFriendlyError(intelligence.error)}</CardContent></Card>}
 
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0 p-4">

@@ -13,7 +13,7 @@ const MANAGEMENT_GROUP_RETENTION_DAYS = 7;
 const TEMP_GROUP_TTL_DAYS = 1;
 const TEMP_GROUP_WARN_HOURS = 6;
 const PENDING_ACCOUNT_TTL_DAYS = 3;
-const CHAT_MESSAGE_TYPES = new Set(['text', 'image', 'file', 'system', 'device_card', 'reservation_card', 'fault_card', 'user_request_card']);
+const CHAT_MESSAGE_TYPES = new Set(['text', 'image', 'file', 'system', 'announcement', 'device_card', 'reservation_card', 'fault_card', 'user_request_card']);
 const CHAT_CARD_LABELS = {
   device_card: '设备卡片',
   reservation_card: '预约卡片',
@@ -43,6 +43,7 @@ function createChatService(context = {}) {
     queryOne,
     realtimePublisher = async () => 0,
     requireUser,
+    sendPushMessage = async () => ({ skipped: true }),
     rowsFrom,
     uuid,
     resolveServiceAuth,
@@ -67,11 +68,18 @@ function createChatService(context = {}) {
     return true;
   }
 
-  function publicChatUser(user = {}) {
+  function canViewChatPhone(viewer = {}, user = {}) {
+    if (!user.phone) return false;
+    if (viewer.id && viewer.id === user.id) return true;
+    if (isChatAdministrator(viewer)) return true;
+    return isChatAdministrator(user);
+  }
+
+  function publicChatUser(user = {}, viewer = {}) {
     return {
       id: user.id,
       name: user.name || '-',
-      phone: user.phone || '',
+      phone: canViewChatPhone(viewer, user) ? user.phone : '',
       student_no: user.student_no || '',
       role: user.role || 'user',
       can_announce: Boolean(user.can_announce),
@@ -80,9 +88,19 @@ function createChatService(context = {}) {
     };
   }
 
+  function publicChatMessage(message = {}, viewer = {}) {
+    const sender = { id: message.sender_id, phone: message.sender_phone, role: message.sender_role };
+    const output = {
+      ...message,
+      sender_phone: canViewChatPhone(viewer, sender) ? (message.sender_phone || '') : ''
+    };
+    delete output.sender_role;
+    return output;
+  }
+
   async function publicChatUserWithPermissions(user = {}) {
     const context = await adminPermissionContextForUser(user);
-    return publicChatUser({ ...user, can_announce: context.canAnnounce, can_kick: context.canKick });
+    return publicChatUser({ ...user, can_announce: context.canAnnounce, can_kick: context.canKick }, user);
   }
 
   function isChatAdministrator(user = {}) {
@@ -260,7 +278,7 @@ function createChatService(context = {}) {
       order by case when role in ('super_admin','admin') then 0 else 1 end, name asc, created_at asc
       limit 100
     `, sqlParams);
-    return ok({ users: (users || []).map(publicChatUser), current_user: await publicChatUserWithPermissions(actor) });
+    return ok({ users: (users || []).map((user) => publicChatUser(user, actor)), current_user: await publicChatUserWithPermissions(actor) });
   }
 
   async function conversationForActor(conversationId, actorId) {
@@ -320,6 +338,7 @@ function createChatService(context = {}) {
     const result = await runQuery(`
       delete from chat_messages
       where conversation_id = $1
+        and message_type <> 'announcement'
         and created_at < now() - ($2::int * interval '1 day')
     `, [conversationId, retentionDays || MANAGEMENT_GROUP_RETENTION_DAYS]);
     return Number(result.rowCount || 0);
@@ -605,8 +624,10 @@ function createChatService(context = {}) {
     return fail(message || '没有聊天管理权限。', 403, 1003);
   }
 
-  async function hydrateChatConversations(conversations = [], actorId) {
+  async function hydrateChatConversations(conversations = [], actor = {}) {
     if (!conversations.length) return [];
+    const actorId = typeof actor === 'string' ? actor : actor.id;
+    const viewer = typeof actor === 'string' ? { id: actor } : actor;
     const ids = conversations.map((item) => item.id);
     const participants = await query(`
       select p.conversation_id, p.role as participant_role, p.joined_at, p.last_read_at,
@@ -637,7 +658,7 @@ function createChatService(context = {}) {
     for (const row of participants || []) {
       if (!participantsMap.has(row.conversation_id)) participantsMap.set(row.conversation_id, []);
       participantsMap.get(row.conversation_id).push({
-        ...publicChatUser(row),
+        ...publicChatUser(row, viewer),
         participant_role: row.participant_role,
         joined_at: row.joined_at,
         last_read_at: row.last_read_at
@@ -690,7 +711,7 @@ function createChatService(context = {}) {
     for (const conversation of rows || []) {
       if (await conversationMatchesChatPolicy(conversation)) allowed.push(conversation);
     }
-    return ok({ conversations: await hydrateChatConversations(allowed, actor.id), current_user: await publicChatUserWithPermissions(actor) });
+    return ok({ conversations: await hydrateChatConversations(allowed, actor), current_user: await publicChatUserWithPermissions(actor) });
   }
 
   async function createChatConversation(payload = {}, token) {
@@ -732,7 +753,7 @@ function createChatService(context = {}) {
           const refreshed = await query('select * from chat_conversations where id = $1', [existing.id]);
           existing = refreshed[0] || existing;
         }
-        const hydrated = await hydrateChatConversations([existing], actor.id);
+        const hydrated = await hydrateChatConversations([existing], actor);
         return ok({ conversation: hydrated[0], existed: true });
       }
     }
@@ -773,7 +794,7 @@ function createChatService(context = {}) {
       }
     }
     const rows = await query('select * from chat_conversations where id = $1', [conversationId]);
-    const conversation = (await hydrateChatConversations(rows, actor.id))[0];
+    const conversation = (await hydrateChatConversations(rows, actor))[0];
     await publishChatEvent(participantIds, 'conversation_changed', {
       conversation_id: conversationId,
       reason: 'created'
@@ -829,7 +850,7 @@ function createChatService(context = {}) {
       conversation_id: conversationId,
       reason: 'participants_added'
     });
-    return ok({ conversation: (await hydrateChatConversations(rows, actor.id))[0], added_count: newIds.length });
+    return ok({ conversation: (await hydrateChatConversations(rows, actor))[0], added_count: newIds.length });
   }
 
   async function dissolveChatConversation(payload = {}, token) {
@@ -898,7 +919,7 @@ function createChatService(context = {}) {
     const rows = await query(`
       select *
       from (
-        select m.*, u.name as sender_name, u.phone as sender_phone
+        select m.*, u.name as sender_name, u.phone as sender_phone, u.role as sender_role
         from chat_messages m
         left join users u on u.id = m.sender_id
         where m.conversation_id = $1
@@ -915,10 +936,10 @@ function createChatService(context = {}) {
       ...(managementGroup ? [Number(conversation.retention_days || MANAGEMENT_GROUP_RETENTION_DAYS)] : [])
     ]);
     await query('update chat_participants set last_read_at = $1 where conversation_id = $2 and user_id = $3', [nowIso(), conversationId, actor.id]);
-    const hydrated = await hydrateChatConversations([conversation], actor.id);
+    const hydrated = await hydrateChatConversations([conversation], actor);
     return ok({
       conversation: hydrated[0],
-      messages: rows || [],
+      messages: (rows || []).map((message) => publicChatMessage(message, actor)),
       current_user: await publicChatUserWithPermissions(actor),
       page: {
         limit,
@@ -945,6 +966,114 @@ function createChatService(context = {}) {
       on conflict (message_id, user_id) do update set read_at = excluded.read_at
     `, [conversationId, actor.id, readAt]);
     return ok({ conversation_id: conversationId, read_at: readAt });
+  }
+
+  async function canEditChatAnnouncements(actor = {}) {
+    if (actor.role === 'super_admin') return true;
+    if (actor.role !== 'admin') return false;
+    const permissionContext = await adminPermissionContextForUser(actor);
+    return permissionContext.permissions.includes('*') || permissionContext.permissions.includes('chat.announce');
+  }
+
+  async function listChatAnnouncements(params = {}, token) {
+    await assertChatReady();
+    await ensureManagementGroup();
+    const actor = await requireChatActor(token);
+    const conversationId = assertText(params.conversation_id || params.id, 'conversation_id', 60);
+    const conversation = await conversationForActor(conversationId, actor.id);
+    if (!conversation) return fail('会话不存在。', 404, 3004);
+    if (!isManagementGroup(conversation)) return fail('仅实验室管理总群支持群公告。', 400, 2001);
+    const limit = Math.min(Math.max(Number(params.limit || 50) || 50, 1), 100);
+    const announcements = await query(`
+      select m.id, m.conversation_id, m.sender_id, m.content, m.created_at,
+        coalesce(nullif(m.metadata ->> 'title', ''), '群公告') as title,
+        u.name as publisher_name
+      from chat_messages m
+      left join users u on u.id = m.sender_id
+      where m.conversation_id = $1 and m.message_type = 'announcement'
+      order by m.created_at desc, m.id desc
+      limit $2
+    `, [conversationId, limit]);
+    return ok({
+      conversation_id: conversationId,
+      latest: announcements[0] || null,
+      announcements,
+      can_edit: await canEditChatAnnouncements(actor)
+    });
+  }
+
+  async function publishChatAnnouncement(payload = {}, token) {
+    await assertChatReady();
+    await ensureManagementGroup();
+    const actor = await requireChatActor(token);
+    const conversationId = assertText(payload.conversation_id || payload.id, 'conversation_id', 60);
+    const conversation = await conversationForActor(conversationId, actor.id);
+    if (!conversation) return fail('会话不存在。', 404, 3004);
+    if (!isManagementGroup(conversation)) return fail('仅实验室管理总群支持群公告。', 400, 2001);
+    if (!await canEditChatAnnouncements(actor)) return fail('只有管理员可以编辑群公告。', 403, 1003);
+
+    const title = String(payload.title || '').trim().slice(0, 120) || '实验室总群公告';
+    const content = assertText(payload.content, '公告内容', 3000);
+    const createdAt = nowIso();
+    const announcement = {
+      id: uuid(),
+      conversation_id: conversationId,
+      sender_id: actor.id,
+      title,
+      content,
+      publisher_name: actor.name || '管理员',
+      created_at: createdAt
+    };
+
+    await withTransaction(async (client) => {
+      await client.query(`
+        insert into chat_messages
+          (id, conversation_id, sender_id, message_type, content, metadata, delivery_status, created_at)
+        values ($1,$2,$3,'announcement',$4,$5::jsonb,'sent',$6)
+      `, [
+        announcement.id,
+        conversationId,
+        actor.id,
+        content,
+        JSON.stringify({ title }),
+        createdAt
+      ]);
+      await client.query(`
+        update chat_conversations
+        set last_message_at = $1,
+            updated_at = $1,
+            last_message_preview = $2,
+            last_message_type = 'announcement'
+        where id = $3
+      `, [createdAt, `群公告：${title}`, conversationId]);
+      await client.query(
+        'update chat_participants set last_read_at = $1 where conversation_id = $2 and user_id = $3',
+        [createdAt, conversationId, actor.id]
+      );
+    });
+
+    const participants = await query(
+      'select user_id from chat_participants where conversation_id = $1 and user_id <> $2',
+      [conversationId, actor.id]
+    );
+    const participantIds = (participants || []).map((participant) => participant.user_id);
+    for (const userId of participantIds) {
+      await createUserNotification({
+        user_id: userId,
+        type: 'chat',
+        title: '实验室总群发布了新公告',
+        content: '请进入实验室总群查看最新群公告。',
+        related_type: 'chat_conversation',
+        related_id: conversationId
+      });
+    }
+    void sendPushMessage({ userIds: participantIds, route: '/chat' }).catch(() => {});
+    await log('publish_chat_announcement', `Published announcement in ${conversationId}`, actor, null, announcement.id);
+    await publishChatEvent([actor.id, ...participantIds], 'announcement_published', {
+      conversation_id: conversationId,
+      announcement
+    });
+    return ok({ announcement });
   }
 
   async function removeChatParticipant(payload = {}, token) {
@@ -995,7 +1124,7 @@ function createChatService(context = {}) {
     return ok({
       removed: true,
       user_status: isManagementGroup(managed.conversation) ? 'pending' : target.status,
-      conversation: (await hydrateChatConversations(rows, actor.id))[0]
+      conversation: (await hydrateChatConversations(rows, actor))[0]
     });
   }
 
@@ -1026,13 +1155,13 @@ function createChatService(context = {}) {
     const clientMessageId = String(payload.client_message_id || payload.clientMessageId || '').trim().slice(0, 120);
     if (clientMessageId) {
       const existing = await queryOne(`
-        select m.*, u.name as sender_name, u.phone as sender_phone
+        select m.*, u.name as sender_name, u.phone as sender_phone, u.role as sender_role
         from chat_messages m
         left join users u on u.id = m.sender_id
         where m.sender_id = $1 and m.client_message_id = $2
         limit 1
       `, [actor.id, clientMessageId]);
-      if (existing) return ok({ message: existing, duplicated: true });
+      if (existing) return ok({ message: publicChatMessage(existing, actor), duplicated: true });
     }
     const mentionAll = (parseBoolean(payload.mention_all ?? payload.mentionAll) || content.includes('@全体成员')) && conversation.type === 'group';
     if (mentionAll) {
@@ -1088,12 +1217,16 @@ function createChatService(context = {}) {
         related_id: conversationId
       });
     }
+    // Remote payload stays generic: content and sender data never leave the app notification channel.
+    void sendPushMessage({ userIds: (others || []).map((participant) => participant.user_id), route: '/chat' }).catch(() => {});
     await log('send_chat_message', `Sent chat message in ${conversationId}`, actor, null, message.id);
+    const senderMessage = { ...message, sender_name: actor.name, sender_phone: actor.phone, sender_role: actor.role };
     await publishChatEvent([actor.id, ...(others || []).map((participant) => participant.user_id)], 'message', {
       conversation_id: conversationId,
-      message: { ...message, sender_name: actor.name, sender_phone: actor.phone }
+      // Conversation events are shared by every participant, so peer-user phone numbers must never be included.
+      message: publicChatMessage(senderMessage, {})
     });
-    return ok({ message: { ...message, sender_name: actor.name, sender_phone: actor.phone } });
+    return ok({ message: publicChatMessage(senderMessage, actor) });
   }
 
   return {
@@ -1105,10 +1238,12 @@ function createChatService(context = {}) {
     createChatConversation,
     dissolveChatConversation,
     leaveChatConversation,
+    listChatAnnouncements,
     listChatConversations,
     listChatMessages,
     listChatUsers,
     markChatConversationRead,
+    publishChatAnnouncement,
     removeChatParticipant,
     removeUserFromManagementGroup,
     resolveRealtimePrincipal,

@@ -8,6 +8,7 @@ function createUserService(context = {}) {
     fail,
     getById,
     getRegistrationApprovalCode,
+    refreshRegistrationApprovalCode,
     hashPassword,
     log,
     nowIso,
@@ -20,6 +21,7 @@ function createUserService(context = {}) {
     requireAdminRole,
     requireUser,
     safeUser,
+    updateRegistrationApprovalCodeTtl,
     verifyPassword,
     withTransaction
   } = context;
@@ -265,6 +267,16 @@ function createUserService(context = {}) {
     return ok(await getRegistrationApprovalCode());
   }
 
+  async function adminRefreshRegistrationApprovalCode(_, token) {
+    await requireAdminRole(token, ['super_admin', 'admin'], ['user.approve']);
+    return ok(await refreshRegistrationApprovalCode());
+  }
+
+  async function adminUpdateRegistrationApprovalCodeTtl(payload = {}, token) {
+    await requireAdminRole(token, ['super_admin', 'admin'], ['user.approve']);
+    return ok(await updateRegistrationApprovalCodeTtl(payload.ttl_minutes));
+  }
+
   function passwordResetError(message, status = 400, code = 2001) {
     const error = new Error(message);
     error.status = status;
@@ -335,14 +347,38 @@ function createUserService(context = {}) {
       password_reset_required: false
     });
   }
-  async function adminDeleteUser(payload, token) {
-    const { admin } = await requireAdminRole(token, ['super_admin', 'admin'], ['user.manage']);
-    const userId = assertText(payload.user_id, 'user_id', 60);
-    const user = await getById('users', userId);
-    if (!user) return fail('用户不存在。', 404, 3004);
-    if (user.role === 'super_admin') return fail('不能删除最高权限管理员。', 403, 1003);
-    const denied = ensureCanModifyUser(admin, user);
-    if (denied) return denied;
+  function deleteOperationError(message, status = 400, code = 2001) {
+    const error = new Error(message);
+    error.status = status;
+    error.code = code;
+    return error;
+  }
+
+  function normalizeDeleteIds(value, fieldName) {
+    if (!Array.isArray(value) || value.length < 1 || value.length > 100) {
+      throw deleteOperationError(`${fieldName} must contain between 1 and 100 ids.`);
+    }
+    const ids = value.map((id) => {
+      if (typeof id !== 'string' || !id.trim() || id.trim().length > 60) {
+        throw deleteOperationError(`${fieldName} contains an invalid id.`);
+      }
+      return id.trim();
+    });
+    if (new Set(ids).size !== ids.length) {
+      throw deleteOperationError(`${fieldName} must not contain duplicate ids.`);
+    }
+    return ids;
+  }
+
+  async function requireSuperAdminForDeletion(token) {
+    const { admin } = await requireAdminRole(token, ['super_admin'], []);
+    if (!isSuperAdminOperator(admin)) {
+      throw deleteOperationError('\u53ea\u6709\u6700\u9ad8\u6743\u9650\u7ba1\u7406\u5458\u53ef\u4ee5\u5220\u9664\u7528\u6237\u3002', 403, 1003);
+    }
+    return admin;
+  }
+
+  async function deleteUsersByIds(userIds, admin) {
     const linkedChecks = [
       ['reservations', 'user_id'],
       ['borrow_records', 'user_id'],
@@ -352,36 +388,85 @@ function createUserService(context = {}) {
       ['usage_log', 'user_id'],
       ['user_activity_logs', 'user_id']
     ];
-    let linkedCount = 0;
-    for (const [table, column] of linkedChecks) {
-      const row = await queryOne(`select count(*)::int as count from ${table} where ${column} = $1`, [userId]);
-      linkedCount += Number(row?.count || 0);
-    }
 
-    await withTransaction(async (client) => {
+    return withTransaction(async (client) => {
       const txQuery = (sql, params = []) => client.query(sql, params);
-      await client.query('delete from admin_roles where user_id = $1', [userId]);
-      await client.query('delete from user_roles where user_id = $1', [userId]);
-      if (linkedCount > 0) {
-        await client.query(`
-          update users
-          set status = $1,
-              is_banned = true,
-              wechat_openid = null,
-              wechat_nickname = null,
-              password_hash = '',
-              password_salt = '',
-              updated_at = $2
-          where id = $3
-        `, ['disabled', nowIso(), userId]);
-        await log('disable_user', `Disabled user with ${linkedCount} linked records: ${user.name || user.phone || userId}`, admin, null, userId, txQuery);
-        return;
+      const targets = [];
+      for (const userId of userIds) {
+        const locked = await client.query('select * from users where id = $1 for update', [userId]);
+        const user = locked.rows?.[0];
+        if (!user) throw deleteOperationError('\u7528\u6237\u4e0d\u5b58\u5728\u3002', 404, 3004);
+        const assignedResult = await client.query('select role_key, permissions from admin_roles where user_id = $1 limit 1 for update', [userId]);
+        const assignedRole = assignedResult.rows?.[0] || {};
+        if (user.role === 'super_admin' || isHighestAdminOperator({}, assignedRole)) {
+          throw deleteOperationError('\u4e0d\u80fd\u5220\u9664\u6700\u9ad8\u6743\u9650\u7ba1\u7406\u5458\u3002', 403, 1003);
+        }
+        if (isSelfTarget(admin, user)) {
+          throw deleteOperationError('\u4e0d\u80fd\u5220\u9664\u5f53\u524d\u767b\u5f55\u7684\u7ba1\u7406\u5458\u8d26\u53f7\u3002', 403, 1003);
+        }
+        targets.push({ userId, user });
       }
-      await client.query('delete from user_activity_logs where user_id = $1', [userId]);
-      await client.query('delete from users where id = $1', [userId]);
-      await log('delete_user', `Deleted user ${user.name || user.phone || userId}`, admin, null, userId, txQuery);
+
+      const results = [];
+      for (const { userId } of targets) {
+        let linkedCount = 0;
+        for (const [table, column] of linkedChecks) {
+          const countResult = await client.query(`select count(*)::int as count from ${table} where ${column} = $1`, [userId]);
+          linkedCount += Number(countResult.rows?.[0]?.count || 0);
+        }
+
+        await client.query('delete from admin_roles where user_id = $1', [userId]);
+        await client.query('delete from user_roles where user_id = $1', [userId]);
+        if (linkedCount > 0) {
+          await client.query(`
+            update users
+            set status = $1,
+                is_banned = true,
+                wechat_openid = null,
+                wechat_nickname = null,
+                password_hash = '',
+                password_salt = '',
+                updated_at = $2
+            where id = $3
+          `, ['disabled', nowIso(), userId]);
+          await log('disable_user', {
+            message: '\u7528\u6237\u5b58\u5728\u5173\u8054\u5386\u53f2\uff0c\u5df2\u505c\u7528\u5e76\u64a4\u9500\u7ba1\u7406\u6743\u9650',
+            linked_count: linkedCount
+          }, admin, null, userId, txQuery);
+        } else {
+          await client.query('delete from user_activity_logs where user_id = $1', [userId]);
+          await client.query('delete from users where id = $1', [userId]);
+          await log('delete_user', { message: '\u7528\u6237\u5df2\u5220\u9664', linked_count: 0 }, admin, null, userId, txQuery);
+        }
+        results.push({ user_id: userId, soft_deleted: linkedCount > 0, linked_count: linkedCount });
+      }
+      return results;
     });
-    return ok({ message: linkedCount > 0 ? '用户存在关联记录，已改为停用。' : '用户已删除。', soft_deleted: linkedCount > 0, linked_count: linkedCount });
+  }
+
+  async function adminDeleteUser(payload, token) {
+    const admin = await requireSuperAdminForDeletion(token);
+    const userIds = normalizeDeleteIds([payload.user_id], 'user_ids');
+    const [result] = await deleteUsersByIds(userIds, admin);
+    return ok({
+      message: result.soft_deleted ? '\u7528\u6237\u5b58\u5728\u5173\u8054\u8bb0\u5f55\uff0c\u5df2\u6539\u4e3a\u505c\u7528\u3002' : '\u7528\u6237\u5df2\u5220\u9664\u3002',
+      ...result
+    });
+  }
+
+  async function adminDeleteUsers(payload, token) {
+    const admin = await requireSuperAdminForDeletion(token);
+    const userIds = normalizeDeleteIds(payload.user_ids, 'user_ids');
+    const results = await deleteUsersByIds(userIds, admin);
+    return ok({
+      message: '\u7528\u6237\u6279\u91cf\u5220\u9664\u5df2\u5b8c\u6210\u3002',
+      requested_count: userIds.length,
+      deleted_count: results.filter((item) => !item.soft_deleted).length,
+      soft_deleted_count: results.filter((item) => item.soft_deleted).length,
+      deleted_ids: userIds,
+      failed_ids: [],
+      results
+    });
   }
 
   async function adminSetUserStatus(payload, token) {
@@ -463,8 +548,11 @@ function createUserService(context = {}) {
 
   return {
     adminDeleteUser,
+    adminDeleteUsers,
     adminGetUserDetail,
     adminGetRegistrationApprovalCode,
+    adminRefreshRegistrationApprovalCode,
+    adminUpdateRegistrationApprovalCodeTtl,
     adminListUsers,
     adminSetUserBan,
     adminSetUserStatus,

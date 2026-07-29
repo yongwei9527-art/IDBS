@@ -5,6 +5,7 @@ import { queryClientConfig } from './lib/query-defaults';
 import { AuthProvider } from './features/auth/use-auth';
 import { WsProvider } from './lib/ws';
 import { Toaster } from './components/ui/toaster';
+import { Capacitor } from '@capacitor/core';
 import './styles/globals.css';
 import './styles/visual-system.css';
 import { routes } from './routes';
@@ -27,9 +28,9 @@ function markRuntimeSurface() {
   const isAndroid = /Android/i.test(ua);
   const hasChromeShell = /Chrome\//i.test(ua) || /EdgA\//i.test(ua);
   const isWebView = isAndroid && (/(; wv\)|Version\/\d+\.\d+ Chrome\/)/i.test(ua) || !hasChromeShell);
-  const isCapacitor = Boolean((window as unknown as { Capacitor?: unknown }).Capacitor);
+  const isNativeCapacitor = Capacitor.isNativePlatform();
   const isStandalone = window.matchMedia?.('(display-mode: standalone)').matches;
-  if (isAndroid || isWebView || isCapacitor || isStandalone) {
+  if (isAndroid || isWebView || isNativeCapacitor || isStandalone) {
     document.documentElement.dataset.runtimeSurface = 'apk';
   }
 }

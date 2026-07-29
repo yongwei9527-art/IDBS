@@ -7,6 +7,34 @@
 使用或部署前，请先阅读 [免责声明](./DISCLAIMER.md)。
 
 
+## v5.0.5 最新版本
+
+v5.0.5 增加实验室总群公告历史与进群弹窗、后台注册批准码 1–1440 分钟时限/自动与手动刷新、Android FCM 可选推送、最高管理员用户/设备删除，以及完整的 VPS 安装、升级、备份和 `sudo db` 管理面板。
+
+- [v5.0.5 发布说明](./docs/RELEASE-v5.0.5.md)
+- [VPS 安装、管理与升级说明](./docs/VPS_DEPLOYMENT.md)
+- [GitHub v5.0.5 安装包下载](https://github.com/yongwei9527-art/IDBS/releases/tag/v5.0.5)
+
+新装用户使用正式签名 APK；已安装 v5.0.4 Debug 包的用户使用 Release 中的 `debug-upgrade.apk` 兼容升级包。
+## Android FCM background and lock-screen notifications
+
+Android Firebase Cloud Messaging (FCM) is integrated for generic new-message alerts while the Android app is in the background or on the lock screen.
+
+- **Explicit opt-in:** In the Android app's Notification Center, enable Android notifications first, then select **Register remote alerts**. A device registration is bound to the signed-in user and is revoked on logout when possible.
+- **Privacy:** Lock-screen and banner notifications only show **New message alert** and **You received a new message**. They never include chat text, names, phone numbers, passwords, JWTs, device tokens, or cookies.
+- **Permissions:** Android declares only network access/state, Android 13+ notifications, and photo-picker compatibility permissions. Image selection uses the system picker whenever possible.
+- **Fallback:** If FCM is not configured or is temporarily unavailable, in-app notifications and foreground WebSocket/local notifications continue to work. Sending chat messages is not blocked.
+- **Android limitation:** After a user force-stops the app in Android settings, FCM cannot be delivered until the user opens the app again.
+
+### Secure FCM deployment
+
+1. Create a Firebase Android app using package ID com.laboratory.managementsystem.
+2. Keep Firebase's google-services.json only in web/android/app/google-services.json on local/CI machines. It is ignored by Git and must never be committed.
+3. Store the complete Firebase service-account JSON only in the server deployment secret FCM_SERVICE_ACCOUNT_JSON. Never put it in source code, README, logs, releases, or chat.
+4. Redeploy the server and install the new APK. Device registration tokens are encrypted at rest, deduplicated with an HMAC, and disabled when FCM reports them invalid.
+
+Without FCM_SERVICE_ACCOUNT_JSON, the service safely falls back without exposing credentials or interrupting chat.
+
 ## v5.0.4 Android 消息提醒体验与测试
 
 本版完善 Android 安装包中的消息提醒体验，并补充实时事件隔离测试：
@@ -60,11 +88,16 @@ bash <(curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/sc
 RESET_LABORATORY_MANAGEMENT_SYSTEM_DATA=1 bash <(curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/prepare-vps.sh)
 ```
 
-安装完成后终端会显示初始后台密码：
+全新安装会提供默认最高管理员账号并生成随机强临时密码，也可在向导中自行输入账号、姓名和 12–128 位密码。安装完成后会明确输出：
 
-```bash
-Initial admin password: LABORATORY_MANAGEMENT_SYSTEM_xxxxxxxxxxxx
+```text
+App 服务器连接地址：https://lab.example.com
+网页访问地址：https://lab.example.com/
+最高管理员账号：13900000000
+最高管理员临时密码：IDBS!随机强密码
 ```
+
+初始或通过 VPS 面板重置后的密码都是临时密码，账号首次登录后必须立即修改。安装信息保存在 `/var/www/laboratory-management-system/shared/install-info`，权限为 `root:root 600`；明文临时凭据仍有泄露风险，请限制 root 权限并避免复制到聊天、工单或日志。
 
 安装脚本会询问“服务器是否有域名”，请按实际情况选择：
 
@@ -75,6 +108,14 @@ Initial admin password: LABORATORY_MANAGEMENT_SYSTEM_xxxxxxxxxxxx
 | 本地/局域网调试 | `http://电脑局域网IP:3000/` | `电脑局域网IP:3000` | 仅适合开发调试。 |
 
 APK 内不写死服务器地址。登录页会自动识别：域名默认补 `https://`，IP/localhost 默认补 `http://`；后端安装脚本会把 APK WebView 来源 `https://localhost` 加入 `CORS_ORIGIN`。
+
+安装后运行以下命令打开 VPS 小面板：
+
+```bash
+sudo db
+```
+
+菜单支持：1）查看 App/网页地址和最近生成的最高管理员临时凭据；2）重置最高管理员账号密码（使用默认随机强密码或自行输入）；3）退出。重置后同样强制首次登录改密。
 
 如果访问 IP 时看到 `Welcome to nginx!`，说明 Nginx 默认站点抢占了请求。重新执行一键安装命令即可自动修复默认站点：
 
@@ -115,17 +156,13 @@ sudo journalctl -u laboratory_management_system -f
 sudo systemctl restart laboratory_management_system
 ```
 
-重置后台管理员密码（VPS 一键安装/更新后可用）：
+查看或重置最高管理员临时凭据：
 
 ```bash
-sudo laboratory-management-system-reset-admin-password
+sudo db
 ```
 
-命令会要求输入两次新密码，输入时不会回显。也可以用于自动化脚本：
-
-```bash
-sudo ADMIN_NEW_PASSWORD='新的强密码至少8位' laboratory-management-system-reset-admin-password
-```
+请使用菜单第 2 项重置最高管理员账号密码。面板可生成随机强临时密码，也可输入 12–128 位自定义密码；重置后的账号必须在下次登录时修改密码。
 
 检查接口：
 
@@ -134,10 +171,16 @@ curl http://127.0.0.1:3000/health
 curl http://127.0.0.1:3000/ready
 ```
 
-更新到 GitHub 最新版本：
+升级到 GitHub 最新版本（会先备份数据库和上传文件）：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install-vps.sh)
+sudo laboratory-management-system-update
+```
+
+如需升级到指定发布标签：
+
+```bash
+sudo env RELEASE_REF=v5.0.5 laboratory-management-system-update
 ```
 
 一键卸载/清除 实验室管理系统 相关文件与服务：
@@ -147,6 +190,18 @@ bash <(curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/sc
 ```
 
 该命令会停止并移除 实验室管理系统 的 systemd 服务、清理 Nginx 配置、删除站点文件；如果数据库也需要一并清除，请先确认业务数据已备份，然后在 PostgreSQL 中删除对应数据库与用户。
+
+## 导出表格
+
+后台导出的 CSV 表格在服务器中保存到：
+
+```text
+/var/www/laboratory-management-system/uploads/exports
+```
+
+文件默认保留 7 天。该目录不会由 Nginx 直接公开，不能拼接 `/uploads/exports/...` 下载；管理员应在后台“导出中心”创建任务，完成后点击下载，系统通过带登录鉴权的 `/api/v5/admin/export-jobs/:id/download` 接口返回文件。升级前的上传文件压缩包会排除这些可重新生成的导出文件。
+
+详细安装、面板、升级和恢复说明见 [VPS 部署说明](./docs/VPS_DEPLOYMENT.md)。
 
 ## 自动备份
 

@@ -77,7 +77,7 @@ function createDeviceReadService(context = {}) {
     let sql = 'select * from devices';
     let countSql = 'select count(*)::int as total from devices';
     const params = [];
-    const clauses = [];
+    const clauses = ['deleted_at is null'];
     if (filters.status) { params.push(String(filters.status)); clauses.push(`status = $${params.length}`); }
     if (filters.category) { params.push(String(filters.category)); clauses.push(`category = $${params.length}`); }
     if (filters.keyword) {

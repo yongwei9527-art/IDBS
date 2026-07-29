@@ -195,8 +195,99 @@ function createDeviceAdminService(context = {}) {
     return ok({ message: '设备已恢复可用。' });
   }
 
+  function deviceDeleteError(message, status = 400, code = 2001) {
+    const error = new Error(message);
+    error.status = status;
+    error.code = code;
+    return error;
+  }
+
+  function normalizeDeviceDeleteIds(value) {
+    if (!Array.isArray(value) || value.length < 1 || value.length > 100) {
+      throw deviceDeleteError('device_ids must contain between 1 and 100 ids.');
+    }
+    const ids = value.map((id) => {
+      if (typeof id !== 'string' || !id.trim() || id.trim().length > 60) {
+        throw deviceDeleteError('device_ids contains an invalid id.');
+      }
+      return id.trim();
+    });
+    if (new Set(ids).size !== ids.length) {
+      throw deviceDeleteError('device_ids must not contain duplicate ids.');
+    }
+    return ids;
+  }
+
+  async function requireSuperAdminForDeviceDeletion(token) {
+    const { admin } = await requireAdminRole(token, ['super_admin'], []);
+    if (admin.role !== 'super_admin' && admin.admin_role_key !== 'super_admin') {
+      throw deviceDeleteError('\u53ea\u6709\u6700\u9ad8\u6743\u9650\u7ba1\u7406\u5458\u53ef\u4ee5\u5220\u9664\u8bbe\u5907\u3002', 403, 1003);
+    }
+    return admin;
+  }
+
+  async function deleteDevicesByIds(deviceIds, admin) {
+    return withTransaction(async (client) => {
+      const targets = [];
+      for (const deviceId of deviceIds) {
+        const locked = await client.query('select id, device_code, name, deleted_at from devices where id = $1 for update', [deviceId]);
+        const device = locked.rows?.[0];
+        if (!device || device.deleted_at) {
+          throw deviceDeleteError('\u8bbe\u5907\u4e0d\u5b58\u5728\u6216\u5df2\u5220\u9664\u3002', 404, 3004);
+        }
+        targets.push(device);
+      }
+
+      const deletedAt = nowIso();
+      const operatorId = admin.user_id || admin.id || null;
+      for (const device of targets) {
+        const updated = await client.query(`
+          update devices
+          set deleted_at = $1,
+              status = 'disabled',
+              allow_reservation = false,
+              updated_by = $2,
+              updated_at = $1
+          where id = $3 and deleted_at is null
+        `, [deletedAt, operatorId, device.id]);
+        if (updated.rowCount !== 1) {
+          throw deviceDeleteError('\u8bbe\u5907\u72b6\u6001\u5df2\u53d8\u5316\uff0c\u8bf7\u5237\u65b0\u540e\u91cd\u8bd5\u3002', 409, 3001);
+        }
+        const txQuery = (sql, params = []) => client.query(sql, params);
+        await log('delete_device', {
+          message: '\u8bbe\u5907\u5df2\u8f6f\u5220\u9664\uff0c\u5386\u53f2\u9884\u7ea6\u548c\u501f\u7528\u8bb0\u5f55\u5df2\u4fdd\u7559',
+          soft_deleted: true
+        }, admin, device.id, null, txQuery);
+      }
+      return targets.map((device) => ({ device_id: device.id, soft_deleted: true }));
+    });
+  }
+
+  async function adminDeleteDevice(payload, token) {
+    const admin = await requireSuperAdminForDeviceDeletion(token);
+    const deviceIds = normalizeDeviceDeleteIds([payload.device_id]);
+    const [result] = await deleteDevicesByIds(deviceIds, admin);
+    return ok({ message: '\u8bbe\u5907\u5df2\u8f6f\u5220\u9664\u3002', ...result });
+  }
+
+  async function adminDeleteDevices(payload, token) {
+    const admin = await requireSuperAdminForDeviceDeletion(token);
+    const deviceIds = normalizeDeviceDeleteIds(payload.device_ids);
+    const results = await deleteDevicesByIds(deviceIds, admin);
+    return ok({
+      message: '\u8bbe\u5907\u6279\u91cf\u8f6f\u5220\u9664\u5df2\u5b8c\u6210\u3002',
+      requested_count: deviceIds.length,
+      deleted_count: results.length,
+      deleted_ids: deviceIds,
+      failed_ids: [],
+      results
+    });
+  }
+
   return {
     adminCreateDevice,
+    adminDeleteDevice,
+    adminDeleteDevices,
     adminGetDeviceDetail,
     adminSetDeviceAvailable,
     adminUpdateDevice

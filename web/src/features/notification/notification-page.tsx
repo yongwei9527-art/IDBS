@@ -1,5 +1,5 @@
-﻿import { useEffect, useState } from 'react';
-import { useNotifications, useMarkNotificationsRead, type Notification } from './notification-api';
+import { useEffect, useState } from 'react';
+import { useNotifications, useMarkNotificationsRead, usePushNotificationStatus, type Notification } from './notification-api';
 import { BellRing, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 import { toFriendlyError } from '@/lib/friendly-error';
 import { briefDateTime } from '@/lib/time-format';
 import { OpsBadge, OpsPageHeader } from '@/components/ops/design-system';
-import { getNativeNotificationStatus, requestNativeNotificationPermission, type NativeNotificationStatus } from './native-notifications';
+import { enableRemotePushNotifications, getNativeNotificationStatus, getRemotePushError, requestNativeNotificationPermission, type NativeNotificationStatus } from './native-notifications';
 
 function levelClasses(level?: string) {
   if (level === 'success') return 'border-emerald-200 bg-emerald-50/70 dark:border-emerald-400/30 dark:bg-emerald-400/10';
@@ -20,12 +20,7 @@ function NotificationItem({ n }: { n: Notification }) {
   const mark = useMarkNotificationsRead();
   const canOpenAction = Boolean(n.action_url && n.action_url.startsWith('/'));
   return (
-    <article
-      className={cn(
-        'ops-list-item p-4',
-        n.is_read ? 'bg-card/80 opacity-75' : levelClasses(n.level)
-      )}
-    >
+    <article className={cn('ops-list-item p-4', n.is_read ? 'bg-card/80 opacity-75' : levelClasses(n.level))}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -34,52 +29,51 @@ function NotificationItem({ n }: { n: Notification }) {
           </div>
           <h2 className="mt-2 truncate text-sm font-semibold text-foreground">{n.title}</h2>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">{n.content}</p>
-          {canOpenAction ? (
-            <a className="mt-3 inline-flex items-center gap-1 text-xs font-bold text-primary hover:underline" href={n.action_url}>
-              查看内容 <ExternalLink className="h-3 w-3" />
-            </a>
-          ) : null}
+          {canOpenAction ? <a className="mt-3 inline-flex items-center gap-1 text-xs font-bold text-primary hover:underline" href={n.action_url}>查看内容 <ExternalLink className="h-3 w-3" /></a> : null}
         </div>
-        {!n.is_read ? (
-          <Button variant="outline" size="sm" className="shrink-0" disabled={mark.isPending} onClick={() => mark.mutate([n.id])}>
-            已读
-          </Button>
-        ) : null}
+        {!n.is_read ? <Button variant="outline" size="sm" className="shrink-0" disabled={mark.isPending} onClick={() => mark.mutate([n.id])}>已读</Button> : null}
       </div>
     </article>
   );
 }
 
-
 function NativeNotificationSettings() {
   const [status, setStatus] = useState<NativeNotificationStatus | null>(null);
   const [isRequesting, setIsRequesting] = useState(false);
-
+  const [remoteStatus, setRemoteStatus] = useState<'idle' | 'registering' | 'ready' | 'error'>('idle');
+  const pushStatus = usePushNotificationStatus();
   const refresh = () => {
     void getNativeNotificationStatus().then(setStatus);
+    void pushStatus.refetch();
   };
 
-  useEffect(() => {
-    refresh();
-  }, []);
-
-  if (status === null || status === 'unsupported') return null;
+  useEffect(() => { refresh(); }, []);
 
   const enabled = status === 'granted';
   const denied = status === 'denied';
+  const activeDeviceCount = pushStatus.data?.active_device_count ?? 0;
   const description = enabled
-    ? '系统消息提醒已开启。App 在线且实时连接正常时，其他成员的新聊天消息会显示为系统提醒。'
+    ? '系统消息提醒已开启。App 在线时会显示本地提醒；登记远程提醒后，后台或锁屏时也可收到通用的新消息提示。'
     : denied
       ? '系统通知目前已关闭。请在手机系统设置中为本应用开启通知，然后返回此页重新检查。'
       : '开启后，App 在线时收到其他成员的新聊天消息会显示系统提醒。通知不会包含聊天正文或发送者个人信息。';
+  const remoteDescription = remoteStatus === 'error'
+    ? getRemotePushError()
+    : activeDeviceCount > 0
+      ? '此设备已登记远程提醒，后台或锁屏时将显示通用的新消息提示。'
+      : pushStatus.data?.configured === false
+        ? '服务器尚未配置远程提醒，当前仍可使用站内与在线本地提醒。'
+        : '可登记此设备以接收后台与锁屏场景的通用新消息提醒。';
 
   const requestPermission = async () => {
     setIsRequesting(true);
-    try {
-      setStatus(await requestNativeNotificationPermission());
-    } finally {
-      setIsRequesting(false);
-    }
+    try { setStatus(await requestNativeNotificationPermission()); } finally { setIsRequesting(false); }
+  };
+  const enableRemote = async () => {
+    setRemoteStatus('registering');
+    const result = await enableRemotePushNotifications();
+    setRemoteStatus(result === 'ready' ? 'ready' : result === 'error' ? 'error' : 'idle');
+    await pushStatus.refetch();
   };
 
   return (
@@ -92,18 +86,12 @@ function NativeNotificationSettings() {
             <OpsBadge tone={enabled ? 'success' : denied ? 'warning' : 'muted'}>{enabled ? '已开启' : denied ? '需在系统设置开启' : '尚未开启'}</OpsBadge>
           </div>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p>
+          {enabled ? <p className="mt-1 text-xs leading-5 text-muted-foreground">{remoteDescription}</p> : null}
           <p className="mt-1 text-xs leading-5 text-muted-foreground">为保护隐私，锁屏与横幅只显示通用的新消息提醒。</p>
         </div>
-        {enabled ? (
-          <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={refresh}>检查状态</Button>
-        ) : denied ? (
-          <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={refresh}>重新检查</Button>
-        ) : (
-          <Button type="button" size="sm" className="shrink-0" disabled={isRequesting} onClick={() => void requestPermission()}>
-            <BellRing className="h-4 w-4" />
-            {isRequesting ? '正在请求授权…' : '开启消息提醒'}
-          </Button>
-        )}
+        <div className="flex shrink-0 flex-wrap gap-2">
+          {enabled ? <><Button type="button" variant="outline" size="sm" onClick={refresh}>检查状态</Button><Button type="button" size="sm" disabled={remoteStatus === 'registering'} onClick={() => void enableRemote()}><BellRing className="h-4 w-4" />{remoteStatus === 'registering' ? '正在登记…' : activeDeviceCount > 0 ? '更新远程登记' : '登记远程提醒'}</Button></> : denied ? <Button type="button" variant="outline" size="sm" onClick={refresh}>重新检查</Button> : <Button type="button" size="sm" disabled={isRequesting} onClick={() => void requestPermission()}><BellRing className="h-4 w-4" />{isRequesting ? '正在请求授权…' : '开启消息提醒'}</Button>}
+        </div>
       </div>
     </section>
   );
@@ -117,32 +105,10 @@ export function NotificationPage() {
 
   return (
     <div className="ops-page-stack max-w-4xl">
-      <OpsPageHeader title="通知中心" className="ops-page-header--compact">
-        <OpsBadge tone="muted">全部 {data.length}</OpsBadge>
-        <OpsBadge tone={unread.length ? 'warning' : 'success'}>未读 {unread.length}</OpsBadge>
-      </OpsPageHeader>
-
+      <OpsPageHeader title="通知中心" className="ops-page-header--compact"><OpsBadge tone="muted">全部 {data.length}</OpsBadge><OpsBadge tone={unread.length ? 'warning' : 'success'}>未读 {unread.length}</OpsBadge></OpsPageHeader>
       <NativeNotificationSettings />
-
-      {unread.length > 0 ? (
-        <Button variant="outline" size="sm" className="w-fit" onClick={() => markAll.mutate(allIds)} disabled={markAll.isPending}>
-          全部已读
-        </Button>
-      ) : null}
-
-      {isLoading ? (
-        <Card className="ops-card"><CardContent className="py-8 text-center text-muted-foreground">加载中…</CardContent></Card>
-      ) : isError ? (
-        <Card className="ops-card"><CardContent className="py-8 text-center text-sm text-destructive">{toFriendlyError(error, '通知加载失败')}</CardContent></Card>
-      ) : data.length === 0 ? (
-        <Card className="ops-card"><CardContent className="py-8 text-center text-muted-foreground">暂无通知</CardContent></Card>
-      ) : (
-        <div className="grid gap-3">
-          {unread.length === 0 ? <p className="rounded-2xl border bg-card/70 px-4 py-3 text-center text-xs text-muted-foreground">没有未读通知</p> : null}
-          {data.map((n) => <NotificationItem key={n.id} n={n} />)}
-        </div>
-      )}
+      {unread.length > 0 ? <Button variant="outline" size="sm" className="w-fit" onClick={() => markAll.mutate(allIds)} disabled={markAll.isPending}>全部已读</Button> : null}
+      {isLoading ? <Card className="ops-card"><CardContent className="py-8 text-center text-muted-foreground">加载中…</CardContent></Card> : isError ? <Card className="ops-card"><CardContent className="py-8 text-center text-sm text-destructive">{toFriendlyError(error, '通知加载失败')}</CardContent></Card> : data.length === 0 ? <Card className="ops-card"><CardContent className="py-8 text-center text-muted-foreground">暂无通知</CardContent></Card> : <div className="grid gap-3">{unread.length === 0 ? <p className="rounded-2xl border bg-card/70 px-4 py-3 text-center text-xs text-muted-foreground">没有未读通知</p> : null}{data.map((n) => <NotificationItem key={n.id} n={n} />)}</div>}
     </div>
   );
 }
-

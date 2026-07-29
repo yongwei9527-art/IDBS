@@ -293,7 +293,7 @@ function DetailPreview({ detail }: { detail: unknown }) {
   const text = detailText(detail);
   const isLong = text.length > 140 || text.includes('\n');
   return (
-    <div className="mt-2 rounded-xl bg-muted/40 px-3 py-2 text-xs leading-5 text-muted-foreground">
+    <div className="mt-2 rounded-lg bg-muted/40 px-3 py-2 text-xs leading-5 text-muted-foreground">
       <pre className={`${open ? 'max-h-72 overflow-auto' : 'line-clamp-2'} whitespace-pre-wrap break-words font-mono`} title={text}>
         {text}
       </pre>
@@ -371,7 +371,7 @@ export function AdminAuditPage() {
             </Button>
             {capability.canExportStats && capability.canViewAudit && (
               <Link
-                className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-input bg-card/80 px-3 text-sm font-semibold shadow-[var(--shadow-soft)] transition-all hover:-translate-y-px hover:bg-secondary"
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-input bg-card px-3 text-sm font-semibold transition-colors hover:bg-secondary"
                 to={'/admin/export' as any}
                 search={{ type: 'audit_logs' } as any}
               >
@@ -434,7 +434,7 @@ export function AdminAuditPage() {
               const risk = riskLevel(log);
               const Icon = risk.icon;
               return (
-                <article key={log.id} className="grid gap-3 rounded-2xl border bg-background/75 p-4 shadow-sm xl:grid-cols-[190px_minmax(0,1fr)_220px] xl:items-start">
+                <article key={log.id} className="grid gap-3 rounded-lg border bg-background/75 p-4 shadow-none xl:grid-cols-[190px_minmax(0,1fr)_220px] xl:items-start">
                   <div>
                     <p className="text-xs text-muted-foreground">发生时间</p>
                     <p className="mt-1 font-semibold tabular-nums">{formatTime(log.created_at)}</p>
@@ -450,7 +450,7 @@ export function AdminAuditPage() {
                     <p className="mt-2 text-sm text-muted-foreground"><TargetSummary log={log} /></p>
                     <DetailPreview detail={log.detail} />
                   </div>
-                  <div className="rounded-2xl bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">
+                  <div className="rounded-lg bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">
                     <p>操作人：<span className="font-semibold text-foreground">{operatorName(log.operator_name)}</span></p>
                     <p>IP：<span className="tabular-nums">{log.ip_address || '—'}</span></p>
                     <p><CompactId value={log.id} prefix="LOG" /></p>
@@ -461,7 +461,7 @@ export function AdminAuditPage() {
           </div>
           {isLoading && <p className="py-8 text-center text-muted-foreground">加载审计日志中…</p>}
           {error && <p className="py-8 text-center text-destructive">加载失败：{toFriendlyError(error)}</p>}
-          {!isLoading && displayedLogs.length === 0 && <p className="rounded-2xl border border-dashed py-10 text-center text-sm text-muted-foreground">暂无匹配审计记录</p>}
+          {!isLoading && displayedLogs.length === 0 && <p className="rounded-lg border border-dashed py-10 text-center text-sm text-muted-foreground">暂无匹配审计记录</p>}
         </CardContent>
       </Card>
     </div>

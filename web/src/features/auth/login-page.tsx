@@ -70,7 +70,7 @@ function toChineseError(err: unknown, fallback: string = copy.requestFailed) {
   if (lower.includes('unauthorized') || lower.includes('invalid credentials')) return copy.invalidCredentials;
   if (lower.includes('forbidden') || lower.includes('permission')) return copy.forbidden;
   if (lower.includes('timeout')) return copy.timeout;
-  if (/^[\x00-\x7F]+$/.test(raw)) return fallback;
+  if (Array.from(raw).every((character) => character.charCodeAt(0) <= 0x7f)) return fallback;
   return raw;
 }
 

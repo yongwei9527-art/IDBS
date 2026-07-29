@@ -84,6 +84,8 @@ All endpoints in this section require authentication.
 - `GET /api/v5/chat/users` - list users available for a conversation.
 - `GET /api/v5/chat/conversations` - list conversations.
 - `POST /api/v5/chat/conversations` - create a conversation.
+- `GET /api/v5/chat/conversations/:id/announcements` - list the current and previous management-group announcements.
+- `POST /api/v5/chat/conversations/:id/announcements` - publish a new immutable announcement version (authorized administrators only).
 - `GET /api/v5/chat/conversations/:id/messages` - list messages.
 - `POST /api/v5/chat/conversations/:id/messages` - send a message.
 - `PATCH /api/v5/chat/conversations/:id/read` - acknowledge messages as read.
@@ -119,6 +121,11 @@ by the server. Do not infer authorization only from a visible menu item.
 - `GET /api/v5/admin/devices/:id` - read managed device detail.
 - `PATCH /api/v5/admin/devices/:id/availability` - change availability.
 - `GET /api/v5/admin/users` - list users.
+- `GET /api/v5/admin/users/registration-approval-code` - read the current registration approval code, expiry, and configured validity; requires `user.approve`.
+- `POST /api/v5/admin/users/registration-approval-code/refresh` - manually rotate the registration approval code and immediately invalidate the old code; requires `user.approve`.
+- `PUT /api/v5/admin/users/registration-approval-code/settings` - set the validity with `{ "ttl_minutes": <integer> }`; requires `user.approve`, defaults to 1 minute, and accepts 1–1440 minutes.
+
+The registration approval code rotates automatically at the configured interval. To tolerate requests crossing an automatic rotation boundary, validation accepts the current time window and the immediately previous time window. A manual refresh changes the code generation immediately, so every code from the old generation becomes invalid at once and is not retained by the previous-window compatibility rule. Updating the validity also rotates the current code.
 - `GET /api/v5/admin/users/:id` - read a user.
 - `PATCH /api/v5/admin/users/:id/status` - change user status.
 - `PUT /api/v5/admin/users/:id/ban` - ban or unban a user.

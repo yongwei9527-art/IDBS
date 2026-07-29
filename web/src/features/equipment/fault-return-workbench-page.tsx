@@ -268,7 +268,7 @@ export function AdminFaultsPage() {
                         <Button size="sm" variant="outline" disabled={resolve.isPending} onClick={() => handleUpdate(report, 'resolved', { keepMaintenance: true })}>解决·维护</Button>
                       ) : null}
                       {canManage && report.status !== 'closed' ? (
-                        <Button size="sm" variant="outline" disabled={resolve.isPending} onClick={() => handleUpdate(report, 'closed', { keepMaintenance: true })}>关闭</Button>
+                        <Button size="sm" variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive/5" disabled={resolve.isPending} onClick={() => handleUpdate(report, 'closed', { keepMaintenance: true })}>关闭</Button>
                       ) : null}
                     </div>
                   </div>

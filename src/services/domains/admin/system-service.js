@@ -1,4 +1,4 @@
-﻿function createAdminSystemService(context = {}) {
+function createAdminSystemService(context = {}) {
   const {
     assertText,
     DEFAULT_SECURITY_CONFIG,
@@ -146,7 +146,7 @@
       ['require_return_photo', 'require_return_photo', 'Whether return photos are required before ending usage', true],
       ['block_ip_access_enabled', 'block_ip_access_enabled', 'Whether public pages and login challenge are blocked when accessed by IP host', true],
       ['public_show_reserver_name', 'public_show_reserver_name', 'Whether public users can see reserver name', true],
-      ['public_show_reserver_phone', 'public_show_reserver_phone', 'Whether public users can see reserver phone', true],
+
       ['public_show_reserver_student_no', 'public_show_reserver_student_no', 'Whether public users can see reserver student number', true],
       ['site_domain', 'site_domain', 'Configured public access domain'],
       ['system_notice_enabled', 'system_notice_enabled', 'Whether the user announcement is enabled', true],
@@ -164,7 +164,7 @@
       if (key === 'registration_approval_code_ttl_minutes') {
         const minutes = Number(value);
         if (!Number.isFinite(minutes) || minutes < 1 || minutes > 24 * 60) {
-          const error = new Error('?????????? 1 ? 1440 ?????');
+          const error = new Error('批准码有效期必须在 1 到 1440 分钟之间。');
           error.status = 400;
           error.code = 2001;
           throw error;

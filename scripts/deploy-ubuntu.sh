@@ -17,6 +17,11 @@ BACKUP_TIMER_FILE="/etc/systemd/system/${APP_NAME}-backup.timer"
 NGINX_FILE="/etc/nginx/sites-available/${APP_NAME}.conf"
 NGINX_LINK="/etc/nginx/sites-enabled/${APP_NAME}.conf"
 ADMIN_RESET_COMMAND="/usr/local/bin/${APP_NAME}-reset-admin-password"
+UPDATE_COMMAND="/usr/local/bin/laboratory-management-system-update"
+LEGACY_UPDATE_COMMAND="/usr/local/bin/${APP_NAME}-update"
+DB_COMMAND="/usr/local/bin/db"
+INSTALL_INFO_FILE="$APP_SHARED/install-info"
+PENDING_ADMIN_FILE="$APP_SHARED/.initial-super-admin-pending"
 PORT="${PORT:-3000}"
 DOMAIN_NAME="${DOMAIN_NAME:-_}"
 ENV_CREATED=0
@@ -42,8 +47,8 @@ install_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
   apt-get install -y curl ca-certificates gnupg nginx openssl postgresql postgresql-client rsync
-  if ! command -v node >/dev/null 2>&1; then
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  if ! command -v node >/dev/null 2>&1 || [ "$(node -p 'Number(process.versions.node.split(`.`)[0])')" -lt 22 ]; then
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
     apt-get install -y nodejs
   fi
 }
@@ -52,8 +57,17 @@ ensure_user() {
   if ! id "$APP_USER" >/dev/null 2>&1; then
     useradd --system --create-home --shell /usr/sbin/nologin "$APP_USER"
   fi
-  mkdir -p "$APP_BASE" "$APP_SHARED" "$APP_UPLOADS" "$APP_BACKUPS"
-  chown -R "$APP_USER:$APP_GROUP" "$APP_BASE"
+  mkdir -p "$APP_BASE" "$APP_CURRENT" "$APP_SHARED" "$APP_UPLOADS" "$APP_BACKUPS"
+  chown root:root "$APP_BASE" "$APP_SHARED"
+  chmod 755 "$APP_BASE"
+  chmod 700 "$APP_SHARED"
+  chown -R "$APP_USER:$APP_GROUP" "$APP_CURRENT" "$APP_UPLOADS" "$APP_BACKUPS"
+  for root_only_file in "$INSTALL_INFO_FILE" "$PENDING_ADMIN_FILE"; do
+    if [ -f "$root_only_file" ]; then
+      chown root:root "$root_only_file"
+      chmod 600 "$root_only_file"
+    fi
+  done
 }
 
 sync_app() {
@@ -94,7 +108,10 @@ EOF
     ENV_CREATED=1
   fi
   repair_env_placeholders
-  chown "$APP_USER:$APP_GROUP" "$ENV_FILE"
+  if [ -n "${CORS_ORIGIN:-}" ]; then
+    set_env_value CORS_ORIGIN "$CORS_ORIGIN"
+  fi
+  chown root:root "$ENV_FILE"
   chmod 600 "$ENV_FILE"
 }
 
@@ -367,6 +384,33 @@ EOF
   chmod 755 "$ADMIN_RESET_COMMAND"
 }
 
+install_update_command() {
+  local quoted_app_base quoted_src_dir quoted_update_script
+  printf -v quoted_app_base '%q' "$APP_BASE"
+  printf -v quoted_src_dir '%q' "$ROOT_DIR"
+  printf -v quoted_update_script '%q' "$APP_CURRENT/scripts/update-vps.sh"
+  cat > "$UPDATE_COMMAND" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+exec env APP_BASE=$quoted_app_base SRC_DIR=$quoted_src_dir bash $quoted_update_script "\$@"
+EOF
+  chmod 755 "$UPDATE_COMMAND"
+  ln -sf "$UPDATE_COMMAND" "$LEGACY_UPDATE_COMMAND"
+}
+
+install_db_panel() {
+  local quoted_app_base quoted_app_current quoted_panel_script
+  printf -v quoted_app_base '%q' "$APP_BASE"
+  printf -v quoted_app_current '%q' "$APP_CURRENT"
+  printf -v quoted_panel_script '%q' "$APP_CURRENT/scripts/vps-db-panel.sh"
+  cat > "$DB_COMMAND" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+exec env APP_BASE=$quoted_app_base APP_CURRENT=$quoted_app_current bash $quoted_panel_script "\$@"
+EOF
+  chmod 755 "$DB_COMMAND"
+}
+
 install_nginx() {
   rm -f /etc/nginx/sites-enabled/default
   rm -f /etc/nginx/conf.d/default.conf
@@ -377,6 +421,11 @@ server {
   server_name $DOMAIN_NAME;
 
   client_max_body_size 20m;
+
+  # Export jobs are downloaded only through authenticated API routes.
+  location ^~ /uploads/exports/ {
+    return 404;
+  }
 
   location /uploads/ {
     alias $APP_UPLOADS/;
@@ -421,9 +470,39 @@ build_v3_frontend() {
   fi
 
   log "Building 实验室管理系统 5.0 React frontend into public/v5..."
-  npm --prefix "$APP_CURRENT/web" install
+  npm --prefix "$APP_CURRENT/web" ci
   npm --prefix "$APP_CURRENT/web" run build
   npm --prefix "$APP_CURRENT/web" prune --omit=dev
+}
+
+provision_initial_super_admin() {
+  if [ -z "${INITIAL_SUPER_ADMIN_PHONE:-}" ] || [ -z "${INITIAL_SUPER_ADMIN_PASSWORD:-}" ]; then
+    return 0
+  fi
+
+  log "Provisioning the highest administrator login account..."
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+  SUPER_ADMIN_PHONE="$INITIAL_SUPER_ADMIN_PHONE" \
+    SUPER_ADMIN_NAME="${INITIAL_SUPER_ADMIN_NAME:-系统管理员}" \
+    SUPER_ADMIN_PASSWORD="$INITIAL_SUPER_ADMIN_PASSWORD" \
+    node "$APP_CURRENT/scripts/provision-super-admin.js"
+  unset INITIAL_SUPER_ADMIN_PASSWORD SUPER_ADMIN_PASSWORD
+}
+
+verify_service_health() {
+  local attempt
+  for attempt in $(seq 1 30); do
+    if curl -fsS "http://127.0.0.1:$PORT/ready" >/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  journalctl -u "$APP_NAME" -n 80 --no-pager || true
+  log "Service readiness check failed."
+  return 1
 }
 
 main() {
@@ -433,23 +512,29 @@ main() {
   ensure_user
   sync_app
   ensure_env
-  npm --prefix "$APP_CURRENT" install --omit=dev
+  npm --prefix "$APP_CURRENT" ci --omit=dev
   build_v3_frontend
   chown -R "$APP_USER:$APP_GROUP" "$APP_CURRENT"
   ensure_local_database
+  provision_initial_super_admin
   run_doctor_check
   install_service
   install_backup_timer
   install_admin_reset_command
+  install_update_command
+  install_db_panel
   install_nginx
   systemctl restart "$APP_NAME"
+  verify_service_health
   if [ "$ENV_CREATED" = "1" ] || [ "$ADMIN_PASSWORD_ROTATED" = "1" ]; then
-    log "Initial admin password: $(get_env_value ADMIN_PASSWORD)"
-    log "The password can be changed later in the admin security page."
+    log "A separate legacy administrator API password was generated and stored in $ENV_FILE."
+    log "The interactive installer prints the highest administrator login account separately."
   else
     log "Existing environment file kept: $ENV_FILE"
   fi
   log "Reset admin password command: sudo ${APP_NAME}-reset-admin-password"
+  log "Update command: sudo laboratory-management-system-update"
+  log "VPS management panel: sudo db"
   log "Deployment finished. Open http://SERVER_IP/ or your bound domain."
 }
 

@@ -140,7 +140,7 @@ export function MyReservationsPage() {
   }
 
   return (
-    <div className="ops-page-stack reservation-page">
+    <div className="ops-page-stack reservation-page mx-auto max-w-6xl">
       <ActionDialog />
       <OpsPageHeader title="我的预约" />
 
@@ -153,9 +153,9 @@ export function MyReservationsPage() {
         const open = activeBatchId === batch.id;
         const displayStatus = Number(batch.in_use_count || 0) > 0 ? 'in_use' : batch.status;
         return (
-          <Card key={batch.id} className="ops-card">
-            <CardHeader className="p-4 pb-2">
-              <CardTitle className="flex flex-col gap-3 text-base sm:flex-row sm:items-start sm:justify-between">
+          <Card key={batch.id} className="ops-card rounded-xl border-border/60 shadow-none">
+            <CardHeader className="p-3.5 pb-2 sm:p-4 sm:pb-2">
+              <CardTitle className="flex flex-col gap-2.5 text-[15px] leading-snug lg:flex-row lg:items-start lg:justify-between">
                 <div>
                   <div className="flex items-center gap-2">
                     <CalendarClock className="h-4 w-4 text-primary" />
@@ -171,7 +171,7 @@ export function MyReservationsPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 p-4 pt-0">
-              <div className="reservation-batch-summary grid gap-2 sm:grid-cols-2">
+              <div className="reservation-batch-summary grid gap-x-5 gap-y-2 border-y border-border/60 py-3 text-sm lg:grid-cols-2">
                 <p>提交时间：{formatTime(batch.created_at)}</p>
                 <p title={fullDateTimeRange(batch.first_start_time, batch.last_end_time)}>预约范围：{shortDate(batch.first_start_time)} · {compactTimeRange(batch.first_start_time, batch.last_end_time)}</p>
                 <p className="sm:col-span-2">用途：{batch.purpose || '未填写'}</p>
@@ -186,6 +186,7 @@ export function MyReservationsPage() {
                   type="button"
                   variant="outline"
                   size="sm"
+                  className="min-h-11"
                   onClick={() => setActiveBatchId(open ? '' : batch.id)}
                 >
                   {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
@@ -194,11 +195,11 @@ export function MyReservationsPage() {
               </div>
 
               {open ? (
-                <div className="space-y-2 reservation-detail-panel p-3">
+                <div className="space-y-2 reservation-detail-panel border-t border-border/60 pt-3">
                   {detail.isLoading ? <p className="py-4 text-center text-sm text-muted-foreground">明细加载中…</p> : null}
                   {detail.error ? <p className="py-4 text-center text-sm text-destructive">明细加载失败：{toFriendlyError(detail.error)}</p> : null}
                   {detail.data?.items?.map((item) => (
-                    <div key={itemId(item)} className="flex flex-col gap-3 reservation-detail-item p-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div key={itemId(item)} className="flex flex-col gap-3 rounded-lg px-3.5 py-3 reservation-detail-item border-b border-border/60 last:border-b-0 lg:flex-row lg:items-center lg:justify-between">
                       <div>
                         <p className="font-medium">{item.device_name || item.device_code || <CompactId value={item.device_id} prefix="DEV" />}</p>
                         <p className="mt-1 text-xs text-muted-foreground"><span title={fullDateTimeRange(item.start_time, item.end_time)}>{formatDateRange(item)}</span> · {slotDisplayName(item.slot_key)}</p>
@@ -212,6 +213,7 @@ export function MyReservationsPage() {
                           <Button
                             type="button"
                             size="sm"
+                            className="min-h-11"
                             onClick={() => startMutation.mutate(itemId(item))}
                             disabled={startMutation.isPending}
                           >
@@ -220,8 +222,9 @@ export function MyReservationsPage() {
                         ) : null}
                         <Button
                           type="button"
-                          variant="outline"
+                          variant="ghost"
                           size="sm"
+                          className="min-h-11"
                           onClick={() => nav({
                             to: '/chat',
                             search: buildChatSearch({
@@ -246,6 +249,7 @@ export function MyReservationsPage() {
                             type="button"
                             variant="outline"
                             size="sm"
+                            className="min-h-11"
                             onClick={() => void requestCancellation(item)}
                             disabled={cancelMutation.isPending}
                           >
@@ -263,10 +267,10 @@ export function MyReservationsPage() {
         );
       })}
 
-      {isLoading ? <Card className="ops-card"><CardContent className="py-8 text-center text-muted-foreground">预约记录加载中…</CardContent></Card> : null}
-      {error ? <Card className="ops-card"><CardContent className="py-8 text-center text-destructive">加载失败：{toFriendlyError(error)}</CardContent></Card> : null}
+      {isLoading ? <Card className="ops-card rounded-xl border-border/60 shadow-none"><CardContent className="py-8 text-center text-muted-foreground">预约记录加载中…</CardContent></Card> : null}
+      {error ? <Card className="ops-card rounded-xl border-border/60 shadow-none"><CardContent className="py-8 text-center text-destructive">加载失败：{toFriendlyError(error)}</CardContent></Card> : null}
       {!isLoading && !error && data.length === 0 ? (
-        <Card className="ops-card"><CardContent className="py-8 text-center text-muted-foreground">暂无预约记录</CardContent></Card>
+        <Card className="ops-card rounded-xl border-border/60 shadow-none"><CardContent className="py-8 text-center text-muted-foreground">暂无预约记录</CardContent></Card>
       ) : null}
     </div>
   );

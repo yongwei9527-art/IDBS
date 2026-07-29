@@ -4,6 +4,11 @@ const {
 
 function createV5AdminRouter(service, { runtimeDiagnostics } = {}) {
   const router = express.Router();
+  const deleteIdSchema = z.string().trim().min(1).max(60);
+  const deleteBatchSchema = z.object({
+    ids: z.array(deleteIdSchema).min(1).max(100)
+      .refine((ids) => new Set(ids).size === ids.length, 'ids must not contain duplicates')
+  }).strict();
   router.use(requireAuth);
   // dashboard
   router.get('/admin/dashboard', requirePerm('stats.view', 'device.view', 'reservation.view', 'reservation.approve', 'reservation.change_plan', 'user.approve', 'user.manage', 'device.manage', 'fault.manage', 'return.view', 'return.confirm', 'return.image_review', 'return.export', 'stats.export', 'audit.view'), wrapV5(async (req) => unwrap(await service.adminDashboard(req.query || {}, serviceAuth(req)))));
@@ -13,6 +18,18 @@ function createV5AdminRouter(service, { runtimeDiagnostics } = {}) {
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('Pragma', 'no-cache');
     return unwrap(await service.adminGetRegistrationApprovalCode({}, serviceAuth(req)));
+  }));
+  router.post('/admin/users/registration-approval-code/refresh', requirePerm('user.approve'), wrapV5(async (req, res) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Pragma', 'no-cache');
+    return unwrap(await service.adminRefreshRegistrationApprovalCode({}, serviceAuth(req)));
+  }));
+  router.put('/admin/users/registration-approval-code/settings', requirePerm('user.approve'), validate({
+    body: z.object({ ttl_minutes: z.number().int().min(1).max(1440) }).strict()
+  }), wrapV5(async (req, res) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Pragma', 'no-cache');
+    return unwrap(await service.adminUpdateRegistrationApprovalCodeTtl(req.validated.body, serviceAuth(req)));
   }));
   router.get('/admin/users/:id', requirePerm('user.manage', 'user.approve'), wrapV5(async (req) => unwrap(await service.adminGetUserDetail({ ...req.query, id: req.params.id }, serviceAuth(req)))));
   router.patch('/admin/users/:id/status', requirePerm('user.manage', 'user.approve'), validate({ body: z.object({ status: z.string() }).passthrough(), params: z.object({ id: z.string() }) }), wrapV5(async (req) => unwrap(await service.adminSetUserStatus({ ...req.validated.body, user_id: req.validated.params.id }, serviceAuth(req)))));
@@ -27,7 +44,16 @@ function createV5AdminRouter(service, { runtimeDiagnostics } = {}) {
       user_id: req.validated.params.id
     }, serviceAuth(req)));
   }));
-  router.delete('/admin/users/:id', requirePerm('user.manage'), validate({ params: z.object({ id: z.string() }) }), wrapV5(async (req) => unwrap(await service.adminDeleteUser({ user_id: req.validated.params.id }, serviceAuth(req)))));
+  router.delete('/admin/users/batch', requireRole('super_admin'), validate({
+    body: deleteBatchSchema
+  }), wrapV5(async (req) => unwrap(await service.adminDeleteUsers({
+    user_ids: req.validated.body.ids
+  }, serviceAuth(req)))));
+  router.delete('/admin/users/:id', requireRole('super_admin'), validate({
+    params: z.object({ id: deleteIdSchema }).strict()
+  }), wrapV5(async (req) => unwrap(await service.adminDeleteUser({
+    user_id: req.validated.params.id
+  }, serviceAuth(req)))));
   // devices list/detail/update (admin)
   router.get('/admin/devices', requirePerm('device.view', 'device.manage'), wrapV5(async (req) => unwrap(await service.adminListDevices(req.query || {}, serviceAuth(req)))));
   router.get('/admin/devices/:id', requirePerm('device.view', 'device.manage'), wrapV5(async (req) => unwrap(await service.adminGetDeviceDetail({ ...req.query, id: req.params.id }, serviceAuth(req)))));

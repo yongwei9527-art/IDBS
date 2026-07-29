@@ -12,6 +12,6 @@ test('create-app configures no-cache for SPA index and hashed asset long-cache',
 
 test('seedChatDemo binds expires_at for direct conversation', () => {
   const src = fs.readFileSync(path.join(__dirname, '../../scripts/seed-demo-data.js'), 'utf8');
-  assert.match(src, /last_message_at, expires_at/);
-  assert.match(src, /\$2,'direct',null,\$3,\$4,now\(\),\$6,\$7\)/);
+  assert.match(src, /last_message_at,\s*retention_days,\s*expires_at/);
+  assert.match(src, /\$2,'direct',null,\$3,\$4,now\(\),\$6,1,\$7\)/);
 });

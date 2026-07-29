@@ -139,7 +139,7 @@ function SelectLike({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-9 rounded-[14px] border border-input bg-card px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="h-9 rounded-md border border-input bg-card px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
@@ -148,7 +148,7 @@ function SelectLike({
 }
 
 function EmptyState({ children }: { children: ReactNode }) {
-  return <Card><CardContent className="py-8 text-center text-muted-foreground">{children}</CardContent></Card>;
+  return <div className="flex min-h-40 items-center justify-center rounded-lg border border-dashed border-border px-4 text-center text-muted-foreground">{children}</div>;
 }
 
 function RequestForm({
@@ -198,7 +198,7 @@ function RequestForm({
   }
 
   return (
-    <Card className="ops-card">
+    <Card className="ops-card shadow-none">
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <ClipboardList className="h-5 w-5" />
@@ -490,7 +490,7 @@ export function FaultPage() {
                 />
                 <label className="flex flex-col gap-1.5 text-sm">
                   <span className="font-medium">故障照片（最多 5 张）</span>
-                  <span className="flex items-center gap-2 rounded-2xl border border-dashed border-input bg-card/70 px-3 py-4 text-muted-foreground">
+                  <span className="flex items-center gap-2 rounded-lg border border-dashed border-input bg-card/70 px-3 py-4 text-muted-foreground">
                     <UploadCloud className="h-4 w-4" /> 选择照片
                     <input
                       type="file"
@@ -513,7 +513,7 @@ export function FaultPage() {
         </div>
 
         <div className="space-y-5">
-          <section className="ops-card fault-record-section p-4">
+          <section className="ops-card fault-record-section p-4 shadow-none">
             <h2 className="text-base font-semibold">我的故障</h2>
             {faultsLoading ? <p className="py-6 text-center text-sm text-muted-foreground">加载故障记录…</p> : null}
             {faultsError ? <p className="py-6 text-center text-sm text-destructive">加载失败：{toFriendlyError(faultsError)}</p> : null}

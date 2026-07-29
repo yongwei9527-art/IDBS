@@ -76,7 +76,9 @@ export function WsProvider({ children }: { children: ReactNode }) {
         }
         notifyNativeMessage(msg);
         for (const h of handlersRef.current) h(msg);
-      } catch {}
+      } catch {
+        // Ignore malformed or non-JSON WebSocket payloads.
+      }
     };
     ws.onclose = () => {
       authenticatedRef.current = false;

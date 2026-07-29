@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query';
 import { listDevices, type Device } from './device-api';
 import { buildChatSearch } from '@/features/chat/chat-context';
 import { shortDate, compactTimeRange, tinyTimeRange } from '@/lib/time-format';
-import { OpsEmptyState, OpsPageHeader, OpsRiskBadge, OpsTimeBlock } from '@/components/ops/design-system';
+import { OpsDataToolbar, OpsEmptyState, OpsPageHeader, OpsRiskBadge, OpsTimeBlock } from '@/components/ops/design-system';
 import { toFriendlyError } from '@/lib/friendly-error';
 import { UserAnnouncementBoard } from '@/features/notification/user-announcement-board';
 
@@ -268,7 +268,7 @@ function InfoPill({ label, value, strong = false }: { label: string; value: stri
 function DeviceTable({ devices }: { devices: Device[] }) {
   return (
     <Card className="ops-card overflow-hidden">
-      <CardContent className="overflow-x-auto p-0">
+      <CardContent className="overflow-x-auto p-0" role="region" tabIndex={0} aria-label="设备列表表格，可横向滚动查看更多列">
         <table className="min-w-full text-sm">
           <thead className="bg-secondary/60 text-left text-xs text-muted-foreground">
             <tr>
@@ -335,7 +335,12 @@ export function DevicesPage() {
 
   return (
     <div className="ops-page-stack">
-      <OpsPageHeader title="设备">
+      <OpsPageHeader
+        eyebrow="设备服务"
+        title="查找并预约设备"
+        description="先按设备名称、状态或可用性筛选，再选择合适的时段发起预约。"
+        aside={<span className="rounded-full bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary">已找到 {filtered.length} / {data.length} 台</span>}
+      >
         <Button onClick={() => nav({ to: '/reserve' } as any)}><CalendarDays className="h-4 w-4" /> 发起预约</Button>
         <Button variant="outline" onClick={() => nav({ to: '/me/reservations' } as any)}>我的预约</Button>
         <Button variant="outline" onClick={() => nav({ to: '/calendar' } as any)}>日历</Button>
@@ -343,68 +348,75 @@ export function DevicesPage() {
 
       <UserAnnouncementBoard />
 
-      <Card className="ops-card">
-        <CardContent className="space-y-3 p-3 md:p-4">
-          <div className="flex items-center justify-between gap-3 border-b pb-3">
-            <h2 className="text-sm font-semibold">设备筛选</h2>
-            <span className="text-xs text-muted-foreground">{filtered.length}/{data.length} 台</span>
-          </div>
-          <div className="grid gap-2 md:grid-cols-[minmax(240px,1.4fr)_repeat(3,minmax(140px,0.7fr))_auto] md:items-end">
-            <label className="space-y-1 text-xs font-bold text-muted-foreground">
-              关键词
+      <Card className="ops-card overflow-hidden shadow-none">
+        <CardContent className="space-y-4 p-4 md:p-5">
+          <div className="flex flex-col gap-3 border-b border-border/70 pb-4 lg:flex-row lg:items-end lg:justify-between">
+            <label className="w-full max-w-2xl space-y-1.5 text-xs font-bold text-muted-foreground">
+              搜索设备
               <Input
-                placeholder="名称、编号、位置、负责人"
+                placeholder="按名称、编号、位置或负责人搜索"
                 value={filters.keyword}
                 onChange={(e) => updateFilter('keyword', e.target.value)}
                 clearable
                 prefix={<Search className="h-4 w-4" />}
               />
             </label>
-            <label className="space-y-1 text-xs font-bold text-muted-foreground">
-              状态
-              <select className="h-10 w-full rounded-[14px] border border-input bg-card px-3 text-sm" value={filters.status} onChange={(e) => updateFilter('status', e.target.value)}>
-                {STATUS_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-              </select>
-            </label>
-            <label className="space-y-1 text-xs font-bold text-muted-foreground">
-              分类
-              <select className="h-10 w-full rounded-[14px] border border-input bg-card px-3 text-sm" value={filters.category} onChange={(e) => updateFilter('category', e.target.value)}>
-                <option value="">全部分类</option>
-                {categories.map((category) => <option key={category} value={category}>{category}</option>)}
-              </select>
-            </label>
-            <label className="space-y-1 text-xs font-bold text-muted-foreground">
-              可用性
-              <select className="h-10 w-full rounded-[14px] border border-input bg-card px-3 text-sm" value={filters.availability} onChange={(e) => updateFilter('availability', e.target.value)}>
-                {AVAILABILITY_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-              </select>
-            </label>
-            <Button variant="outline" onClick={resetFilters}><RotateCcw className="h-4 w-4" /> 重置</Button>
+            <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+              <span>显示方式</span>
+              <div className="ops-segment-group" role="group" aria-label="设备显示方式">
+                <Button type="button" size="sm" variant={view === 'card' ? 'default' : 'outline'} aria-pressed={view === 'card'} onClick={() => setView('card')}><Grid2X2 className="h-4 w-4" /> 卡片</Button>
+                <Button type="button" size="sm" variant={view === 'table' ? 'default' : 'outline'} aria-pressed={view === 'table'} onClick={() => setView('table')}><List className="h-4 w-4" /> 表格</Button>
+              </div>
+            </div>
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="ops-segment-group flex-wrap" aria-label="常用筛选">
+
+          <OpsDataToolbar
+            title="快速筛选"
+            description="选择常用状态，或在下方缩小搜索范围。"
+            meta={`${filtered.length} / ${data.length} 台`}
+            actions={<Button variant="outline" size="sm" onClick={resetFilters}><RotateCcw className="h-4 w-4" /> 清空条件</Button>}
+            filters={<div className="ops-segment-group flex-wrap" role="group" aria-label="常用设备筛选">
               {QUICK_FILTERS.map((item) => {
-                const active = filters.status === item.status && filters.availability === item.availability;
+                const isAll = !item.status && !item.availability;
+                const active = isAll
+                  ? !filters.keyword && !filters.status && !filters.category && !filters.availability
+                  : filters.status === item.status && filters.availability === item.availability;
                 return (
                   <Button
                     key={`${item.status}-${item.availability}-${item.label}`}
                     type="button"
                     size="sm"
                     variant={active ? 'default' : 'outline'}
-                    onClick={() => setFilters((current) => ({ ...current, status: item.status, availability: item.availability }))}
+                    aria-pressed={active}
+                    onClick={() => isAll ? resetFilters() : setFilters((current) => ({ ...current, status: item.status, availability: item.availability }))}
                   >
                     {item.label}
                   </Button>
                 );
               })}
-            </div>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span>视图</span>
-              <div className="ops-segment-group">
-                <Button type="button" size="sm" variant={view === 'card' ? 'default' : 'outline'} onClick={() => setView('card')}><Grid2X2 className="h-4 w-4" /> 卡片</Button>
-                <Button type="button" size="sm" variant={view === 'table' ? 'default' : 'outline'} onClick={() => setView('table')}><List className="h-4 w-4" /> 表格</Button>
-              </div>
-            </div>
+            </div>}
+          />
+
+          <div className="grid gap-3 border-t border-border/70 pt-4 sm:grid-cols-3">
+            <label className="space-y-1.5 text-xs font-bold text-muted-foreground">
+              设备状态
+              <select className="h-10 w-full rounded-[14px] border border-input bg-card px-3 text-sm" value={filters.status} onChange={(e) => updateFilter('status', e.target.value)}>
+                {STATUS_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+              </select>
+            </label>
+            <label className="space-y-1.5 text-xs font-bold text-muted-foreground">
+              设备分类
+              <select className="h-10 w-full rounded-[14px] border border-input bg-card px-3 text-sm" value={filters.category} onChange={(e) => updateFilter('category', e.target.value)}>
+                <option value="">全部分类</option>
+                {categories.map((category) => <option key={category} value={category}>{category}</option>)}
+              </select>
+            </label>
+            <label className="space-y-1.5 text-xs font-bold text-muted-foreground">
+              可用性
+              <select className="h-10 w-full rounded-[14px] border border-input bg-card px-3 text-sm" value={filters.availability} onChange={(e) => updateFilter('availability', e.target.value)}>
+                {AVAILABILITY_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+              </select>
+            </label>
           </div>
         </CardContent>
       </Card>

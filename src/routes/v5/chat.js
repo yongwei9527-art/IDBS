@@ -30,6 +30,8 @@ function createV5ChatRouter(service) {
   router.post('/chat/conversations/:id/participants', wrapV5(async (req) => unwrap(await service.addChatParticipants({ ...req.body, conversation_id: req.params.id }, serviceAuth(req)))));
   router.delete('/chat/conversations/:id/participants/:userId', wrapV5(async (req) => unwrap(await service.removeChatParticipant({ ...req.body, conversation_id: req.params.id, user_id: req.params.userId }, serviceAuth(req)))));
   router.post('/chat/conversations/:id/participants/:userId/remove', wrapV5(async (req) => unwrap(await service.removeChatParticipant({ ...req.body, conversation_id: req.params.id, user_id: req.params.userId }, serviceAuth(req)))));
+  router.get('/chat/conversations/:id/announcements', wrapV5(async (req) => unwrap(await service.listChatAnnouncements({ ...req.query, conversation_id: req.params.id }, serviceAuth(req)))));
+  router.post('/chat/conversations/:id/announcements', wrapV5(async (req) => unwrap(await service.publishChatAnnouncement({ ...req.body, conversation_id: req.params.id }, serviceAuth(req)))));
   router.get('/chat/conversations/:id/messages', wrapV5(async (req) => unwrap(await service.listChatMessages({ ...req.query, conversation_id: req.params.id }, serviceAuth(req)))));
   router.post('/chat/conversations/:id/messages', wrapV5(async (req) => unwrap(await service.sendChatMessage({ ...req.body, conversation_id: req.params.id }, serviceAuth(req)))));
   router.patch('/chat/conversations/:id/read', wrapV5(async (req) => unwrap(await service.markChatConversationRead({ ...req.body, conversation_id: req.params.id }, serviceAuth(req)))));

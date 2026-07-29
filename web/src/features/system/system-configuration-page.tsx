@@ -236,12 +236,12 @@ export function AdminSystemPage() {
       captcha_expire_minutes: asText(cfg.captcha_expire_minutes, '3'),
       captcha_hourly_limit: asText(cfg.captcha_hourly_limit, '3'),
       openid_daily_register_limit: asText(cfg.openid_daily_register_limit, '1'),
-      registration_approval_code_ttl_minutes: asText(cfg.registration_approval_code_ttl_minutes, '5'),
+      registration_approval_code_ttl_minutes: asText(cfg.registration_approval_code_ttl_minutes, '1'),
       enable_image_captcha: asBool(cfg.enable_image_captcha),
       require_return_photo: asBool(cfg.require_return_photo, true),
       block_ip_access_enabled: asBool(cfg.block_ip_access_enabled),
       public_show_reserver_name: asBool(cfg.public_show_reserver_name, true),
-      public_show_reserver_phone: asBool(cfg.public_show_reserver_phone, true),
+      public_show_reserver_phone: false,
       public_show_reserver_student_no: asBool(cfg.public_show_reserver_student_no),
       site_domain: asText(cfg.site_domain),
       system_notice_enabled: asBool(cfg.system_notice_enabled, true),
@@ -312,12 +312,12 @@ export function AdminSystemPage() {
       captcha_expire_minutes: numberValue(form.captcha_expire_minutes, 3),
       captcha_hourly_limit: numberValue(form.captcha_hourly_limit, 3),
       openid_daily_register_limit: numberValue(form.openid_daily_register_limit, 1),
-      registration_approval_code_ttl_minutes: numberValue(form.registration_approval_code_ttl_minutes, 5),
+      registration_approval_code_ttl_minutes: numberValue(form.registration_approval_code_ttl_minutes, 1),
       enable_image_captcha: form.enable_image_captcha,
       require_return_photo: form.require_return_photo,
       block_ip_access_enabled: form.block_ip_access_enabled,
       public_show_reserver_name: form.public_show_reserver_name,
-      public_show_reserver_phone: form.public_show_reserver_phone,
+      public_show_reserver_phone: false,
       public_show_reserver_student_no: form.public_show_reserver_student_no,
       site_domain: form.site_domain.trim()
     }, '安全与公开设置已保存');
@@ -685,7 +685,6 @@ export function AdminSystemPage() {
               ['require_return_photo', '归还需上传照片'],
               ['block_ip_access_enabled', '阻止纯 IP 访问'],
               ['public_show_reserver_name', '公开预约人姓名'],
-              ['public_show_reserver_phone', '公开预约人手机'],
               ['public_show_reserver_student_no', '公开预约人学号']
             ] as const).map(([key, label]) => (
               <label key={key} className="flex items-center gap-2">
@@ -829,6 +828,7 @@ export function AdminSystemPage() {
                     <div className="grid gap-2">
                       <label className="text-sm"><span className="text-muted-foreground">姓名</span><Input value={asText(contact.name)} onChange={(e) => updateContact(contact.key, { name: e.target.value })} /></label>
                       <label className="text-sm"><span className="text-muted-foreground">手机号</span><Input value={asText(contact.phone)} onChange={(e) => updateContact(contact.key, { phone: e.target.value })} /></label>
+                       <label className="text-sm"><span className="text-muted-foreground">微信号</span><Input placeholder="填写后将在用户端展示" value={asText(contact.wechat)} onChange={(e) => updateContact(contact.key, { wechat: e.target.value })} /></label>
                       <label className="text-sm"><span className="text-muted-foreground">二维码 URL</span><Input value={asText(contact.qrcode_url)} onChange={(e) => updateContact(contact.key, { qrcode_url: e.target.value })} /></label>
                     </div>
                   </div>

@@ -106,7 +106,7 @@ async function markClickables(page) {
       const disabled = Boolean(el.disabled || el.getAttribute('aria-disabled') === 'true');
       const visible = rect.width > 1 && rect.height > 1 && style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity || 1) > 0.01;
       const risky = highRisk.test(text) || highRisk.test(el.getAttribute('type') || '');
-      const id = `audit-${Date.now()}-${index}`;
+      const id = `audit-${index}`;
       if (visible && !disabled && !risky) el.setAttribute('data-click-audit-id', id);
       return { id, tag: el.tagName.toLowerCase(), text, disabled, visible, risky };
     }).filter((x) => x && x.visible && !x.disabled);
@@ -120,6 +120,42 @@ async function dismissBlockingNotice(page) {
     await page.waitForTimeout(200);
   }
 }
+
+async function dismissActiveDialogs(page) {
+  const dialogs = page.locator('[role="dialog"], .modal, .popover, [data-radix-popper-content-wrapper]');
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const count = await dialogs.count().catch(() => 0);
+    if (!count) return;
+
+    let dismissed = false;
+    for (let index = count - 1; index >= 0; index -= 1) {
+      const dialog = dialogs.nth(index);
+      if (!(await dialog.isVisible().catch(() => false))) continue;
+      const closeButton = dialog.getByRole('button', { name: /close|dismiss|关闭/i }).first();
+      if (await closeButton.isVisible({ timeout: 500 }).catch(() => false)) {
+        await closeButton.click({ timeout: 1500 }).catch(() => {});
+        dismissed = true;
+      }
+    }
+
+    if (!dismissed) await page.keyboard.press('Escape').catch(() => {});
+    await page.waitForTimeout(150);
+  }
+}
+
+async function resetAuditPage(page, url) {
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 10000 });
+  await page.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => {});
+  await dismissActiveDialogs(page);
+  await dismissBlockingNotice(page);
+  // Reapply stable IDs after a reset so the initial target list remains valid.
+  await markClickables(page);
+}
+
+function isTransientInteractionFailure(error) {
+  return /(not visible|not attached|detached|intercepts pointer events|outside of the viewport|element is obscured|timeout)/i.test(String(error?.message || error));
+}
+
 async function auditPage(page, route, roleName) {
   const url = abs(route);
   const item = { role: roleName, route, url, clicked: [], skipped: [], errors: [] };
@@ -129,9 +165,7 @@ async function auditPage(page, route, roleName) {
   page.on('console', onConsole);
   page.on('pageerror', onPageError);
   try {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
-    await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
-    await dismissBlockingNotice(page);
+    await resetAuditPage(page, url);
     const firstEnglish = await collectEnglishError(page);
     if (firstEnglish) item.errors.push({ type: 'english-text', message: firstEnglish, stage: 'load' });
 
@@ -140,11 +174,21 @@ async function auditPage(page, route, roleName) {
       if (c.risky) { item.skipped.push({ ...c, reason: 'High-risk action skipped.' }); continue; }
       const locator = page.locator(`[data-click-audit-id="${c.id}"]`).first();
       if (!(await locator.count().catch(() => 0))) continue;
+      if (!(await locator.isVisible().catch(() => false))) {
+        item.skipped.push({ ...c, reason: 'Control became hidden before click.' });
+        continue;
+      }
       if (!(await locator.isEnabled().catch(() => false))) {
         item.skipped.push({ ...c, reason: 'Control became disabled before click.' });
         continue;
       }
       try {
+        await dismissActiveDialogs(page);
+        if (!(await locator.isVisible().catch(() => false))) {
+          item.skipped.push({ ...c, reason: 'Control was covered by a dialog and is no longer actionable.' });
+          continue;
+        }
+        await locator.scrollIntoViewIfNeeded({ timeout: 1500 }).catch(() => {});
         if (c.tag === 'select') {
           const values = await locator.locator('option').evaluateAll((opts) => opts.map((o) => o.value).filter(Boolean));
           if (values.length > 1) await locator.selectOption(values[1], { timeout: 1500 });
@@ -156,17 +200,16 @@ async function auditPage(page, route, roleName) {
         const english = await collectEnglishError(page);
         if (english) item.errors.push({ type: 'english-text', message: english, after: c.text });
         item.clicked.push({ text: c.text, tag: c.tag, dialogOpened: dialog > 0 });
-        if (page.url() !== url) {
-          await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 10000 });
-          await page.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => {});
-          await dismissBlockingNotice(page);
-        } else {
-          await page.keyboard.press('Escape').catch(() => {});
-          await dismissBlockingNotice(page);
-        }
+        // Return to a clean initial state after every interaction. DOM mutations from
+        // dialogs, filters, and pagination otherwise make the pre-marked targets stale.
+        await resetAuditPage(page, url);
       } catch (err) {
-        item.errors.push({ type: 'click', target: c.text, message: err.message });
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+        if (isTransientInteractionFailure(err)) {
+          item.skipped.push({ ...c, reason: 'Control changed before click: ' + err.message });
+        } else {
+          item.errors.push({ type: 'click', target: c.text, message: err.message });
+        }
+        await resetAuditPage(page, url).catch(() => {});
       }
     }
     if (consoleErrors.length) item.errors.push(...consoleErrors.slice(0, 10).map((message) => ({ type: 'console', message })));

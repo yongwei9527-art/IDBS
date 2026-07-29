@@ -307,7 +307,7 @@ function BatchCard({
     <button
       type="button"
       onClick={onSelect}
-      className={['approval-batch-card w-full text-left', active ? 'approval-batch-card--active' : ''].join(' ')}
+      className={['approval-batch-card min-h-11 w-full rounded-lg border border-border/60 bg-card p-3 text-left shadow-none', active ? 'approval-batch-card--active' : ''].join(' ')}
     >
       <div className="flex items-start justify-between gap-2">
         <h3 className="min-w-0 flex-1 truncate text-sm font-semibold">{localizeReservationText(batch.purpose) || '未填写用途'}</h3>
@@ -487,7 +487,7 @@ function ApprovalDetail({
   return (
     <>
       <ActionDialog />
-      <Card className="ops-card approval-detail-card overflow-hidden">
+      <Card className="ops-card approval-detail-card overflow-hidden rounded-xl border-border/60 shadow-none">
       <CardContent className="approval-detail-body p-0">
         <header className="approval-detail-head">
           <div className="min-w-0 flex-1">
@@ -585,10 +585,10 @@ function ApprovalDetail({
           />
           {canApprove ? (
             <div className="flex shrink-0 gap-2">
-              <Button size="sm" disabled={approveBatch.isPending || activeBatch.status !== 'pending'} onClick={() => approveWhole(true)}>
+              <Button size="sm" className="min-h-11" disabled={approveBatch.isPending || activeBatch.status !== 'pending'} onClick={() => approveWhole(true)}>
                 整批通过
               </Button>
-              <Button size="sm" variant="outline" disabled={approveBatch.isPending || activeBatch.status !== 'pending'} onClick={() => approveWhole(false)}>
+              <Button size="sm" variant="outline" className="min-h-11" disabled={approveBatch.isPending || activeBatch.status !== 'pending'} onClick={() => approveWhole(false)}>
                 整批拒绝
               </Button>
             </div>
@@ -616,28 +616,28 @@ function ApprovalDetail({
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
-                    <Button size="sm" variant="ghost" onClick={() => setDrawerItemId(itemId(item))}>详情</Button>
+                    <Button size="sm" variant="ghost" className="min-h-11" onClick={() => setDrawerItemId(itemId(item))}>详情</Button>
                     {canApprove ? (
                       <>
-                        <Button size="sm" disabled={approveItem.isPending || item.status !== 'pending'} onClick={() => approveOne(itemId(item), true)}>通过</Button>
-                        <Button size="sm" variant="outline" disabled={approveItem.isPending || item.status !== 'pending'} onClick={() => approveOne(itemId(item), false)}>拒绝</Button>
+                        <Button size="sm" className="min-h-11" disabled={approveItem.isPending || item.status !== 'pending'} onClick={() => approveOne(itemId(item), true)}>通过</Button>
+                        <Button size="sm" variant="outline" className="min-h-11" disabled={approveItem.isPending || item.status !== 'pending'} onClick={() => approveOne(itemId(item), false)}>拒绝</Button>
                       </>
                     ) : null}
                     {canChangePlan ? (
-                      <Button size="sm" variant="outline" disabled={!canAdjustItemStatus(item.status)} onClick={() => openPlanEditor(item)}>改期</Button>
+                      <Button size="sm" variant="outline" className="min-h-11" disabled={!canAdjustItemStatus(item.status)} onClick={() => openPlanEditor(item)}>改期</Button>
                     ) : null}
                   </div>
                 </div>
                 {editingPlanId === itemId(item) ? (
-                  <div className="mt-4 rounded-2xl border border-primary/20 bg-primary/5 p-3">
+                  <div className="mt-4 rounded-lg border border-primary/20 bg-primary/5 p-3">
                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                       <label className="grid gap-1 text-xs font-semibold text-muted-foreground">
                         开始时间
-                        <input className="h-10 rounded-xl border bg-card px-3 text-sm text-foreground" type="datetime-local" value={planDrafts[itemId(item)]?.start_time ?? ''} onChange={(e) => patchPlanDraft(itemId(item), { start_time: e.target.value })} />
+                        <input className="h-11 rounded-lg border border-input bg-card px-3 text-sm text-foreground" type="datetime-local" value={planDrafts[itemId(item)]?.start_time ?? ''} onChange={(e) => patchPlanDraft(itemId(item), { start_time: e.target.value })} />
                       </label>
                       <label className="grid gap-1 text-xs font-semibold text-muted-foreground">
                         结束时间
-                        <input className="h-10 rounded-xl border bg-card px-3 text-sm text-foreground" type="datetime-local" value={planDrafts[itemId(item)]?.end_time ?? ''} onChange={(e) => patchPlanDraft(itemId(item), { end_time: e.target.value })} />
+                        <input className="h-11 rounded-lg border border-input bg-card px-3 text-sm text-foreground" type="datetime-local" value={planDrafts[itemId(item)]?.end_time ?? ''} onChange={(e) => patchPlanDraft(itemId(item), { end_time: e.target.value })} />
                       </label>
                       <label className="grid gap-1 text-xs font-semibold text-muted-foreground">
                         时段标识
@@ -755,7 +755,7 @@ function ApprovalDetail({
               </div>
             </div>
 
-            <section className="rounded-xl border bg-card p-4">
+            <section className="rounded-lg border border-border/60 bg-card p-4">
               <OpsSectionHeader
                 title="风险"
                 action={<OpsRiskBadge level={riskBadgeLevel(risk?.level, risk?.safe)}>{risk?.safe ? '低风险' : signalLevelLabel(risk?.level)}</OpsRiskBadge>}
@@ -776,7 +776,7 @@ function ApprovalDetail({
             </section>
 
             {selectedDrawerItem.admin_note ? (
-              <section className="rounded-xl border bg-card p-4">
+              <section className="rounded-lg border border-border/60 bg-card p-4">
                 <p className="text-xs font-semibold text-primary">已有备注</p>
                 <p className="mt-2 text-sm leading-6 text-muted-foreground">{selectedDrawerItem.admin_note}</p>
               </section>
@@ -833,7 +833,7 @@ export function AdminReservationsPage() {
   }
 
   return (
-    <div className="ops-page-stack approval-page">
+    <div className="ops-page-stack approval-page mx-auto max-w-[1440px]">
       <OpsPageHeader title="预约审批" className="approval-page-header" />
 
       <OpsDataToolbar
@@ -869,16 +869,16 @@ export function AdminReservationsPage() {
         />
       ) : null}
 
-      <div className="approval-workspace grid gap-4">
+      <div className="approval-workspace grid gap-4 xl:grid-cols-[minmax(280px,0.72fr)_minmax(0,1.5fr)]">
         <aside className="min-w-0">
           <div className="approval-queue grid gap-2">
             {batches.map((batch) => (
               <BatchCard key={batch.id} batch={batch} active={selectedBatch?.id === batch.id} onSelect={() => setSelectedBatchId(batch.id)} />
             ))}
-            {isLoading ? <p className="rounded-2xl border bg-card/70 p-5 text-center text-sm text-muted-foreground">加载中…</p> : null}
-            {error ? <p className="rounded-2xl border border-destructive/30 bg-destructive/5 p-5 text-center text-sm text-destructive">加载失败：{toFriendlyError(error)}</p> : null}
+            {isLoading ? <p className="rounded-lg border border-border/60 bg-card p-5 text-center text-sm text-muted-foreground">加载中…</p> : null}
+            {error ? <p className="rounded-lg border border-destructive/30 bg-destructive/5 text-center text-sm text-destructive">加载失败：{toFriendlyError(error)}</p> : null}
             {!isLoading && !error && batches.length === 0 ? (
-              <div className="rounded-xl border bg-card/70 p-8 text-center text-muted-foreground">
+              <div className="rounded-lg border border-border/60 bg-card p-8 text-center text-muted-foreground">
                 <ClipboardCheck className="mx-auto mb-2 h-8 w-8 opacity-60" />
                 暂无预约批次
               </div>

@@ -58,6 +58,7 @@ const service = createRentalService({
   wechatAppId: config.wechatAppId,
   wechatAppSecret: config.wechatAppSecret,
   wechatAdminOpenids: config.wechatAdminOpenids,
+  fcmServiceAccountJson: config.fcmServiceAccountJson,
   async realtimePublisher(channel, message) {
     const delivered = wsGateway ? wsGateway.broadcast(channel, message) : 0;
     if (realtimeBus) await realtimeBus.publish(message);

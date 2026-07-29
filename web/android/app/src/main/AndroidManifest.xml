@@ -1,6 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Network access and connectivity awareness for API calls and realtime messages. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!--
+      Image uploads are handled through Android's system picker, which grants access only to
+      the photos the user selects. These declarations retain compatibility with Android 12
+      and older gallery providers, while Android 13+ uses the scoped media permissions.
+    -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+
+    <!-- Android 13+: ask the user before showing system message notifications. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -8,6 +24,14 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
+
+        <!-- Firebase Cloud Messaging uses the private Android channel created by the app. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="messages" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@mipmap/ic_launcher" />
 
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
@@ -35,10 +59,4 @@
         </provider>
     </application>
 
-    <!-- Permissions -->
-
-    <!-- Network access is required for API calls and realtime messages. -->
-    <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Android 13+: ask the user before showing system message notifications. -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>

@@ -74,6 +74,9 @@ async function clearDemoBusinessData(client) {
   await client.query("delete from user_activity_logs where id::text like $1", [demo]);
   await client.query("delete from operation_logs where id::text like $1", [demo]);
   await client.query("delete from intelligence_action_logs where id::text like $1", [demo]).catch(() => {});
+  await client.query("delete from chat_messages where id::text like $1", [demo]).catch(() => {});
+  await client.query("delete from chat_participants where conversation_id::text like $1 or user_id::text like $1", [demo]).catch(() => {});
+  await client.query("delete from chat_conversations where id::text like $1", [demo]).catch(() => {});
 }
 
 async function ensureDemoSchema(_client) {
@@ -556,14 +559,15 @@ async function seedChatDemo(client, users) {
   `, [[managementGroupId, demoGroupId, directId], demoGroupId, directId]);
 
   await client.query(`
-    insert into chat_conversations (id, type, title, created_by, created_at, updated_at, last_message_at, expires_at)
+    insert into chat_conversations (id, type, title, created_by, created_at, updated_at, last_message_at, retention_days, expires_at)
     values
-      ($1,'group','设备协作群',$3,$4,now(),$5,null),
-      ($2,'direct',null,$3,$4,now(),$6,$7)
+      ($1,'group','设备协作群',$3,$4,now(),$5,1,null),
+      ($2,'direct',null,$3,$4,now(),$6,1,$7)
     on conflict (id) do update set
       title = excluded.title,
       updated_at = now(),
       last_message_at = excluded.last_message_at,
+      retention_days = excluded.retention_days,
       expires_at = excluded.expires_at
   `, [
     demoGroupId,
@@ -572,7 +576,7 @@ async function seedChatDemo(client, users) {
     atDay(-1, 10).toISOString(),
     addHours(new Date(), -4).toISOString(),
     addHours(new Date(), -3).toISOString(),
-    addHours(new Date(), 48).toISOString()
+    addHours(new Date(), 24).toISOString()
   ]);
 
   const participants = [
@@ -922,6 +926,256 @@ async function seedRequestsNotificationsDemo(client, users, deviceIds) {
   for (const item of operationLogs) await insertOperationLog(client, item);
 }
 
+/**
+ * Seeds enough stable, realistic records to exercise pagination, filtering, bulk selection,
+ * dashboards, and long activity feeds without touching non-demo data.
+ */
+async function seedHighVolumeDemo(client, users, deviceIds) {
+  const extraUsers = [];
+  const departments = ['材料学院', '电子学院', '生命学院', '机械学院', '化学学院', '信息学院'];
+  for (let index = 0; index < 120; index += 1) {
+    const number = String(index + 1).padStart(3, '0');
+    const phone = `150${String(10_000_000 + index)}`;
+    const id = await upsertUser(client, {
+      id: uuid(10_000 + index),
+      name: `演示用户${number}`,
+      phone,
+      student_no: `DEMO2026${number}`,
+      group_name: departments[index % departments.length],
+      email: `demo.user.${number}@example.com`,
+      password: '123456',
+      role: 'user',
+      status: index % 29 === 0 ? 'pending' : 'active',
+      created_at: atDay(-220 + (index % 120), 9 + (index % 8)).toISOString(),
+      last_login_at: addHours(new Date(), -(index % 240)).toISOString()
+    });
+    extraUsers.push({ id, name: `演示用户${number}`, phone, studentNo: `DEMO2026${number}` });
+  }
+
+  const loadDeviceIds = {};
+  const categories = ['显微成像', '材料制备', '分析测试', '电子测量', '环境控制'];
+  for (let index = 0; index < 40; index += 1) {
+    const number = String(index + 1).padStart(3, '0');
+    const code = `LOAD-${number}`;
+    loadDeviceIds[code] = await upsertDevice(client, {
+      id: uuid(12_000 + index),
+      device_code: code,
+      name: `压力测试设备 ${number}`,
+      category: categories[index % categories.length],
+      location: `实验楼 ${1 + (index % 6)} 层 ${101 + index}`,
+      manager: '演示设备管理员',
+      status: index % 17 === 0 ? 'maintenance' : 'available',
+      allow_reservation: index % 17 !== 0,
+      description: '用于演示大列表、筛选、分页、预约日历和统计报表的可重复测试设备。',
+      usage_notice: '演示数据，请勿用于实际设备调度。',
+      reservation_slot_keys: ['morning', 'afternoon', 'evening']
+    });
+  }
+  await upsertDeviceSlots(client, loadDeviceIds);
+
+  const allDeviceIds = { ...deviceIds, ...loadDeviceIds };
+  const deviceCodes = Object.keys(allDeviceIds);
+  const slotDefinitions = [
+    { key: 'morning', startHour: 8, endHour: 12 },
+    { key: 'afternoon', startHour: 12, endHour: 17 },
+    { key: 'evening', startHour: 17, endHour: 22 }
+  ];
+
+  // 1,200 historical reservations: stable IDs, no active-slot conflicts, and a broad user/device mix.
+  for (let index = 0; index < 1200; index += 1) {
+    const deviceCode = deviceCodes[index % deviceCodes.length];
+    const user = extraUsers[index % extraUsers.length];
+    const slot = slotDefinitions[(index + Math.floor(index / deviceCodes.length)) % slotDefinitions.length];
+    const day = -180 + Math.floor(index / deviceCodes.length);
+    const start = atDay(day, slot.startHour);
+    const end = atDay(day, slot.endHour);
+    const batchId = uuid(20_000 + index);
+    const reservationId = uuid(30_000 + index);
+    const itemId = uuid(40_000 + index);
+    const purpose = `演示负载预约 #${String(index + 1).padStart(4, '0')}：用于验证列表查询、筛选与历史统计。`;
+    const createdAt = addHours(start, -48).toISOString();
+    const reservation = {
+      id: reservationId,
+      item_id: itemId,
+      batch_id: batchId,
+      device_id: allDeviceIds[deviceCode],
+      user_id: user.id,
+      start_time: start.toISOString(),
+      end_time: end.toISOString(),
+      purpose,
+      status: 'completed',
+      slot_key: slot.key,
+      admin_note: '演示数据：历史预约已完成。',
+      approved_at: addHours(start, -24).toISOString(),
+      created_at: createdAt
+    };
+    await upsertBatch(client, { id: batchId, user_id: user.id, device_codes: deviceCode, time_slots: slot.key, purpose, status: 'completed', created_at: createdAt, admin_note: '演示数据：历史预约已完成。' });
+    await upsertReservation(client, reservation);
+    await upsertReservationItem(client, reservation);
+
+    if (index < 900) {
+      const returnTime = addHours(end, -0.25);
+      const borrowId = uuid(50_000 + index);
+      await upsertBorrow(client, {
+        id: borrowId,
+        reservation_id: reservationId,
+        reservation_item_id: itemId,
+        device_id: allDeviceIds[deviceCode],
+        user_id: user.id,
+        borrow_time: start.toISOString(),
+        expected_return_time: end.toISOString(),
+        return_time: returnTime.toISOString(),
+        duration_minutes: Math.round((returnTime.getTime() - start.getTime()) / 60_000),
+        return_condition: index % 23 === 0 ? 'minor_scratch' : 'normal',
+        return_note: index % 23 === 0 ? '演示异常：外观轻微划痕，已登记复核。' : '演示归还：设备与配件检查正常。',
+        return_photos: index % 23 === 0 ? ['/uploads/demo/return-abnormal.jpg'] : [],
+        status: index % 23 === 0 ? 'abnormal_pending' : 'returned',
+        is_overdue: false,
+        created_at: start.toISOString()
+      });
+      await insertUsageLog(client, {
+        id: uuid(60_000 + index),
+        record_id: borrowId,
+        reservation_id: reservationId,
+        device_id: allDeviceIds[deviceCode],
+        user_id: user.id,
+        action: 'RETURN',
+        device_code: deviceCode,
+        device_name: `演示设备 ${deviceCode}`,
+        user_name: user.name,
+        user_phone: user.phone,
+        user_student_no: user.studentNo,
+        borrow_time: start.toISOString(),
+        expected_return_time: end.toISOString(),
+        return_time: returnTime.toISOString(),
+        duration_minutes: Math.round((returnTime.getTime() - start.getTime()) / 60_000),
+        return_condition: index % 23 === 0 ? 'minor_scratch' : 'normal',
+        return_note: '演示归还记录。',
+        record_status: index % 23 === 0 ? 'abnormal_pending' : 'returned',
+        operator_name: user.name,
+        created_at: returnTime.toISOString()
+      });
+    }
+  }
+
+  for (let index = 0; index < 120; index += 1) {
+    const deviceCode = deviceCodes[index % deviceCodes.length];
+    const user = extraUsers[index % extraUsers.length];
+    await upsertFault(client, {
+      id: uuid(65_000 + index),
+      device_id: allDeviceIds[deviceCode],
+      user_id: user.id,
+      issue_type: ['读数波动', '外观磨损', '配件缺失', '网络连接异常'][index % 4],
+      severity: ['low', 'normal', 'high'][index % 3],
+      description: `演示故障工单 #${String(index + 1).padStart(3, '0')}，用于验证故障列表搜索、状态筛选和批量处理。`,
+      status: ['pending', 'processing', 'resolved'][index % 3],
+      admin_note: index % 3 === 2 ? '演示记录：已处理并完成复核。' : '演示记录：等待管理员处理。',
+      created_at: atDay(-120 + (index % 90), 8 + (index % 10)).toISOString()
+    });
+  }
+
+  for (let index = 0; index < 600; index += 1) {
+    const user = extraUsers[index % extraUsers.length];
+    const deviceCode = deviceCodes[index % deviceCodes.length];
+    await upsertNotificationDemo(client, {
+      id: uuid(70_000 + index),
+      user_id: user.id,
+      type: ['reservation', 'system', 'fault', 'user_request'][index % 4],
+      title: `演示通知 #${String(index + 1).padStart(3, '0')}`,
+      content: `用于验证通知分页、未读状态、搜索和移动端消息展示的演示内容（${deviceCode}）。`,
+      related_type: 'device',
+      related_id: allDeviceIds[deviceCode],
+      device_id: allDeviceIds[deviceCode],
+      is_read: index % 3 === 0,
+      read_at: index % 3 === 0 ? atDay(-Math.floor(index / 20), 10).toISOString() : null,
+      created_at: addHours(new Date(), -index * 2).toISOString()
+    });
+  }
+
+  for (let index = 0; index < 180; index += 1) {
+    const user = extraUsers[index % extraUsers.length];
+    const deviceCode = deviceCodes[index % deviceCodes.length];
+    const status = ['pending', 'confirmed', 'change_requested', 'rejected'][index % 4];
+    await upsertUserRequestDemo(client, {
+      id: uuid(80_000 + index),
+      user_id: user.id,
+      device_id: allDeviceIds[deviceCode],
+      category: ['feature', 'rule', 'maintenance', 'ui'][index % 4],
+      title: `演示诉求 #${String(index + 1).padStart(3, '0')}：${deviceCode} 使用体验优化`,
+      description: '用于验证管理员诉求工作台中的筛选、详情、状态流转和分页表现。',
+      priority: ['low', 'normal', 'high', 'urgent'][index % 4],
+      status,
+      admin_note: status === 'pending' ? null : '演示数据：管理员已补充处理意见。',
+      change_request_note: status === 'change_requested' ? '演示数据：请补充设备型号和复现步骤。' : null,
+      confirmed_by: status === 'pending' ? null : users.admin,
+      confirmed_at: status === 'pending' ? null : atDay(-Math.floor(index / 8), 11).toISOString(),
+      locked_at: ['confirmed', 'rejected'].includes(status) ? atDay(-Math.floor(index / 8), 12).toISOString() : null,
+      created_at: atDay(-100 + (index % 95), 8 + (index % 10)).toISOString()
+    });
+  }
+
+  const activityRows = [];
+  const activityTypes = ['login', 'view_device', 'create_reservation', 'cancel_reservation', 'submit_request', 'read_notification'];
+  for (let index = 0; index < 1500; index += 1) {
+    const user = extraUsers[index % extraUsers.length];
+    activityRows.push([
+      uuid(100_000 + index), user.id, activityTypes[index % activityTypes.length], user.name, user.phone,
+      `demo-load-openid-${index + 1}`, 'browser', 'demo-load', '127.0.0.1',
+      `演示活动 #${index + 1}，用于验证活动日志分页和时间筛选。`, addHours(new Date(), -index).toISOString()
+    ]);
+  }
+  for (let offset = 0; offset < activityRows.length; offset += 150) {
+    const rows = activityRows.slice(offset, offset + 150);
+    const params = rows.flat();
+    const values = rows.map((row, rowIndex) => {
+      const base = rowIndex * 11;
+      return `(${Array.from({ length: 11 }, (_, columnIndex) => `$${base + columnIndex + 1}`).join(',')})`;
+    }).join(',');
+    await client.query(`
+      insert into user_activity_logs (id, user_id, event_type, user_name, phone, wechat_openid, device_type, client_key, ip_address, remark, created_at)
+      values ${values}
+      on conflict (id) do update set event_type = excluded.event_type, remark = excluded.remark, created_at = excluded.created_at
+    `, params);
+  }
+
+  for (let index = 0; index < 500; index += 1) {
+    const user = extraUsers[index % extraUsers.length];
+    const deviceCode = deviceCodes[index % deviceCodes.length];
+    await insertOperationLog(client, {
+      id: uuid(90_000 + index),
+      operator_id: index % 5 === 0 ? users.admin : user.id,
+      operator_name: index % 5 === 0 ? '系统管理员' : user.name,
+      action: ['view_device', 'create_reservation', 'approve_reservation', 'update_device', 'export_data'][index % 5],
+      target_type: index % 5 === 3 ? 'device' : 'reservation',
+      target_id: index % 5 === 3 ? allDeviceIds[deviceCode] : uuid(30_000 + (index % 1200)),
+      device_id: allDeviceIds[deviceCode],
+      detail: { demo: true, sequence: index + 1, device_code: deviceCode },
+      created_at: addHours(new Date(), -index * 3).toISOString()
+    });
+  }
+
+  const managementConversation = await client.query("select id from chat_conversations where system_key = 'lab_management' limit 1");
+  const conversationId = managementConversation.rows[0]?.id;
+  if (conversationId) {
+    const chatUsers = extraUsers.slice(0, 80);
+    for (const user of chatUsers) {
+      await client.query(`
+        insert into chat_participants (conversation_id, user_id, role, joined_at, last_read_at)
+        values ($1,$2,'member',$3,$4)
+        on conflict (conversation_id, user_id) do update set last_read_at = excluded.last_read_at
+      `, [conversationId, user.id, atDay(-30, 9).toISOString(), addHours(new Date(), -4).toISOString()]);
+    }
+    for (let index = 0; index < 600; index += 1) {
+      const user = chatUsers[index % chatUsers.length];
+      await client.query(`
+        insert into chat_messages (id, conversation_id, sender_id, content, created_at)
+        values ($1,$2,$3,$4,$5)
+        on conflict (id) do update set content = excluded.content, created_at = excluded.created_at
+      `, [uuid(110_000 + index), conversationId, user.id, `演示群消息 #${String(index + 1).padStart(3, '0')}：用于验证消息列表加载、滚动定位与未读处理。`, addHours(new Date(), -index).toISOString()]);
+    }
+    await client.query('update chat_conversations set last_message_at = $2, updated_at = now() where id = $1', [conversationId, new Date().toISOString()]);
+  }
+}
 async function ensureDemoUploadAssets() {
   const uploadDir = loadConfig().uploadDir;
   const demoDir = path.join(uploadDir, 'demo');
@@ -1134,6 +1388,7 @@ async function main() {
     await seedDenseCalendarDemo(client, users, deviceIds);
     await seedRequestsNotificationsDemo(client, users, deviceIds);
     await seedChatDemo(client, users);
+    await seedHighVolumeDemo(client, users, deviceIds);
 
     await client.query('commit');
     console.log('演示数据已准备完成。');

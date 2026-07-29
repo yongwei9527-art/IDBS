@@ -4,7 +4,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { MessageSquare, Pin } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import {
   useChatConversations,
   useChatUsers,
@@ -18,6 +17,18 @@ import { toFriendlyError } from '@/lib/friendly-error';
 import { OpsPageHeader } from '@/components/ops/design-system';
 import { useAuth } from '@/features/auth/use-auth';
 
+function isTechnicalConversationId(value?: string | null) {
+  return Boolean(value && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value.trim()));
+}
+
+function conversationLabel(conversation: ChatConversation) {
+  const title = conversation.title?.trim();
+  if (title && !isTechnicalConversationId(title)) return title;
+  if (conversation.type === 'group') return '群聊';
+  const names = conversation.participants?.map((participant) => participant.name?.trim()).filter((name): name is string => Boolean(name) && !isTechnicalConversationId(name)) ?? [];
+  return names.length ? names.join('、') : '单聊';
+}
+
 function ConvItem({ c }: { c: ChatConversation }) {
   const nav = useNavigate();
   const preview = c.last_message_preview || '暂无消息';
@@ -26,7 +37,7 @@ function ConvItem({ c }: { c: ChatConversation }) {
   return (
     <button
       onClick={() => nav({ to: `/chat/${c.id}`, search: preserveChatContextSearch() } as any)}
-      className={`ops-list-item flex w-full items-start gap-3 p-3 text-left ${pinned ? 'border-primary/35 bg-primary/[0.05]' : ''}`}
+      className={`flex min-h-16 w-full items-start gap-3 rounded-lg border border-border bg-card px-3 py-3 text-left transition-colors hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${pinned ? 'border-primary/30 bg-primary/[0.04]' : ''}`}
     >
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted">
         <MessageSquare className="h-4 w-4 text-muted-foreground" />
@@ -35,7 +46,7 @@ function ConvItem({ c }: { c: ChatConversation }) {
         <div className="flex items-center justify-between gap-2">
           <p className="flex min-w-0 items-center gap-1.5 truncate text-sm font-medium">
             {pinned ? <Pin className="h-3.5 w-3.5 shrink-0 text-primary" /> : null}
-            <span className="truncate">{c.title || '未命名'}</span>
+            <span className="truncate">{conversationLabel(c)}</span>
             {pinned ? <span className="badge-pill badge-info shrink-0">置顶</span> : null}
           </p>
           {time && <p className="shrink-0 text-xs tabular-nums text-muted-foreground">{time}</p>}
@@ -121,8 +132,8 @@ export function ChatConversationList() {
   }, [createMutation, nav, users]);
 
   return (
-    <div className="ops-page-stack chat-hub">
-      <OpsPageHeader title="消息">
+    <div className="ops-page-stack chat-hub mx-auto max-w-5xl">
+      <OpsPageHeader title="消息" description="查看实验协作消息与系统会话。">
         {!isAdministrator && (
           <Button size="sm" onClick={startAdminConversation} disabled={createMutation.isPending}>
             <MessageSquare className="h-4 w-4" />联系管理员
@@ -130,12 +141,12 @@ export function ChatConversationList() {
         )}
       </OpsPageHeader>
       {createMutation.isPending && parseChatTarget().userId ? (
-        <Card className="ops-card"><CardContent className="py-4 text-center text-sm text-muted-foreground">正在打开会话…</CardContent></Card>
+        <div className="rounded-lg border border-border bg-card px-4 py-4 text-center text-sm text-muted-foreground">正在打开会话…</div>
       ) : null}
       {isLoading ? (
         <p className="text-sm text-muted-foreground">加载中…</p>
       ) : data.length === 0 ? (
-        <Card className="ops-card"><CardContent className="py-8 text-center text-muted-foreground">暂无消息</CardContent></Card>
+        <div className="flex min-h-52 flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card px-6 text-center text-muted-foreground"><MessageSquare className="mb-3 h-8 w-8 text-muted-foreground/55" />暂无消息</div>
       ) : (
         <div className="grid gap-2">
           {data.map((c) => (<ConvItem key={c.id} c={c} />))}

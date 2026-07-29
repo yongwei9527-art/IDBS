@@ -61,8 +61,10 @@ function createHarness(options = {}) {
     },
     recordUserEvent: async (event) => events.push(event),
     uuid: () => 'new-user-1',
-    verifyRegistrationApprovalCode: (value) => {
+    verifyRegistrationApprovalCode: (value, verificationOptions = {}) => {
       assert.equal(value, PAYLOAD.approval_code);
+      assert.equal(verificationOptions.lock, true);
+      assert.equal(typeof verificationOptions.query, 'function');
       return Boolean(options.approvalCodeAccepted);
     }
   });
@@ -128,4 +130,57 @@ test('registration approval code is mixed, rotates on schedule and accepts the i
   assert.equal(codes.verify(first.code.toLowerCase(), firstTime), true);
   assert.equal(codes.verify(first.code, firstTime + 300_000), true);
   assert.equal(codes.verify(first.code, firstTime + 600_000), false);
+});
+
+test('registration approval code rotates every minute by default', () => {
+  const codes = createRegistrationApprovalCodeService({
+    crypto,
+    secret: 'test-secret-that-is-long-enough-for-deterministic-tests'
+  });
+  const firstTime = Date.parse('2026-07-28T04:00:00.000Z');
+  const first = codes.get(firstTime);
+  const sameWindow = codes.get(firstTime + 59_999);
+  const nextWindow = codes.get(firstTime + 60_000);
+
+  assert.equal(first.code, sameWindow.code);
+  assert.notEqual(first.code, nextWindow.code);
+  assert.equal(first.refresh_seconds, 60);
+  assert.equal(first.expires_at, '2026-07-28T04:01:00.000Z');
+});
+
+test('changing generation immediately creates a new code and invalidates the old generation', () => {
+  const options = {
+    crypto,
+    secret: 'test-secret-that-is-long-enough-for-deterministic-tests'
+  };
+  const previousGeneration = createRegistrationApprovalCodeService({
+    ...options,
+    generation: 7
+  });
+  const currentGeneration = createRegistrationApprovalCodeService({
+    ...options,
+    generation: 8
+  });
+  const now = Date.parse('2026-07-28T04:00:30.000Z');
+  const previous = previousGeneration.get(now);
+  const current = currentGeneration.get(now);
+
+  assert.notEqual(previous.code, current.code);
+  assert.equal(previousGeneration.verify(previous.code, now), true);
+  assert.equal(currentGeneration.verify(current.code, now), true);
+  assert.equal(currentGeneration.verify(previous.code, now), false);
+});
+
+test('registration approval code metadata includes ttl_minutes and generation', () => {
+  const codes = createRegistrationApprovalCodeService({
+    crypto,
+    secret: 'test-secret-that-is-long-enough-for-deterministic-tests',
+    windowMs: 15 * 60_000,
+    generation: 3
+  });
+
+  const result = codes.get(Date.parse('2026-07-28T04:00:00.000Z'));
+
+  assert.equal(result.ttl_minutes, 15);
+  assert.equal(result.generation, 3);
 });

@@ -471,6 +471,14 @@ textarea { font: inherit; }
   border-radius: 6px;
   background: hsl(var(--primary) / .07) !important;
 }
+.ops-time-block--full-label {
+  max-width: none !important;
+  white-space: nowrap;
+}
+.ops-time-block--full-label > .truncate {
+  overflow: visible;
+  text-overflow: clip;
+}
 .approval-batch-card {
   color: var(--text-strong);
   border-color: var(--line) !important;
@@ -3269,7 +3277,8 @@ html[data-runtime-surface='apk'] .ops-topbar > .ui-button {
   border-radius: .72rem;
 }
 html[data-runtime-surface='apk'] .ops-sidebar {
-  width: min(76vw, 16.5rem) !important;
+  /* Compact native drawer: menu labels remain readable without obscuring the work area. */
+  width: min(64vw, 13.75rem) !important;
   border-radius: 0 1rem 1rem 0;
 }
 html[data-runtime-surface='apk'] .ops-sidebar-brand { height: 50px; padding-inline: .85rem; }
@@ -3523,14 +3532,12 @@ html[data-runtime-surface='apk'] .ops-main p {
     height: 4.8rem !important;
   }
 }
-/* APK no-empty density: remove oversized desktop card habits in WebView. */
-html[data-runtime-surface='apk'] .ops-main [class*='min-h-'] {
-  min-height: 0 !important;
-}
-html[data-runtime-surface='apk'] .ops-main [class*='h-14'] { height: 2.6rem !important; }
-html[data-runtime-surface='apk'] .ops-main [class*='h-16'] { height: 3rem !important; }
-html[data-runtime-surface='apk'] .ops-main [class*='h-20'] { height: 3.5rem !important; }
-html[data-runtime-surface='apk'] .ops-main [class*='h-24'] { height: 4rem !important; }
+/* APK density: only compact explicit height utilities.
+   Token selectors prevent min-h-16 from being mistaken for h-16. */
+html[data-runtime-surface='apk'] .ops-main [class~='h-14'] { height: 2.6rem !important; }
+html[data-runtime-surface='apk'] .ops-main [class~='h-16'] { height: 3rem !important; }
+html[data-runtime-surface='apk'] .ops-main [class~='h-20'] { height: 3.5rem !important; }
+html[data-runtime-surface='apk'] .ops-main [class~='h-24'] { height: 4rem !important; }
 html[data-runtime-surface='apk'] .dashboard-status-item,
 html[data-runtime-surface='apk'] .user-admin-metric,
 html[data-runtime-surface='apk'] .ops-stat-card,
@@ -3755,5 +3762,383 @@ html[data-runtime-surface="apk"] .calendar-event-chip {
   html[data-runtime-surface="apk"] .calendar-event-chip,
   html[data-runtime-surface="apk"] .calendar-more-button {
     display: none !important;
+  }
+}
+
+/* 2026 review: a restrained, wide operating console. These late rules intentionally
+   normalize legacy page utility classes without changing their content structure. */
+:root,
+:root[data-ambient="day"] {
+  --surface-canvas: #f7f8fa;
+  --surface-raised: #ffffff;
+  --surface-subtle: #fbfcfd;
+  --line: #eef1f5;
+  --line-strong: #e4e7ec;
+  --shadow-card: none;
+  --shadow-soft: 0 8px 24px rgb(16 24 40 / .10);
+  --radius: .5rem;
+  --radius-lg: .5rem;
+}
+
+.ops-layout-shell { background: var(--surface-canvas) !important; }
+.ops-page-area { padding: 24px; }
+.ops-main { width: min(100%, 96rem); }
+.ops-content-shell--with-sidebar { padding-left: 216px; }
+.ops-sidebar { width: 216px !important; border-right: 1px solid var(--line-strong); box-shadow: none !important; }
+.ops-sidebar-brand { height: 56px !important; border-bottom: 1px solid var(--line); }
+.ops-topbar { height: 56px !important; border-bottom: 1px solid var(--line); box-shadow: none !important; }
+.ops-nav-toggle { display: none; }
+.ops-card,
+.ui-card,
+.ops-stat-card,
+.kpi-card,
+.ops-page-section,
+.ops-data-toolbar {
+  border-color: var(--line-strong) !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+.ops-card:hover,
+.ui-card:hover,
+.ops-stat-card:hover,
+.kpi-card:hover { box-shadow: none !important; transform: none !important; }
+.ops-card .ops-card,
+.ui-card .ui-card { border-color: var(--line) !important; background: transparent !important; }
+.ops-layout-shell table { border-color: var(--line-strong) !important; }
+.ops-layout-shell table th { background: var(--surface-subtle) !important; border-color: var(--line) !important; }
+.ops-layout-shell table td { border-color: var(--line) !important; }
+.ops-page-form { width: min(100%, 960px); }
+.ops-page-detail { width: min(100%, 1120px); }
+.ops-dialog-surface { width: min(calc(100vw - 2rem), 520px) !important; border: 1px solid var(--line-strong) !important; border-radius: 10px !important; box-shadow: 0 14px 32px rgb(16 24 40 / .16) !important; }
+.ops-drawer-panel { width: min(760px, 100vw - 2rem) !important; max-width: 760px !important; border-left-color: var(--line-strong) !important; box-shadow: -12px 0 30px rgb(16 24 40 / .12) !important; }
+.ui-button--destructive,
+button[data-variant="destructive"] { border-color: hsl(var(--destructive) / .42) !important; background: hsl(var(--destructive) / .07) !important; color: hsl(var(--destructive)) !important; box-shadow: none !important; }
+.ui-button--destructive:hover,
+button[data-variant="destructive"]:hover { border-color: hsl(var(--destructive) / .7) !important; background: hsl(var(--destructive) / .12) !important; }
+
+@media (max-width: 1099px) {
+  .ops-content-shell--with-sidebar { padding-left: 0; }
+  .ops-sidebar { width: min(216px, calc(100vw - 3.5rem)) !important; box-shadow: 12px 0 28px rgb(16 24 40 / .16) !important; }
+  .ops-nav-toggle { display: inline-flex; }
+}
+@media (max-width: 640px) {
+  .ops-page-area { padding: 16px; }
+  .ops-main { width: 100%; }
+  .ops-drawer-panel { width: 100% !important; max-width: 100% !important; }
+}
+
+/* 2026-07 visual consolidation: calm operational canvas and deliberate hierarchy. */
+:root,
+:root[data-ambient="day"] {
+  --surface-canvas: #f7f8fa;
+  --surface-raised: #ffffff;
+  --surface-elevated: #ffffff;
+  --surface-subtle: #f5f7fa;
+  --line: #e4e7ec;
+  --line-strong: #d8dde6;
+  --text-strong: #182230;
+  --text-muted: #667085;
+  --shadow-card: none;
+  --shadow-soft: 0 8px 24px rgb(16 24 40 / .10);
+}
+
+.ops-content-shell--with-sidebar { padding-left: 216px; }
+.ops-page-area { padding: 24px; }
+.ops-main { width: min(100%, 92rem); }
+.ops-page-form { width: min(100%, 960px); margin-inline: auto; }
+.ops-page-detail { width: min(100%, 1120px); margin-inline: auto; }
+
+/* Primary pages should read as one working surface, rather than stacked decorative cards. */
+.ui-card,
+.ops-card,
+.ops-surface,
+.ops-stat-card,
+.ops-chart-panel,
+.device-card-v4,
+.kpi-card,
+.ops-data-toolbar,
+.ops-list-item,
+.reservation-detail-panel,
+.borrow-overview,
+.approval-batch-card {
+  border-color: var(--line) !important;
+  border-radius: 8px !important;
+  background: var(--surface-raised) !important;
+  box-shadow: none !important;
+}
+.ops-card:hover,
+.device-card-v4:hover,
+.ops-list-item:hover,
+.ops-quick-card:hover,
+.approval-batch-card:hover {
+  border-color: color-mix(in srgb, hsl(var(--primary)) 32%, var(--line)) !important;
+  background: var(--surface-raised) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+.ops-page-header { min-height: auto; padding: 0 0 12px; }
+.ops-page-header::before { display: none; }
+.ops-page-header::after { background: var(--line); }
+.ops-page-header-title { font-family: var(--font-ui); font-size: clamp(1.35rem, 1.15rem + .55vw, 1.65rem); letter-spacing: -.02em; }
+.ops-page-header-description { max-width: 56rem; }
+.ops-metric-card,
+.ops-data-toolbar { padding: 14px 16px; }
+
+/* Persistent admin rail uses the same quiet palette as the content frame. */
+.ops-layout-shell--admin .ops-sidebar {
+  color: var(--text-strong);
+  border-right-color: var(--line);
+  background: #ffffff;
+  box-shadow: none;
+}
+.ops-layout-shell--admin .ops-sidebar-brand,
+.ops-layout-shell--admin .ops-sidebar-footer { border-color: var(--line); }
+.ops-layout-shell--admin .ops-brand-title,
+.ops-layout-shell--admin .ops-user-name { color: var(--text-strong); }
+.ops-layout-shell--admin .ops-brand-subtitle,
+.ops-layout-shell--admin .ops-nav-group-label,
+.ops-layout-shell--admin .ops-user-role { color: var(--text-muted); }
+.ops-layout-shell--admin .ops-brand-mark {
+  color: hsl(var(--primary));
+  border: 1px solid hsl(var(--primary) / .16);
+  background: hsl(var(--primary) / .08);
+  box-shadow: none;
+}
+.ops-layout-shell--admin .ops-nav-item { color: #475467; border-color: transparent; border-radius: 6px; }
+.ops-layout-shell--admin .ops-nav-item svg { color: #667085; filter: none; }
+.ops-layout-shell--admin .ops-nav-item:hover { color: hsl(var(--primary)); border-color: transparent; background: hsl(var(--primary) / .06); transform: none; }
+.ops-layout-shell--admin .ops-nav-item-active,
+.ops-layout-shell--admin .ops-nav-item-active:hover { color: hsl(var(--primary)); border-color: transparent; background: hsl(var(--primary) / .10); box-shadow: none; }
+.ops-layout-shell--admin .ops-nav-item-active::before { background: hsl(var(--primary)); box-shadow: none; }
+.ops-layout-shell--admin .ops-nav-item-active svg { color: hsl(var(--primary)); filter: none; }
+.ops-layout-shell--admin .ops-user-panel { border: 1px solid var(--line); border-radius: 8px; background: var(--surface-subtle); box-shadow: none; }
+.ops-layout-shell--admin .ops-user-avatar { color: hsl(var(--primary)); border-color: transparent; background: hsl(var(--primary) / .10); }
+
+.ops-topbar { height: 56px !important; border-color: var(--line); background: #ffffff; box-shadow: none; backdrop-filter: none; }
+.ops-topbar-tools { border-color: transparent; background: transparent; box-shadow: none; backdrop-filter: none; }
+.ops-topbar-action:hover { transform: none; }
+.ops-layout-shell table thead { background: var(--surface-subtle) !important; }
+.ops-layout-shell table tbody tr:hover td { background: hsl(var(--primary) / .035) !important; }
+
+/* Elevation is reserved for active overlays. */
+.ui-dialog-backdrop,
+.ops-drawer-backdrop { background: rgb(16 24 40 / .34); backdrop-filter: none; }
+.ui-dialog-panel,
+.ops-dialog-surface {
+  width: min(100% - 32px, 500px) !important;
+  max-width: 500px !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 10px !important;
+  background: var(--surface-elevated) !important;
+  box-shadow: 0 16px 40px rgb(16 24 40 / .16) !important;
+}
+.ops-drawer-panel {
+  width: min(720px, 100vw) !important;
+  max-width: 720px !important;
+  border-color: var(--line) !important;
+  background: var(--surface-elevated) !important;
+  box-shadow: -16px 0 40px rgb(16 24 40 / .14) !important;
+}
+.ops-drawer-header,
+.ops-drawer-footer { border-color: var(--line); background: #ffffff; }
+.ui-button--destructive:not(.ui-button--primary) { color: hsl(var(--destructive)); border-color: hsl(var(--destructive) / .28); background: hsl(var(--destructive) / .04); box-shadow: none; }
+
+@media (max-width: 1099px) {
+  .ops-content-shell--with-sidebar { padding-left: 0; }
+  .ops-page-area { padding: 16px; }
+}
+@media (max-width: 640px) {
+  .ops-page-area { padding: 12px; }
+  .ops-page-header--with-actions { grid-template-columns: 1fr; }
+  .ops-page-header--with-actions .ops-page-header-actions { grid-column: 1; grid-row: auto; justify-content: flex-start; }
+  .ops-drawer-panel { width: 100vw !important; max-width: 100vw !important; }
+}
+
+/* Keep Tailwind semantic surfaces aligned with the neutral operational tokens above. */
+:root,
+:root[data-ambient="day"] {
+  --background: 210 20% 98%;
+  --foreground: 215 28% 17%;
+  --card: 0 0% 100%;
+  --card-foreground: 215 28% 17%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 215 28% 17%;
+  --muted: 220 17% 96%;
+  --muted-foreground: 220 9% 46%;
+  --accent: 214 95% 96%;
+  --accent-foreground: 214 88% 42%;
+  --border: 220 13% 91%;
+  --input: 220 13% 91%;
+  --ring: 214 88% 52%;
+}
+
+/* User service shell: compact on landscape tablets, descriptive on portrait drawers. */
+.ops-layout-shell--user .ops-breadcrumb { display: none; }
+.ops-topbar-context {
+  color: var(--text-strong, hsl(var(--foreground)));
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+.ops-layout-shell--user .ops-topbar {
+  height: 52px !important;
+  min-height: 52px;
+  gap: .5rem !important;
+  padding-inline: clamp(.75rem, 2vw, 1.25rem) !important;
+}
+.ops-layout-shell--user .ops-topbar > .ui-button {
+  flex: 0 0 auto;
+  margin-right: .1rem;
+}
+.ops-layout-shell--user .ops-topbar-tools {
+  gap: .15rem !important;
+}
+.ops-layout-shell--user .reservation-page {
+  width: min(100%, 68rem);
+}
+@media (min-width: 1024px) {
+  .ops-layout-shell--user .reservation-page .reservation-batch-summary {
+    column-gap: 1.5rem;
+  }
+.ops-topbar-tools > button:last-child { display: none !important; }
+}
+.ops-topbar-action { position: relative; }
+.ops-notification-badge {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 6px;
+  height: 6px;
+  border: 1.5px solid var(--surface-raised, #fff);
+  border-radius: 999px;
+  background: hsl(var(--destructive));
+}
+
+.ops-account-menu {
+  position: absolute;
+  z-index: 60;
+  right: .75rem;
+  bottom: calc(100% - .25rem);
+  display: grid;
+  width: min(15rem, calc(100vw - 1.5rem));
+  gap: .2rem;
+  padding: .4rem;
+  border: 1px solid var(--line-strong);
+  border-radius: .65rem;
+  background: var(--surface-elevated);
+  box-shadow: 0 12px 28px rgb(16 24 40 / .16);
+}
+.ops-account-menu-item {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  min-height: 2.5rem;
+  width: 100%;
+  padding: .55rem .65rem;
+  color: var(--text-strong, hsl(var(--foreground)));
+  border-radius: .4rem;
+  background: transparent;
+  font-size: .8125rem;
+  font-weight: 550;
+  text-align: left;
+}
+.ops-account-menu-item:hover,
+.ops-account-menu-item:focus-visible { background: hsl(var(--primary) / .08); outline: none; }
+.ops-account-menu-item--danger { color: hsl(var(--destructive)); }
+.ops-user-panel { cursor: pointer; transition: background-color .16s ease, border-color .16s ease; }
+.ops-user-panel:hover { border-color: hsl(var(--primary) / .24) !important; background: hsl(var(--primary) / .055) !important; }
+
+/* Put a maximum on decorative blank areas and keep forms comfortable on wide screens. */
+.ops-layout-shell--user .ops-empty-state,
+.ops-layout-shell--user .empty-state,
+.ops-layout-shell--user [data-empty-state] {
+  min-height: min(12.5rem, 30vh) !important;
+  padding-block: clamp(1.25rem, 3vw, 2rem) !important;
+}
+.ops-layout-shell--user .ops-page-form { width: min(100%, 48rem); }
+.ops-layout-shell--user .ops-page-detail { width: min(100%, 72rem); }
+.ops-layout-shell--user .ops-card .ops-card,
+.ops-layout-shell--user .ui-card .ui-card,
+.ops-layout-shell--user .ops-surface .ops-surface {
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.ops-layout-shell--user .ops-card,
+.ops-layout-shell--user .ui-card,
+.ops-layout-shell--user .ops-list-item,
+.ops-layout-shell--user .device-card-v4,
+.ops-layout-shell--user .reservation-detail-panel {
+  border-color: var(--line) !important;
+  box-shadow: none !important;
+}
+
+/* A 80px icon rail preserves content width in landscape without turning the page into a desktop console. */
+.ops-layout-shell--user .ops-sidebar--compact {
+  width: 80px !important;
+  border-right-color: var(--line) !important;
+}
+.ops-layout-shell--user .ops-sidebar--compact .ops-sidebar-brand,
+.ops-layout-shell--user .ops-sidebar--compact .ops-sidebar-footer {
+  padding-inline: .5rem;
+}
+.ops-layout-shell--user .ops-sidebar--compact .ops-sidebar-brand { justify-content: center; }
+.ops-layout-shell--user .ops-sidebar--compact .ops-sidebar-nav { padding: .7rem .5rem; }
+.ops-layout-shell--user .ops-sidebar--compact .ops-sidebar-nav > div { margin-bottom: .9rem; }
+.ops-layout-shell--user .ops-sidebar--compact .ops-nav-item {
+  min-height: 2.75rem;
+  padding: .65rem !important;
+  border-radius: .55rem;
+}
+.ops-layout-shell--user .ops-sidebar--compact .ops-nav-item svg { width: 1.1rem; height: 1.1rem; }
+.ops-layout-shell--user .ops-sidebar--compact .ops-user-panel { justify-content: center; padding-inline: .35rem; }
+.ops-layout-shell--user .ops-sidebar--compact .ops-account-menu { left: .5rem; right: auto; bottom: calc(100% - .25rem); }
+.ops-content-shell--compact-rail { padding-left: 80px !important; }
+
+:root[data-ambient="night"] .ops-layout-shell--user .ops-topbar,
+:root[data-ambient="night"] .ops-layout-shell--user .ops-sidebar,
+:root[data-ambient="night"] .ops-layout-shell--user .ops-sidebar-footer,
+:root[data-ambient="night"] .ops-layout-shell--user .ops-sidebar-brand {
+  background: var(--surface-raised) !important;
+  border-color: var(--line) !important;
+}
+:root[data-ambient="night"] .ops-layout-shell--user .ops-account-menu { background: var(--surface-elevated) !important; }
+
+@media (max-width: 767px), (orientation: portrait) and (max-width: 1199px) {
+  .ops-content-shell--compact-rail { padding-left: 0 !important; }
+  .ops-layout-shell--user .ops-sidebar { width: min(19rem, calc(100vw - 3.25rem)) !important; }
+  .ops-layout-shell--user .ops-page-area { padding: 14px; }
+  .ops-layout-shell--user .ops-page-form { width: 100%; }
+}
+
+/* Tablet landscape: reset phone-density type overrides so CJK labels retain a stable baseline. */
+@media (min-width: 768px) and (orientation: landscape) {
+  html[data-runtime-surface="apk"] {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  html[data-runtime-surface="apk"] .ops-main .text-2xl { font-size: 1.5rem !important; line-height: 1.3 !important; }
+  html[data-runtime-surface="apk"] .ops-main .text-xl { font-size: 1.25rem !important; line-height: 1.32 !important; }
+  html[data-runtime-surface="apk"] .ops-main .text-lg { font-size: 1.125rem !important; line-height: 1.35 !important; }
+  html[data-runtime-surface="apk"] .ops-main .text-base { font-size: 1rem !important; line-height: 1.45 !important; }
+  html[data-runtime-surface="apk"] .ops-main .text-sm { font-size: .875rem !important; line-height: 1.45 !important; }
+  html[data-runtime-surface="apk"] .ops-main .text-xs { font-size: .75rem !important; line-height: 1.4 !important; }
+
+  html[data-runtime-surface="apk"] .ops-layout-shell table th,
+  html[data-runtime-surface="apk"] .ops-layout-shell table td {
+    font-size: .875rem !important;
+    line-height: 1.45 !important;
+  }
+
+  html[data-runtime-surface="apk"] .ops-layout-shell table th { font-size: .8125rem !important; }
+  html[data-runtime-surface="apk"] .ops-topbar-context,
+  html[data-runtime-surface="apk"] .ops-brand-title,
+  html[data-runtime-surface="apk"] .ops-brand-subtitle,
+  html[data-runtime-surface="apk"] .ops-nav-item,
+  html[data-runtime-surface="apk"] .ui-button {
+    line-height: 1.3 !important;
   }
 }

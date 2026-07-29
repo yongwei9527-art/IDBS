@@ -10,7 +10,8 @@ import {
   AlertTriangle,
   Bell,
   CalendarCheck,
-  ChevronLeft,
+  CircleHelp,
+  Menu,
   ClipboardList,
   LayoutDashboard,
   GalleryVerticalEnd,
@@ -57,7 +58,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
       { title: '故障/诉求', to: '/faults', icon: <AlertTriangle className="h-4 w-4" /> },
       { title: '材料申请', to: APP_PATHS.materialRequests, icon: <PackagePlus className="h-4 w-4" /> },
       { title: '个人信息', to: APP_PATHS.myProfile, icon: <UserRound className="h-4 w-4" /> },
-      { title: '联系人员', to: '/support/contacts', icon: <UserRound className="h-4 w-4" /> },
+      { title: '联系工作人员', to: '/support/contacts', icon: <UserRound className="h-4 w-4" /> },
       { title: '通知', to: '/notifications', icon: <Bell className="h-4 w-4" /> },
       { title: '聊天', to: '/chat', icon: <MessageSquare className="h-4 w-4" /> }
     ]
@@ -114,6 +115,10 @@ const BREADCRUMB_LABEL: Record<string, string> = {
 
 function Breadcrumb({ pathname }: { pathname: string }) {
   const seg = pathname.split('/').filter(Boolean);
+  const labelFor = (segment: string, index: number) => {
+    if (index > 0 && seg[index - 1] === 'chat' && /^[0-9a-f-]{36}$/i.test(segment)) return '会话';
+    return BREADCRUMB_LABEL[segment] ?? segment;
+  };
   return (
     <nav className="ops-breadcrumb flex items-center text-sm text-muted-foreground">
       {seg.length === 0 ? (
@@ -122,7 +127,7 @@ function Breadcrumb({ pathname }: { pathname: string }) {
         seg.map((s, i) => (
           <span key={i} className="flex items-center gap-1">
             {i > 0 && <span className="ops-breadcrumb-separator px-1">/</span>}
-            <span className={cn(i === seg.length - 1 && 'text-foreground')}>{BREADCRUMB_LABEL[s] ?? s}</span>
+            <span className={cn(i === seg.length - 1 && 'text-foreground')}>{labelFor(s, i)}</span>
           </span>
         ))
       )}
@@ -131,19 +136,21 @@ function Breadcrumb({ pathname }: { pathname: string }) {
 }
 
 function shouldStartCollapsed() {
-  if (typeof window === 'undefined') return true;
-  return document.documentElement.dataset.runtimeSurface === 'apk' || window.innerWidth < 768;
+  return usesNavigationDrawer();
 }
 
 const NAVIGATION_HISTORY_KEY = '__rentalNavigationOpen';
 
 function usesNavigationDrawer() {
   if (typeof window === 'undefined') return false;
-  return document.documentElement.dataset.runtimeSurface === 'apk' || window.innerWidth < 768;
+  return window.matchMedia('(max-width: 1439px)').matches;
 }
 
 export function AppLayout() {
   const [collapsed, setCollapsed] = useState(shouldStartCollapsed);
+  const [drawerSurface, setDrawerSurface] = useState(usesNavigationDrawer);
+  const [viewportWidth, setViewportWidth] = useState(() => typeof window === 'undefined' ? 0 : window.innerWidth);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [notice, setNotice] = useState<SystemNotice | null>(null);
   const [ambient, setAmbient] = useState<'day' | 'night'>(() => {
     if (typeof window === 'undefined') return 'night';
@@ -159,7 +166,7 @@ export function AppLayout() {
   const navigationTargetRef = useRef<string | null>(null);
   const navigationBackPendingRef = useRef(false);
   const drawerOpenRef = useRef(false);
-  const drawerSurface = usesNavigationDrawer();
+
   const { data: latestNotice } = useQuery({
     queryKey: SYSTEM_NOTICE_QUERY_KEY,
     queryFn: fetchSystemNotice,
@@ -184,10 +191,17 @@ export function AppLayout() {
   // Administrators work from the operating console; only the communication entry remains shared to prevent duplicated device and reservation menus.
   const visibleNavGroups = capability.isAdminLike
     ? [...visibleAdminGroups, ...navGroups.map((group) => ({ ...group, items: group.items.filter((item) => item.to === '/chat' || item.to === APP_PATHS.myProfile) })).filter((group) => group.items.length > 0)]
-    : navGroups;
+    : navGroups.map((group) => ({
+      ...group,
+      items: group.items.filter((item) =>
+        item.to !== APP_PATHS.myProfile
+      )
+    })).filter((group) => group.items.length > 0);
+  const compactUserRail = !drawerSurface && !capability.isAdminLike && viewportWidth < 1200;
   const roleLabel = capability.isSuperAdmin ? '系统管理员' : capability.isAdminLike ? '运营权限已启用' : '服务账号';
   function closeNavigation() {
-    if (usesNavigationDrawer() && window.history.state?.[NAVIGATION_HISTORY_KEY]) {
+    setAccountMenuOpen(false);
+    if (drawerSurface && window.history.state?.[NAVIGATION_HISTORY_KEY]) {
       if (!navigationBackPendingRef.current) {
         navigationBackPendingRef.current = true;
         window.history.back();
@@ -198,7 +212,7 @@ export function AppLayout() {
   }
 
   function handleNavigationClick(event: MouseEvent<HTMLAnchorElement>, to: string) {
-    if (!usesNavigationDrawer()) return;
+    if (!drawerSurface) return;
     if (!collapsed && window.history.state?.[NAVIGATION_HISTORY_KEY]) {
       event.preventDefault();
       navigationTargetRef.current = to;
@@ -209,7 +223,19 @@ export function AppLayout() {
   }
 
   useEffect(() => {
-    if (collapsed || !usesNavigationDrawer()) return undefined;
+    const syncSurface = () => {
+      const isDrawer = usesNavigationDrawer();
+      setViewportWidth(window.innerWidth);
+      setDrawerSurface(isDrawer);
+      setCollapsed(isDrawer);
+    };
+    syncSurface();
+    window.addEventListener('resize', syncSurface);
+    return () => window.removeEventListener('resize', syncSurface);
+  }, []);
+
+  useEffect(() => {
+    if (collapsed || !drawerSurface) return undefined;
     const previousBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     document.documentElement.dataset.navigationOpen = 'true';
@@ -239,11 +265,11 @@ export function AppLayout() {
       document.body.style.overflow = previousBodyOverflow;
       delete document.documentElement.dataset.navigationOpen;
     };
-  }, [collapsed, navigate]);
+  }, [collapsed, drawerSurface, navigate]);
 
   useEffect(() => {
-    drawerOpenRef.current = !collapsed && usesNavigationDrawer();
-  }, [collapsed]);
+    drawerOpenRef.current = !collapsed && drawerSurface;
+  }, [collapsed, drawerSurface]);
 
   useEffect(() => {
     if (document.documentElement.dataset.runtimeSurface !== 'apk') return undefined;
@@ -266,17 +292,6 @@ export function AppLayout() {
     };
   }, []);
 
-  useEffect(() => {
-    function onViewportResize() {
-      if (usesNavigationDrawer()) closeNavigation();
-    }
-    window.addEventListener('resize', onViewportResize);
-    window.addEventListener('orientationchange', onViewportResize);
-    return () => {
-      window.removeEventListener('resize', onViewportResize);
-      window.removeEventListener('orientationchange', onViewportResize);
-    };
-  }, []);
   useEffect(() => {
     document.documentElement.dataset.ambient = ambient;
     document.documentElement.style.colorScheme = ambient === 'night' ? 'dark' : 'light';
@@ -323,7 +338,7 @@ export function AppLayout() {
   }
 
   return (
-    <div className="ops-layout-shell relative min-h-svh w-full bg-background text-sm text-foreground">
+    <div className={cn('ops-layout-shell relative min-h-svh w-full bg-background text-sm text-foreground', capability.isAdminLike ? 'ops-layout-shell--admin' : 'ops-layout-shell--user')}>
       {notice && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
@@ -352,9 +367,9 @@ export function AppLayout() {
           onClick={closeNavigation}
         />
       ) : null}
-      <aside id="app-navigation" className={cn('ops-sidebar fixed inset-y-0 left-0 z-50 flex w-[220px] flex-col transition-transform duration-200 ease-out', collapsed ? '-translate-x-full' : 'translate-x-0')}>
+      <aside id="app-navigation" className={cn('ops-sidebar fixed inset-y-0 left-0 z-50 flex w-[216px] flex-col transition-transform duration-200 ease-out', compactUserRail && 'ops-sidebar--compact', collapsed ? '-translate-x-full' : 'translate-x-0')}>
         <div className="ops-sidebar-brand flex h-[56px] items-center justify-between gap-2 px-4">
-          {!collapsed ? (
+          {!collapsed && !compactUserRail ? (
             <>
               <div className="flex min-w-0 items-center gap-2.5">
               <span className="ops-brand-mark relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden">
@@ -384,10 +399,10 @@ export function AppLayout() {
           )}
         </div>
 
-        <nav className="ops-sidebar-nav flex-1 overflow-y-auto px-2.5 py-3">
+        <nav className="ops-sidebar-nav min-h-0 flex-1 overflow-y-auto px-2.5 py-3">
           {visibleNavGroups.map((group) => (
             <div key={group.label} className="mb-5">
-              {!collapsed && (
+              {!collapsed && !compactUserRail && (
                 <p className="ops-nav-group-label px-2 pb-2 text-[11px] font-semibold tracking-[0.08em]">{group.label}</p>
               )}
               <ul className="space-y-1">
@@ -398,13 +413,13 @@ export function AppLayout() {
                       className={cn(
                         'ops-nav-item flex items-center gap-2.5 px-2.5 py-2 text-[13px] font-medium',
                         isActive(item.to) && 'ops-nav-item-active',
-                        collapsed && 'justify-center'
+                        (collapsed || compactUserRail) && 'justify-center'
                       )}
                       title={item.title}
                       onClick={(event) => handleNavigationClick(event, item.to)}
                     >
                       {item.icon}
-                      {!collapsed && <span>{item.title}</span>}
+                      {!collapsed && !compactUserRail && <span>{item.title}</span>}
                     </Link>
                   </li>
                 ))}
@@ -413,12 +428,44 @@ export function AppLayout() {
           ))}
         </nav>
 
-        <div className="ops-sidebar-footer p-3">
-          <div className="ops-user-panel flex items-center gap-2.5 rounded-xl px-2.5 py-2.5">
+        <div className="ops-sidebar-footer relative p-3">
+          {accountMenuOpen ? (
+            <div className="ops-account-menu" role="menu" aria-label="账号操作">
+              <Link
+                to={APP_PATHS.myProfile as any}
+                className="ops-account-menu-item"
+                role="menuitem"
+                onClick={(event) => { setAccountMenuOpen(false); handleNavigationClick(event, APP_PATHS.myProfile); }}
+              >
+                <UserRound className="h-4 w-4" />
+                <span>个人信息</span>
+              </Link>
+              <Link
+                to={'/support/contacts' as any}
+                className="ops-account-menu-item"
+                role="menuitem"
+                onClick={(event) => { setAccountMenuOpen(false); handleNavigationClick(event, '/support/contacts'); }}
+              >
+                <CircleHelp className="h-4 w-4" />
+                <span>联系与支持</span>
+              </Link>
+              <button type="button" className="ops-account-menu-item ops-account-menu-item--danger" role="menuitem" onClick={() => auth.logout()}>
+                <LogOut className="h-4 w-4" />
+                <span>退出登录</span>
+              </button>
+            </div>
+          ) : null}
+          <button
+            type="button"
+            className="ops-user-panel flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2.5 text-left"
+            aria-label="打开账号菜单"
+            aria-expanded={accountMenuOpen}
+            onClick={() => setAccountMenuOpen((open) => !open)}
+          >
             <div className="ops-user-avatar flex h-9 w-9 items-center justify-center rounded-full">
               <UserRound className="h-4 w-4" />
             </div>
-            {!collapsed && (
+            {!collapsed && !compactUserRail && (
               <div className="min-w-0 flex-1 text-xs">
                 <p className="ops-user-name truncate font-semibold">{auth.me?.name || '用户'}</p>
                 <p className="ops-user-role truncate">
@@ -426,17 +473,20 @@ export function AppLayout() {
                 </p>
               </div>
             )}
-          </div>
+          </button>
         </div>
       </aside>
 
-      <div className={cn('ops-content-shell flex min-h-svh min-w-0 flex-1 flex-col transition-[padding] duration-200 ease-out', !collapsed && 'md:pl-[220px]')}>
+      <div className={cn('ops-content-shell flex min-h-svh min-w-0 flex-1 flex-col transition-[padding] duration-200 ease-out', !collapsed && !drawerSurface && 'ops-content-shell--with-sidebar', compactUserRail && 'ops-content-shell--compact-rail')}>
         <header className="ops-topbar sticky top-0 z-30 flex h-[52px] items-center gap-3 px-4 md:px-5">
-          <Button variant="ghost" size="icon" onClick={() => { if (collapsed) setCollapsed(false); else closeNavigation(); }}
-            aria-expanded={!collapsed}
-            aria-controls="app-navigation" aria-label={collapsed ? "打开导航" : "关闭导航"} title={collapsed ? "打开导航" : "关闭导航"}>
-            <ChevronLeft className={cn('h-4 w-4 transition-transform', collapsed && 'rotate-180')} />
-          </Button>
+          {drawerSurface ? (
+            <Button variant="ghost" size="icon" onClick={() => { if (collapsed) setCollapsed(false); else closeNavigation(); }}
+              aria-expanded={!collapsed}
+              aria-controls="app-navigation" aria-label={collapsed ? "打开导航" : "关闭导航"} title={collapsed ? "打开导航" : "关闭导航"}>
+              {collapsed ? <Menu className="h-4 w-4" /> : <X className="h-4 w-4" />}
+            </Button>
+          ) : <span className="hidden h-9 w-1 md:block" aria-hidden="true" />}
+          {!capability.isAdminLike ? <span className="ops-topbar-context">设备服务</span> : null}
           <Breadcrumb pathname={location.pathname} />
           <div className="ops-topbar-tools ml-auto flex items-center gap-1">
             <Button
@@ -450,6 +500,7 @@ export function AppLayout() {
             </Button>
             <Link to={'/notifications' as any} aria-label="通知" className="ops-topbar-action inline-flex h-9 w-9 items-center justify-center rounded-lg">
               <Bell className="h-4 w-4" />
+              {notice ? <span className="ops-notification-badge" aria-hidden="true" /> : null}
             </Link>
             <Button variant="ghost" size="icon" aria-label="退出登录" title="退出登录" onClick={() => auth.logout()}>
               <LogOut className="h-4 w-4" />
@@ -465,5 +516,3 @@ export function AppLayout() {
     </div>
   );
 }
-
-

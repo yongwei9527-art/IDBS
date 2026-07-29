@@ -158,7 +158,7 @@ function exportText(value: unknown) {
     .replace(/role_key/g, '角色')
     .replace(/device_code/g, '设备编号')
     .replace(/message/g, '说明')
-    .replace(/[{}"\[\]]/g, ' ')
+    .replace(/[{}"[\]]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   return text;
@@ -437,7 +437,7 @@ function ExportJobRow({ job }: { job: ExportJob }) {
         )}
       </div>
       {job.status === 'failed' && job.error_message && (
-        <p className="rounded-xl border border-destructive/20 bg-destructive/5 p-2 text-xs text-destructive lg:col-span-5">{toAdminError(job.error_message)}</p>
+        <p className="rounded-lg border border-destructive/20 bg-destructive/5 p-2 text-xs text-destructive lg:col-span-5">{toAdminError(job.error_message)}</p>
       )}
     </div>
   );

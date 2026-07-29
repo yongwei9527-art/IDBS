@@ -113,7 +113,7 @@ export function BorrowIndexPage() {
   }
 
   return (
-    <div className="ops-page-stack">
+    <div className="ops-page-stack mx-auto max-w-6xl">
       <OpsPageHeader title="设备使用中" />
       <section className="borrow-overview">
         <div className="min-w-0">
@@ -129,10 +129,10 @@ export function BorrowIndexPage() {
         </div>
       </section>
 
-      {records.isLoading ? <p className="rounded-2xl border bg-muted/30 p-5 text-center text-sm text-muted-foreground">借用记录加载中…</p> : null}
-      {records.error ? <p className="rounded-2xl border border-destructive/30 bg-destructive/5 p-5 text-center text-sm text-destructive">借用记录加载失败：{toFriendlyError(records.error)}</p> : null}
+      {records.isLoading ? <p className="rounded-lg border bg-muted/30 p-5 text-center text-sm text-muted-foreground">借用记录加载中…</p> : null}
+      {records.error ? <p className="rounded-lg border border-destructive/30 bg-destructive/5 p-5 text-center text-sm text-destructive">借用记录加载失败：{toFriendlyError(records.error)}</p> : null}
       {!records.isLoading && !records.error && activeRecords.length === 0 && pendingReturnRecords.length === 0 ? (
-        <Card className="ops-card">
+        <Card className="ops-card shadow-none">
           <CardContent className="flex min-h-56 flex-col items-center justify-center p-6 text-center">
             <Clock3 className="h-9 w-9 text-muted-foreground/60" />
             <p className="mt-3 font-semibold">当前没有使用中的设备</p>
@@ -159,7 +159,7 @@ export function BorrowIndexPage() {
                   <Clock3 className="mt-1 h-5 w-5 shrink-0 text-primary" />
                 </div>
 
-                <div className="mx-5 grid overflow-hidden rounded-2xl border borrow-time-summary sm:grid-cols-2">
+                <div className="mx-5 grid overflow-hidden rounded-lg border border-border bg-muted/20 borrow-time-summary sm:grid-cols-2">
                   <div className="p-4">
                     <p className="text-xs text-muted-foreground">当前预计归还</p>
                     <p className="mt-1 text-base font-semibold tracking-tight">{briefDateTime(record.expected_return_time)}</p>
@@ -312,7 +312,7 @@ function BorrowReturnPanel({ record }: { record: BorrowRecord }) {
   }
 
   return (
-    <div className="border-t bg-muted/10 p-5">
+    <div className="border-t border-border bg-muted/[0.025] p-5">
       {!open ? (
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -441,7 +441,7 @@ function ReturnSupplementPanel({ record }: { record: BorrowRecord }) {
   }
 
   return (
-    <div className="mt-4 space-y-3 border-t pt-4">
+    <div className="mt-4 space-y-3 border-t border-border pt-4">
       <div className={`rounded-xl px-3 py-2 text-xs ${deadlinePassed ? 'border border-destructive/30 bg-destructive/5 text-destructive' : 'border border-amber-400/30 bg-amber-500/10 text-amber-800 dark:text-amber-200'}`}>
         {deadlinePassed ? '补充时间已超时，仍可提交；系统会保留超时记录。' : `请在 ${briefDateTime(record.return_material_deadline)} 前补充。`}
       </div>

@@ -137,14 +137,14 @@ export function AdminDashboardPage() {
   ].filter((item) => item.show);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="ops-page-stack operations-dashboard-page">
       <OpsPageHeader title="运营总览" className="ops-page-header--compact">
         {capability.canViewReservations ? <Button size="sm" onClick={() => nav({ to: '/admin/reservations', search: { status: 'pending' } } as any)}>审批预约</Button> : null}
         {capability.canViewFaults ? <Button variant="outline" size="sm" onClick={() => nav({ to: '/admin/faults' } as any)}>处理故障</Button> : null}
         {capability.canViewStats ? <Button variant="outline" size="sm" onClick={() => nav({ to: '/admin/stats' } as any)}>运营分析</Button> : null}
       </OpsPageHeader>
 
-      {error && <Card><CardContent className="py-4 text-sm text-destructive">工作台加载失败：{toFriendlyError(error)}</CardContent></Card>}
+      {error && <Card className="ops-card"><CardContent className="py-4 text-sm text-destructive">工作台加载失败：{toFriendlyError(error)}</CardContent></Card>}
 
       <section className="dashboard-status-strip grid sm:grid-cols-2 xl:grid-cols-4">
         {overviewItems.map((item) => (
@@ -172,7 +172,7 @@ export function AdminDashboardPage() {
           ) : (
             <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
               {returnTasksData.tasks.slice(0, 6).map((task) => (
-                <div key={task.id} className="rounded-2xl border bg-background/80 p-3">
+                <div key={task.id} className="rounded-lg border bg-background/80 p-3">
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <p className="font-semibold">{task.device_code} · {task.device_name}</p>

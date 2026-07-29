@@ -61,8 +61,8 @@ function EventCard({ event }: { event: CalendarEvent }) {
   const nav = useNavigate();
   const color = event.color || deviceColor(event.device_code || event.device_id);
   return (
-    <Card className="ops-card overflow-hidden">
-      <CardContent className="relative flex flex-col gap-3 p-4 pl-5 lg:flex-row lg:items-start lg:justify-between">
+    <Card className="ops-card overflow-hidden rounded-xl border-border/60 shadow-none">
+      <CardContent className="relative flex flex-col gap-3 border-b border-border/60 p-4 pl-5 last:border-b-0 lg:flex-row lg:items-start lg:justify-between">
         <span className="absolute left-0 top-0 h-full w-1.5" style={{ backgroundColor: color }} aria-hidden />
         <div className="min-w-0 space-y-3">
           <div className="flex flex-wrap items-center gap-2">
@@ -72,10 +72,10 @@ function EventCard({ event }: { event: CalendarEvent }) {
             {statusBadge(event.status)}
           </div>
           <div className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
-            <p className="flex items-center gap-2" title={fullDateTimeRange(event.start_time, event.end_time)}><Clock className="h-4 w-4" />{compactTimeRange(event.start_time, event.end_time)}</p>
+            <p className="flex items-center gap-2 whitespace-nowrap" title={fullDateTimeRange(event.start_time, event.end_time)}><Clock className="h-4 w-4" />{compactTimeRange(event.start_time, event.end_time)}</p>
             <p className="flex items-center gap-2"><UserRound className="h-4 w-4" />{event.user_name || '—'}{event.user_phone ? ` / ${event.user_phone}` : ''}</p>
           </div>
-          {event.purpose && <p className="rounded-xl bg-muted/70 p-2 text-sm text-muted-foreground">用途：{event.purpose}</p>}
+          {event.purpose && <p className="border-l-2 border-primary/40 bg-muted/50 px-3 py-2 text-sm text-muted-foreground">用途：{event.purpose}</p>}
           <p className="text-xs text-muted-foreground">{sourceLabel(event.source_type || event.type)} · <CompactId value={eventKey(event)} prefix={eventPrefix(event)} /></p>
         </div>
         {event.user_id && (
@@ -119,8 +119,8 @@ export function CalendarDetailPage() {
   const deviceCount = new Set(events.map((event) => event.device_code || event.device_id).filter(Boolean)).size;
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-4">
-      <button onClick={() => nav({ to: '/calendar', search: { month } } as any)} className="inline-flex w-fit items-center gap-2 rounded-full bg-card px-3 py-2 text-sm text-muted-foreground shadow-sm hover:text-foreground">
+    <div className="mx-auto flex max-w-6xl flex-col gap-5">
+      <button onClick={() => nav({ to: '/calendar', search: { month } } as any)} className="inline-flex min-h-11 w-fit items-center gap-2 rounded-lg px-2 text-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground">
         <ArrowLeft className="h-4 w-4" /> 返回日历
       </button>
 
@@ -129,15 +129,15 @@ export function CalendarDetailPage() {
         <OpsBadge tone="muted">设备 {deviceCount}</OpsBadge>
       </OpsPageHeader>
 
-      {isLoading && <Card className="ops-card"><CardContent className="py-8 text-center text-muted-foreground">加载中…</CardContent></Card>}
-      {error && <Card className="ops-card"><CardContent className="py-8 text-center text-destructive">加载失败：{toFriendlyError(error)}</CardContent></Card>}
+      {isLoading && <Card className="ops-card rounded-xl border-border/60 shadow-none"><CardContent className="py-8 text-center text-muted-foreground">加载中…</CardContent></Card>}
+      {error && <Card className="ops-card rounded-xl border-border/60 shadow-none"><CardContent className="py-8 text-center text-destructive">加载失败：{toFriendlyError(error)}</CardContent></Card>}
 
       {!isLoading && !error && (
-        <Card className="ops-card">
+        <Card className="ops-card rounded-xl border-border/60 shadow-none">
           <CardHeader>
             <CardTitle className="text-base">当天安排（{events.length}）</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="divide-y divide-border/60">
             {events.map((event) => <EventCard key={eventKey(event)} event={event} />)}
             {events.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">当天暂无占用</p>}
           </CardContent>

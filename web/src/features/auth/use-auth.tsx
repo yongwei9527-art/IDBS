@@ -7,6 +7,7 @@ import {
   type RegisterPendingResult
 } from '@/lib/auth-api';
 import { tokenStore, type ApiError } from '@/lib/api';
+import { unregisterRemotePushNotifications } from '@/features/notification/native-notifications';
 
 interface AuthState {
   me: Me | null;
@@ -112,6 +113,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
+    // Start revocation before clearing the access token; failures never block logout.
+    void unregisterRemotePushNotifications(tokenStore.get());
     authApi.logout();
     setMe(null);
     setIsReady(true);

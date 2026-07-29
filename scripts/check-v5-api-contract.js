@@ -29,9 +29,9 @@ for (const sourcePath of sources) {
 const missing = [...implemented].filter((endpoint) => !documented.has(endpoint));
 assert.equal(missing.length, 0, `Missing 实验室管理系统 5.0 API documentation:\n${missing.join('\n')}`);
 const serviceSource = fs.readFileSync(path.join(root, 'src', 'services', 'create-rental-service.js'), 'utf8');
-const finalReturn = serviceSource.match(/return \{ runReservationReminderLifecycle,([^}]+)\};/);
+const finalReturn = serviceSource.match(/\breturn\s+\{([^{}]+)\};\s*\n\}\s*\n\s*module\.exports\s*=/);
 assert.ok(finalReturn, 'Unable to inspect the rental-service public method map.');
-const publicMethods = new Set(['runReservationReminderLifecycle', ...finalReturn[1].split(',').map((value) => value.trim()).filter(Boolean)]);
+const publicMethods = new Set(finalReturn[1].split(',').map((value) => value.trim()).filter(Boolean));
 const missingServiceMethods = [...serviceMethods].filter((method) => !publicMethods.has(method));
 assert.equal(missingServiceMethods.length, 0, `V5 routes reference methods not exported by createRentalService:\n${missingServiceMethods.join('\n')}`);
 assert.match(contract, /WS `?\/api\/v5\/ws`?/);

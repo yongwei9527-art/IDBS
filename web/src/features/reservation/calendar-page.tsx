@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import { ArrowUpRight, ChevronLeft, ChevronRight, Clock3, UserRound, X } from 'lucide-react';
+import { ArrowUpRight, ChevronLeft, ChevronRight, Clock3, Search, UserRound, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { OpsBadge, OpsDataToolbar, OpsEmptyState, OpsPageHeader } from '@/components/ops/design-system';
+import { Input } from '@/components/ui/input';
+import { OpsBadge, OpsDataToolbar, OpsEmptyState } from '@/components/ops/design-system';
 import { fullDateTimeRange, tinyTimeRange } from '@/lib/time-format';
 import { toFriendlyError } from '@/lib/friendly-error';
 import { useCapability } from '@/features/auth/permissions';
+import { listDevices } from '@/features/devices/device-api';
 import { getCalendar, type CalendarEvent } from './reservation-api';
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
@@ -18,6 +20,12 @@ const STATUS_LABEL: Record<string, string> = {
 const STATUS_TONE: Record<string, string> = {
   pending: 'badge-warn', approved: 'badge-success', rejected: 'badge-danger', cancelled: 'badge-muted',
   completed: 'badge-muted', in_use: 'badge-info', returned: 'badge-muted'
+};
+
+type CalendarDeviceOption = {
+  key: string;
+  label: string;
+  searchText: string;
 };
 
 function formatDay(date: Date) {
@@ -127,6 +135,7 @@ export function CalendarPage() {
     return /^\d{4}-\d{2}$/.test(value) ? value : currentMonth();
   });
   const [deviceFilter, setDeviceFilter] = useState('');
+  const [deviceSearch, setDeviceSearch] = useState('');
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedEvents, setSelectedEvents] = useState<CalendarEvent[]>([]);
   const { first, start, end } = useMemo(() => monthRange(month), [month]);
@@ -138,13 +147,29 @@ export function CalendarPage() {
     queryFn: () => getCalendar({ start: startText, end: endText })
   });
 
+  const { data: devices = [] } = useQuery({
+    queryKey: ['devices'],
+    queryFn: listDevices
+  });
+
   const monthEvents = useMemo(() => events.filter((event) => eventDate(event).slice(0, 7) === month), [events, month]);
-  const deviceOptions = useMemo(() => Array.from(monthEvents.reduce((map, event) => {
-    const key = deviceKey(event);
-    if (!map.has(key)) map.set(key, eventName(event));
-    return map;
-  }, new Map<string, string>()).entries()), [monthEvents]);
+  const deviceOptions = useMemo(() => {
+    const options = new Map<string, CalendarDeviceOption>();
+    devices.forEach((device) => {
+      const key = String(device.device_code || device.id);
+      const name = device.name || device.device_code || '\u672a\u547d\u540d\u8bbe\u5907';
+      options.set(key, { key, label: [name, key].join(' / '), searchText: [name, key, device.category, device.location].filter(Boolean).join(' ').toLocaleLowerCase() });
+    });
+    events.forEach((event) => {
+      const key = deviceKey(event);
+      if (options.has(key)) return;
+      const name = eventName(event);
+      options.set(key, { key, label: [name, key].join(' / '), searchText: [name, key].join(' ').toLocaleLowerCase() });
+    });
+    return Array.from(options.values()).sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'));
+  }, [devices, events]);
   const visibleEvents = useMemo(() => deviceFilter ? events.filter((event) => deviceKey(event) === deviceFilter) : events, [deviceFilter, events]);
+  const visibleMonthEvents = useMemo(() => visibleEvents.filter((event) => eventDate(event).slice(0, 7) === month), [visibleEvents, month]);
   const grouped = useMemo(() => {
     const map = new Map<string, CalendarEvent[]>();
     visibleEvents.forEach((event) => {
@@ -160,9 +185,29 @@ export function CalendarPage() {
     return date;
   }), [start]);
 
-  const activeDays = new Set(monthEvents.map(eventDate)).size;
-  const inUseCount = monthEvents.filter((event) => event.status === 'in_use').length;
+  const activeDays = new Set(visibleMonthEvents.map(eventDate)).size;
+  const inUseCount = visibleMonthEvents.filter((event) => event.status === 'in_use').length;
   const deviceCount = deviceOptions.length;
+
+  function updateDeviceSearch(value: string) {
+    setDeviceSearch(value);
+    const normalized = value.trim().toLocaleLowerCase();
+    const selected = deviceOptions.find((option) =>
+      option.key.toLocaleLowerCase() === normalized
+      || option.label.toLocaleLowerCase() === normalized
+      || option.label.toLocaleLowerCase().startsWith(`${normalized} / `)
+    );
+    setDeviceFilter(selected?.key || '');
+    setSelectedDate('');
+    setSelectedEvents([]);
+  }
+
+  function clearDeviceFilter() {
+    setDeviceFilter('');
+    setDeviceSearch('');
+    setSelectedDate('');
+    setSelectedEvents([]);
+  }
 
   function openEvents(date: string, items: CalendarEvent[]) {
     setSelectedDate(date);
@@ -191,7 +236,7 @@ export function CalendarPage() {
 
   return (
     <div className="ops-page-stack calendar-page">
-      <OpsPageHeader title="使用日历" className="ops-page-header--compact" />
+
 
       <Card className="ops-card overflow-hidden">
         <CardContent className="space-y-4 p-4">
@@ -205,10 +250,16 @@ export function CalendarPage() {
               </div>
             )}
             filters={
-              <select value={deviceFilter} onChange={(event) => setDeviceFilter(event.target.value)} className="h-9 min-w-44 rounded-xl border border-input bg-card px-3 text-sm" aria-label="筛选设备">
-                <option value="">全部设备</option>
-                {deviceOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-              </select>
+              <div className="flex w-full items-center justify-between gap-2 sm:w-[26rem]">
+                <div className="relative min-w-0 flex-1">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+                  <Input list="calendar-device-options" value={deviceSearch} onChange={(event) => updateDeviceSearch(event.target.value)} placeholder={'\u8f93\u5165\u8bbe\u5907\u540d\u79f0\u6216\u7f16\u53f7'} className="h-11 w-full pl-9" aria-label={'\u7b5b\u9009\u8bbe\u5907'} />
+                  <datalist id="calendar-device-options">
+                    {deviceOptions.map((option) => <option key={option.key} value={option.label} />)}
+                  </datalist>
+                </div>
+                <Button type="button" size="sm" variant={deviceFilter ? 'outline' : 'secondary'} className="min-h-11 shrink-0" onClick={clearDeviceFilter} aria-pressed={!deviceFilter}>{'\u5168\u90e8\u8bbe\u5907'}</Button>
+              </div>
             }
             actions={
               <div className="ops-segment-group flex items-center gap-1">
@@ -234,7 +285,7 @@ export function CalendarPage() {
                   const outside = date.getMonth() !== first.getMonth();
                   const isToday = key === today;
                   return (
-                    <div key={key} className={`calendar-day-cell relative min-h-[118px] p-1.5 ${outside ? 'calendar-day-cell--outside' : ''} ${isToday ? 'calendar-day-cell--today' : ''} ${dayEvents.length ? 'calendar-day-cell--busy' : ''}`}>
+                    <div key={key} className={`calendar-day-cell relative min-h-[clamp(84px,12vw,118px)] p-1.5 ${outside ? 'calendar-day-cell--outside' : ''} ${isToday ? 'calendar-day-cell--today' : ''} ${dayEvents.length ? 'calendar-day-cell--busy' : ''}`}>
                       <button type="button" className="absolute inset-0 z-0 cursor-pointer" onClick={() => openEvents(key, dayEvents)} aria-label={`查看 ${key} 全部安排`} />
                       <div className="relative z-10 mb-2 flex pointer-events-none items-center justify-between">
                         <span className={`calendar-day-num ${isToday ? 'calendar-day-num--today' : outside ? 'calendar-day-num--outside' : ''}`}>{date.getDate()}</span>

@@ -2,6 +2,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { downloadAuthenticatedFile, friendlyApiMessage, request, tokenStore } from '@/lib/api';
 import { QUERY_STALE } from '@/lib/query-defaults';
 
+export interface BatchDeleteResult {
+  deleted_ids: string[];
+  failed_ids: string[];
+}
+
 // ---------- Dashboard ----------
 
 export interface AdminDashboard {
@@ -200,6 +205,20 @@ export function useDeleteUser() {
   });
 }
 
+export function useBatchDeleteUsers() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => request<BatchDeleteResult>('/admin/users/batch', {
+      method: 'DELETE',
+      body: JSON.stringify({ ids: [...new Set(ids)].filter(Boolean) })
+    }),
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ['admin-users'] });
+      result.deleted_ids.forEach((id) => qc.invalidateQueries({ queryKey: ['admin-user-detail', id] }));
+    }
+  });
+}
+
 export interface AdminPasswordResetResult {
   message: string;
   temporary_password: string;
@@ -295,16 +314,116 @@ export interface RegistrationApprovalCode {
   code: string;
   expires_at: string;
   refresh_seconds: number;
+  ttl_minutes: number;
+  generation: number;
+  server_time: string;
+  client_received_at_monotonic_ms: number;
+}
+
+type RegistrationApprovalCodeResponse = Omit<RegistrationApprovalCode, 'client_received_at_monotonic_ms'>;
+
+const REGISTRATION_APPROVAL_CODE_QUERY_KEY = ['registration-approval-code'] as const;
+
+function monotonicNow() {
+  return typeof performance === 'undefined' ? Date.now() : performance.now();
+}
+
+function stampRegistrationApprovalCode(data: RegistrationApprovalCodeResponse): RegistrationApprovalCode {
+  return {
+    ...data,
+    client_received_at_monotonic_ms: monotonicNow()
+  };
+}
+
+function keepNewestRegistrationApprovalCode(
+  current: RegistrationApprovalCode | undefined,
+  incoming: RegistrationApprovalCode
+) {
+  if (!current) return incoming;
+  if (current.generation !== incoming.generation) {
+    return current.generation > incoming.generation ? current : incoming;
+  }
+  const currentServerTime = new Date(current.server_time).getTime();
+  const incomingServerTime = new Date(incoming.server_time).getTime();
+  return Number.isFinite(currentServerTime)
+    && Number.isFinite(incomingServerTime)
+    && currentServerTime > incomingServerTime
+    ? current
+    : incoming;
+}
+
+export function registrationApprovalCodeRemainingMs(data?: RegistrationApprovalCode) {
+  if (!data) return 0;
+  const expiresAt = new Date(data.expires_at).getTime();
+  const serverTime = new Date(data.server_time).getTime();
+  if (!Number.isFinite(expiresAt) || !Number.isFinite(serverTime)) return 0;
+  const receivedAt = Number.isFinite(data.client_received_at_monotonic_ms)
+    ? data.client_received_at_monotonic_ms
+    : monotonicNow();
+  const elapsedSinceReceipt = Math.max(0, monotonicNow() - receivedAt);
+  return Math.max(0, expiresAt - (serverTime + elapsedSinceReceipt));
 }
 
 export function useRegistrationApprovalCode(options?: { enabled?: boolean }) {
+  const qc = useQueryClient();
   return useQuery({
-    queryKey: ['registration-approval-code'],
+    queryKey: REGISTRATION_APPROVAL_CODE_QUERY_KEY,
     enabled: options?.enabled ?? true,
-    queryFn: () => request<RegistrationApprovalCode>('/admin/users/registration-approval-code'),
-    staleTime: 15_000,
-    refetchInterval: 30_000,
+    queryFn: async () => {
+      const incoming = stampRegistrationApprovalCode(
+        await request<RegistrationApprovalCodeResponse>('/admin/users/registration-approval-code')
+      );
+      return keepNewestRegistrationApprovalCode(
+        qc.getQueryData<RegistrationApprovalCode>(REGISTRATION_APPROVAL_CODE_QUERY_KEY),
+        incoming
+      );
+    },
+    staleTime: 0,
+    refetchInterval: (query) => Math.max(
+      1_000,
+      registrationApprovalCodeRemainingMs(query.state.data) + 250
+    ),
     refetchIntervalInBackground: false
+  });
+}
+
+export function useRefreshRegistrationApprovalCode() {
+  const qc = useQueryClient();
+  return useMutation({
+    onMutate: () => qc.cancelQueries({
+      queryKey: REGISTRATION_APPROVAL_CODE_QUERY_KEY,
+      exact: true
+    }),
+    mutationFn: async () => stampRegistrationApprovalCode(
+      await request<RegistrationApprovalCodeResponse>('/admin/users/registration-approval-code/refresh', {
+        method: 'POST',
+        body: '{}'
+      })
+    ),
+    onSuccess: (data) => qc.setQueryData<RegistrationApprovalCode>(
+      REGISTRATION_APPROVAL_CODE_QUERY_KEY,
+      (current) => keepNewestRegistrationApprovalCode(current, data)
+    )
+  });
+}
+
+export function useUpdateRegistrationApprovalCodeTtl() {
+  const qc = useQueryClient();
+  return useMutation({
+    onMutate: () => qc.cancelQueries({
+      queryKey: REGISTRATION_APPROVAL_CODE_QUERY_KEY,
+      exact: true
+    }),
+    mutationFn: async (ttlMinutes: number) => stampRegistrationApprovalCode(
+      await request<RegistrationApprovalCodeResponse>('/admin/users/registration-approval-code/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ ttl_minutes: ttlMinutes })
+      })
+    ),
+    onSuccess: (data) => qc.setQueryData<RegistrationApprovalCode>(
+      REGISTRATION_APPROVAL_CODE_QUERY_KEY,
+      (current) => keepNewestRegistrationApprovalCode(current, data)
+    )
   });
 }
 
@@ -348,6 +467,20 @@ export function useUpdateAdminDevice() {
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ['admin-devices'] });
       qc.invalidateQueries({ queryKey: ['admin-device-detail', vars.id] });
+    }
+  });
+}
+
+export function useBatchDeleteAdminDevices() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => request<BatchDeleteResult>('/admin/devices/batch', {
+      method: 'DELETE',
+      body: JSON.stringify({ ids: [...new Set(ids)].filter(Boolean) })
+    }),
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ['admin-devices'] });
+      result.deleted_ids.forEach((id) => qc.invalidateQueries({ queryKey: ['admin-device-detail', id] }));
     }
   });
 }
@@ -987,6 +1120,7 @@ export interface StaffContact {
   enabled?: boolean;
   name?: string;
   phone?: string;
+  wechat?: string;
   qrcode_url?: string;
   [key: string]: unknown;
 }

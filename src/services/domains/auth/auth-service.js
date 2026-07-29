@@ -20,8 +20,12 @@ function createAuthService(context = {}) {
     verifyRegistrationApprovalCode,
     verifySecret,
     userAccessMessage,
-    recordUserEvent
+    recordUserEvent,
+    withTransaction
   } = context;
+  const runInTransaction = typeof withTransaction === 'function'
+    ? withTransaction
+    : (work) => work({ query, queryOne });
 
   async function upgradeStoredPassword(table, idColumn, id, password, salt) {
     const upgradedHash = await hashPassword(password, salt);
@@ -64,52 +68,60 @@ function createAuthService(context = {}) {
     const password = assertPassword(payload.password);
     if (password.length < 12) return fail('密码至少需要 12 位。', 400, 2001);
 
-    const duplicate = await queryOne(
-      'select id, phone, student_no from users where phone = $1 or student_no = $2 limit 1',
-      [phone, studentNo]
-    );
-    if (duplicate?.phone === phone) return fail('手机号已注册。', 409, 3001);
-    if (duplicate?.student_no === studentNo) return fail('学号已注册。', 409, 3001);
+    const registration = await runInTransaction(async (tx) => {
+      const duplicate = await tx.queryOne(
+        'select id, phone, student_no from users where phone = $1 or student_no = $2 limit 1',
+        [phone, studentNo]
+      );
+      if (duplicate?.phone === phone) return { response: fail('手机号已注册。', 409, 3001) };
+      if (duplicate?.student_no === studentNo) return { response: fail('学号已注册。', 409, 3001) };
 
-    const approvalCodeAccepted = Boolean(
-      payload.approval_code && await verifyRegistrationApprovalCode(payload.approval_code)
-    );
-    const createdAt = nowIso();
-    const salt = randomBytes(16).toString('hex');
-    const user = {
-      id: uuid(),
-      name,
-      phone,
-      student_no: studentNo,
-      major,
-      mentor_name: mentorName,
-      password_hash: await hashPassword(password, salt),
-      password_salt: salt,
-      password_reset_required: false,
-      role: 'user',
-      status: approvalCodeAccepted ? 'active' : 'pending',
-      is_banned: false,
-      approved_at: approvalCodeAccepted ? createdAt : null,
-      created_at: createdAt,
-      updated_at: createdAt
-    };
-    const inserted = await query(`
-      insert into users (
-        id, name, phone, student_no, major, mentor_name,
-        password_hash, password_salt, password_reset_required,
-        role, status, is_banned, approved_at, created_at, updated_at
-      )
-      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-      on conflict (phone) do nothing
-      returning *
-    `, [
-      user.id, user.name, user.phone, user.student_no, user.major, user.mentor_name,
-      user.password_hash, user.password_salt, user.password_reset_required,
-      user.role, user.status, user.is_banned, user.approved_at, user.created_at, user.updated_at
-    ]);
-    const saved = inserted?.[0];
+      const createdAt = nowIso();
+      const salt = randomBytes(16).toString('hex');
+      const passwordHash = await hashPassword(password, salt);
+      const approvalCodeAccepted = Boolean(
+        payload.approval_code && await verifyRegistrationApprovalCode(payload.approval_code, {
+          query: tx.query,
+          lock: true
+        })
+      );
+      const user = {
+        id: uuid(),
+        name,
+        phone,
+        student_no: studentNo,
+        major,
+        mentor_name: mentorName,
+        password_hash: passwordHash,
+        password_salt: salt,
+        password_reset_required: false,
+        role: 'user',
+        status: approvalCodeAccepted ? 'active' : 'pending',
+        is_banned: false,
+        approved_at: approvalCodeAccepted ? createdAt : null,
+        created_at: createdAt,
+        updated_at: createdAt
+      };
+      const insertResult = await tx.query(`
+        insert into users (
+          id, name, phone, student_no, major, mentor_name,
+          password_hash, password_salt, password_reset_required,
+          role, status, is_banned, approved_at, created_at, updated_at
+        )
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+        on conflict (phone) do nothing
+        returning *
+      `, [
+        user.id, user.name, user.phone, user.student_no, user.major, user.mentor_name,
+        user.password_hash, user.password_salt, user.password_reset_required,
+        user.role, user.status, user.is_banned, user.approved_at, user.created_at, user.updated_at
+      ]);
+      const inserted = Array.isArray(insertResult) ? insertResult : (insertResult?.rows || []);
+      return { saved: inserted[0], approvalCodeAccepted };
+    });
+    if (registration.response) return registration.response;
+    const { saved, approvalCodeAccepted } = registration;
     if (!saved) return fail('手机号已注册。', 409, 3001);
-
     if (typeof recordUserEvent === 'function') {
       await recordUserEvent({
         user_id: saved.id,

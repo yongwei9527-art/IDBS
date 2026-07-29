@@ -361,6 +361,26 @@ CREATE TABLE IF NOT EXISTS user_notifications (
   read_at TIMESTAMPTZ
 );
 
+
+CREATE TABLE IF NOT EXISTS user_push_devices (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  platform TEXT NOT NULL DEFAULT 'android' CHECK (platform IN ('android')),
+  token_hash TEXT NOT NULL UNIQUE,
+  token_ciphertext TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked', 'invalid')),
+  failure_count INTEGER NOT NULL DEFAULT 0 CHECK (failure_count >= 0),
+  last_error_code TEXT,
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  invalidated_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_push_devices_sendable
+  ON user_push_devices (user_id, updated_at DESC)
+  WHERE status = 'active';
+
 CREATE TABLE IF NOT EXISTS chat_conversations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   type TEXT NOT NULL DEFAULT 'direct',
@@ -787,7 +807,8 @@ VALUES
   ('captcha_expire_minutes', '3', 'Challenge code validity in minutes'),
   ('captcha_hourly_limit', '3', 'Maximum challenge requests per hour'),
   ('openid_daily_register_limit', '1', 'Daily bind limit for the same OpenID'),
-  ('registration_approval_code_ttl_minutes', '5', 'Registration approval code validity in minutes'),
+  ('registration_approval_code_ttl_minutes', '1', 'Registration approval code validity in minutes'),
+  ('registration_approval_code_generation', '0', 'Registration approval code manual rotation generation'),
   ('enable_image_captcha', '0', 'Whether image captcha is enabled before challenge issuance'),
   ('admin_report_enabled', '0', 'Whether daily usage report push is enabled'),
   ('admin_report_hour', '9', 'Daily report push hour'),
