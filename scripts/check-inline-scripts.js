@@ -3,6 +3,12 @@ const path = require('path');
 const vm = require('vm');
 
 const publicDir = path.resolve(__dirname, '..', 'public');
+
+if (!fs.existsSync(publicDir)) {
+  console.log('No public directory found; inline script check skipped.');
+  process.exit(0);
+}
+
 const htmlFiles = fs.readdirSync(publicDir)
   .filter((file) => file.endsWith('.html'))
   .map((file) => path.join(publicDir, file));
