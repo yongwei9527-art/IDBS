@@ -29,7 +29,7 @@ jobs:
         run: npm --prefix web ci
 
       - name: Syntax, unit, type and production build checks
-        run: npm run check && npm run v5:typecheck && npm run v5:build && npm run unit && npm run v5:selftest
+        run: npm run v5:quality
 
   integration:
     needs: quality
