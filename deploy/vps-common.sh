@@ -63,6 +63,37 @@ validate_absolute_dir() {
   [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || die "$label contains an invalid newline."
 }
 
+encode_firebase_service_account() {
+  local source_file="$1"
+  [ -f "$source_file" ] || die "Firebase service-account file not found: $source_file"
+  node - "$source_file" <<'NODE'
+const fs = require('node:fs');
+const crypto = require('node:crypto');
+const source = process.argv[2];
+let account;
+try {
+  account = JSON.parse(fs.readFileSync(source, 'utf8'));
+} catch (_) {
+  process.stderr.write('Firebase service-account file is not valid JSON.\n');
+  process.exit(1);
+}
+if (account?.type !== 'service_account'
+  || typeof account.project_id !== 'string' || !account.project_id
+  || typeof account.client_email !== 'string' || !account.client_email
+  || typeof account.private_key !== 'string' || !account.private_key.includes('BEGIN PRIVATE KEY')) {
+  process.stderr.write('Firebase service-account JSON is missing required fields.\n');
+  process.exit(1);
+}
+try {
+  crypto.createPrivateKey(account.private_key);
+} catch (_) {
+  process.stderr.write('Firebase service-account private key is invalid.\n');
+  process.exit(1);
+}
+process.stdout.write(Buffer.from(JSON.stringify(account), 'utf8').toString('base64'));
+NODE
+}
+
 generate_secret() {
   openssl rand -hex 32
 }
@@ -86,20 +117,31 @@ ensure_directory() {
 }
 
 set_env_value() {
-  local key="$1" value="$2" temp
+  local key="$1" value="$2" temp value_file
   [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "Invalid environment key: $key"
+  [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || die "Environment value for $key contains an invalid newline."
   mkdir -p "$(dirname "$ENV_FILE")"
   touch "$ENV_FILE"
   chmod 600 "$ENV_FILE"
   temp="$(mktemp "${ENV_FILE}.tmp.XXXXXX")"
-  awk -v key="$key" -v value="$value" '
-    BEGIN { done = 0 }
+  value_file="$(mktemp "${ENV_FILE}.value.XXXXXX")"
+  chmod 600 "$temp" "$value_file"
+  printf '%s' "$value" > "$value_file"
+  if ! awk -v key="$key" -v value_file="$value_file" '
+    BEGIN {
+      if ((getline value < value_file) < 0) exit 2
+      close(value_file)
+      done = 0
+    }
     index($0, key "=") == 1 { if (!done) print key "=" value; done = 1; next }
     { print }
     END { if (!done) print key "=" value }
-  ' "$ENV_FILE" > "$temp"
+  ' "$ENV_FILE" > "$temp"; then
+    rm -f "$temp" "$value_file"
+    die "Could not update environment key: $key"
+  fi
   install -m 600 "$temp" "$ENV_FILE"
-  rm -f "$temp"
+  rm -f "$temp" "$value_file"
 }
 
 read_env_value() {

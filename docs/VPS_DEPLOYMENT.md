@@ -26,6 +26,7 @@ sudo bash scripts/install.sh
 2. **最高管理员账号**：默认 `13900000000`，可改为管理员手机号/登录账号。
 3. **最高管理员密码**：可自行输入 12–128 位密码；留空时生成强随机密码，并仅在安装完成的终端输出中显示。首次登录后应立即修改。
 4. **数据目录**：导出、上传、备份和数据库运维目录均可自定义，必须是绝对路径。
+5. **Firebase 推送（可选）**：可输入 VPS 上 Firebase Admin SDK 服务账号 JSON 的绝对路径。安装器验证文件后仅把压缩 JSON 的 Base64 写入权限为 `600` 的共享 `.env`，不会输出私钥内容。
 
 默认目录如下（可在安装向导中覆盖）：
 
@@ -77,6 +78,25 @@ curl -fsS http://127.0.0.1:3000/health
 curl -fsS http://127.0.0.1:3000/ready
 sudo journalctl -u laboratory_management_system -f
 ```
+
+### 2.1 配置或轮换 Firebase Android 推送
+
+Firebase 推送需要两份用途不同的配置：
+
+- Android 客户端 `google-services.json`：仅用于构建 APK，应以 Base64 保存到 GitHub Actions Secret `ANDROID_GOOGLE_SERVICES_JSON_BASE64`，不得提交仓库。
+- Firebase Admin SDK 服务账号 JSON：仅供 VPS 服务端调用 FCM HTTP v1，应保存在部署密钥中，绝不能放进 APK、下载页、二维码或 GitHub Release。
+
+首次安装时可直接在安装向导中选择配置。已经安装的服务器可先通过 SCP/SFTP 把服务账号 JSON 临时上传到 VPS，再执行：
+
+```bash
+sudo /usr/local/sbin/laboratory-management-system-configure-firebase /root/firebase-admin-service-account.json
+```
+
+该命令由部署程序安装为 `root:root` 所有且不可由应用用户修改，避免从应用可写目录执行提权脚本。它会验证 `type`、`project_id`、`client_email` 和私钥结构，通过受限临时文件更新 `FCM_SERVICE_ACCOUNT_JSON_BASE64`（不会把凭据放入进程命令行），清除旧的原始 JSON 环境变量，重启服务并最多等待 30 秒检查 `/ready`。失败时会恢复原配置并再次重启服务。
+
+本地校验和 `/ready` 不能证明 Firebase IAM 权限或 VPS 到 Google 的网络一定可用；配置后请由管理员发送一次测试通知完成端到端验证。完成并做好加密离线备份后，应安全删除 VPS 上临时上传的源 JSON 文件。
+
+不要在命令行参数中粘贴完整 JSON；只传文件路径。更新脚本会保留共享 `.env` 中的 Firebase 配置。
 
 ## 3. 更新与备份
 

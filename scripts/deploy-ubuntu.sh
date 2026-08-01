@@ -20,6 +20,7 @@ ADMIN_RESET_COMMAND="/usr/local/bin/${APP_NAME}-reset-admin-password"
 UPDATE_COMMAND="/usr/local/bin/laboratory-management-system-update"
 LEGACY_UPDATE_COMMAND="/usr/local/bin/${APP_NAME}-update"
 DB_COMMAND="/usr/local/bin/db"
+FIREBASE_CONFIG_COMMAND="/usr/local/sbin/laboratory-management-system-configure-firebase"
 INSTALL_INFO_FILE="$APP_SHARED/install-info"
 PENDING_ADMIN_FILE="$APP_SHARED/.initial-super-admin-pending"
 PORT="${PORT:-3000}"
@@ -398,6 +399,10 @@ EOF
   ln -sf "$UPDATE_COMMAND" "$LEGACY_UPDATE_COMMAND"
 }
 
+install_firebase_config_command() {
+  install -o root -g root -m 0755 "$ROOT_DIR/scripts/configure-firebase.sh" "$FIREBASE_CONFIG_COMMAND"
+}
+
 install_db_panel() {
   local quoted_app_base quoted_app_current quoted_panel_script
   printf -v quoted_app_base '%q' "$APP_BASE"
@@ -522,6 +527,7 @@ main() {
   install_backup_timer
   install_admin_reset_command
   install_update_command
+  install_firebase_config_command
   install_db_panel
   install_nginx
   systemctl restart "$APP_NAME"
@@ -534,10 +540,10 @@ main() {
   fi
   log "Reset admin password command: sudo ${APP_NAME}-reset-admin-password"
   log "Update command: sudo laboratory-management-system-update"
+  log "Firebase command: sudo $FIREBASE_CONFIG_COMMAND /root/firebase-admin-service-account.json"
   log "VPS management panel: sudo db"
   log "Deployment finished. Open http://SERVER_IP/ or your bound domain."
 }
 
 main "$@"
-
 

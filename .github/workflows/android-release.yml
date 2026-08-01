@@ -49,24 +49,32 @@ jobs:
           if (root.version !== expected || web.version !== expected) {
             throw new Error(`Version mismatch: tag=${expected}, root=${root.version}, web=${web.version}`);
           }
-          if (!gradle.includes('versionCode 50006') || !gradle.includes(`versionName "${expected}"`)) {
-            throw new Error('Android release metadata does not match v5.0.6.');
+          if (!gradle.includes('versionCode 50007') || !gradle.includes(`versionName "${expected}"`)) {
+            throw new Error('Android release metadata does not match v5.0.7.');
           }
           NODE
 
-      - name: Restore optional Firebase Android configuration
+      - name: Restore and validate Firebase Android configuration
         shell: bash
         env:
           ANDROID_GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.ANDROID_GOOGLE_SERVICES_JSON_BASE64 }}
         run: |
-          if [ -n "$ANDROID_GOOGLE_SERVICES_JSON_BASE64" ]; then
-            umask 077
-            printf '%s' "$ANDROID_GOOGLE_SERVICES_JSON_BASE64" | base64 --decode > web/android/app/google-services.json
-            test -s web/android/app/google-services.json || { echo 'Decoded google-services.json is empty.'; exit 1; }
-            echo 'Firebase Android configuration restored; FCM can be included in this build.'
-          else
-            echo '::warning::ANDROID_GOOGLE_SERVICES_JSON_BASE64 is not configured. The release will build, but Android FCM push notifications will be unavailable.'
-          fi
+          test -n "$ANDROID_GOOGLE_SERVICES_JSON_BASE64" || { echo 'Required Firebase Android secret is not configured: ANDROID_GOOGLE_SERVICES_JSON_BASE64'; exit 1; }
+          umask 077
+          printf '%s' "$ANDROID_GOOGLE_SERVICES_JSON_BASE64" | base64 --decode > web/android/app/google-services.json
+          test -s web/android/app/google-services.json || { echo 'Decoded google-services.json is empty.'; exit 1; }
+          node <<'NODE'
+          const config = require('./web/android/app/google-services.json');
+          const expectedPackage = 'com.laboratory.managementsystem';
+          const clients = Array.isArray(config.client) ? config.client : [];
+          const matchesPackage = clients.some((entry) =>
+            entry?.client_info?.android_client_info?.package_name === expectedPackage
+          );
+          if (!config?.project_info?.project_id || !matchesPackage) {
+            throw new Error('Firebase Android configuration does not match the release application.');
+          }
+          console.log('Firebase Android configuration validated.');
+          NODE
 
       - name: Restore release signing material
         shell: bash
@@ -97,6 +105,19 @@ jobs:
           npx cap sync android
           cd android
           ./gradlew assembleRelease bundleRelease
+
+      - name: Verify production APK signature
+        shell: bash
+        env:
+          EXPECTED_CERT_SHA256: f0eda9a14e2d4aaf6b7c0c9613dd0186f2a9beaf3a5e96c3683f450489d185dc
+        run: |
+          apk='web/android/app/build/outputs/apk/release/app-release.apk'
+          apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print | sort -V | tail -n 1)"
+          test -x "$apksigner" || { echo 'Android apksigner was not found.'; exit 1; }
+          "$apksigner" verify --verbose "$apk"
+          actual_cert="$($apksigner verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)"
+          test "${actual_cert,,}" = "$EXPECTED_CERT_SHA256" || { echo 'APK signer certificate does not match the official production certificate.'; exit 1; }
+          echo 'Production APK signature verified.'
 
       - name: Prepare versioned release assets
         shell: bash

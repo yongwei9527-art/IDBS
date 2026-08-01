@@ -95,6 +95,15 @@ main() {
   validate_absolute_dir "$backup_dir" 'Backup directory'
   validate_absolute_dir "$database_dir" 'Database directory'
 
+  local firebase_service_account_file='' firebase_service_account_base64=''
+  if ask_yes_no 'Configure Firebase Android push notifications now?' 'N'; then
+    firebase_service_account_file="$(ask_value 'Absolute path to the Firebase service-account JSON file' '')"
+    [[ "$firebase_service_account_file" == /* ]] || die 'Firebase service-account path must be an absolute Linux path.'
+    firebase_service_account_base64="$(encode_firebase_service_account "$firebase_service_account_file")"
+    [ -n "$firebase_service_account_base64" ] || die 'Firebase service-account encoding failed.'
+    echo 'Firebase service-account JSON validated. Its contents will not be printed.'
+  fi
+
   fetch_source
   APP_BASE="$APP_BASE" SRC_DIR="$SRC_DIR" RESET_LABORATORY_MANAGEMENT_SYSTEM_DATA=0 bash "$SRC_DIR/scripts/prepare-vps.sh"
   deploy_env=(APP_BASE="$APP_BASE" DOMAIN_NAME="${domain:-_}" CORS_ORIGIN="$cors_origin")
@@ -117,6 +126,10 @@ main() {
   set_env_value CORS_ORIGIN "$cors_origin"
   set_env_value APP_PAIRING_SECRET "$(generate_secret)"
   set_env_value APP_PAIRING_TTL_MINUTES "10"
+  if [ -n "$firebase_service_account_base64" ]; then
+    set_env_value FCM_SERVICE_ACCOUNT_JSON_BASE64 "$firebase_service_account_base64"
+    set_env_value FCM_SERVICE_ACCOUNT_JSON ""
+  fi
   systemctl restart "$APP_NAME"
 
   if [ "$enable_https" = '1' ]; then
@@ -141,12 +154,18 @@ main() {
   printf 'Download URL: %s/download\n' "${origin%/}"
   if [ "$is_new_install" = '1' ]; then
     printf 'Highest administrator login: %s\n' "$admin_phone"
-    printf 'Highest administrator password: %s\n' "$admin_password"
-    echo 'The password is shown only in this installer output. Change it immediately after first login.'
+    printf 'Highest administrator password: %s\n' "$admin_password" >/dev/tty
+    echo 'The password is shown only on the interactive terminal. Change it immediately after first login.'
   else
     echo 'Highest administrator credentials were preserved.'
   fi
-  echo 'Secrets are stored only in the root-readable environment file; they are never written to logs by this script.'
+  if [ -n "$firebase_service_account_base64" ]; then
+    echo 'Firebase Android push notifications: configured.'
+    echo 'After making an encrypted offline backup, securely remove the uploaded source JSON file from the VPS.'
+  else
+    echo 'Firebase Android push notifications: unchanged. Configure later with /usr/local/sbin/laboratory-management-system-configure-firebase.'
+  fi
+  echo 'Deployment secrets are stored in the root-readable environment file and are not printed by this script; protect terminal session logs during installation.'
 }
 
 main "$@"

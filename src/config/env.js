@@ -1,4 +1,5 @@
 const path = require('path');
+const crypto = require('crypto');
 const { isIP } = require('net');
 
 function parseBoolean(value) {
@@ -15,8 +16,50 @@ function resolveUploadDir(value, rootDir) {
   return path.resolve(rootDir, configured);
 }
 
+function validateFirebaseServiceAccount(raw) {
+  const account = JSON.parse(raw);
+  if (!account || account.type !== 'service_account'
+    || typeof account.project_id !== 'string' || !account.project_id.trim()
+    || typeof account.client_email !== 'string' || !account.client_email.trim()
+    || typeof account.private_key !== 'string' || !account.private_key.includes('BEGIN PRIVATE KEY')) {
+    throw new Error('Firebase service-account JSON is missing required fields.');
+  }
+  crypto.createPrivateKey(account.private_key);
+  return raw;
+}
+
+function decodeFirebaseServiceAccount(env) {
+  const encoded = String(env.FCM_SERVICE_ACCOUNT_JSON_BASE64 || '').trim();
+  if (encoded) {
+    try {
+      if (encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+        throw new Error('Firebase service-account Base64 is malformed.');
+      }
+      const decoded = Buffer.from(encoded, 'base64').toString('utf8');
+      if (Buffer.from(decoded, 'utf8').toString('base64') !== encoded) {
+        throw new Error('Firebase service-account Base64 is not canonical.');
+      }
+      return { value: validateFirebaseServiceAccount(decoded), error: '' };
+    } catch (_) {
+      // A valid legacy value keeps an existing deployment working during rotation.
+    }
+  }
+  const legacy = String(env.FCM_SERVICE_ACCOUNT_JSON || '').trim();
+  if (legacy) {
+    try {
+      return { value: validateFirebaseServiceAccount(legacy), error: '' };
+    } catch (_) {
+      return { value: '', error: 'Firebase FCM service-account configuration is invalid.' };
+    }
+  }
+  return encoded
+    ? { value: '', error: 'Firebase FCM service-account configuration is invalid.' }
+    : { value: '', error: '' };
+}
+
 function loadConfig(env = process.env) {
   const rootDir = path.resolve(__dirname, '..', '..');
+  const firebaseServiceAccount = decodeFirebaseServiceAccount(env);
   return {
     nodeEnv: env.NODE_ENV || 'development',
     rootDir,
@@ -33,8 +76,10 @@ function loadConfig(env = process.env) {
     wechatAppId: env.WECHAT_APP_ID || '',
     wechatAppSecret: env.WECHAT_APP_SECRET || '',
     wechatAdminOpenids: env.WECHAT_ADMIN_OPENIDS || '',
-    // JSON service-account secret for Firebase Cloud Messaging HTTP v1. Never log or commit it.
-    fcmServiceAccountJson: env.FCM_SERVICE_ACCOUNT_JSON || '',
+    // Base64 avoids newline/escaping damage in .env files. Raw JSON remains supported for compatibility.
+    // Never log or commit either value.
+    fcmServiceAccountJson: firebaseServiceAccount.value,
+    fcmServiceAccountError: firebaseServiceAccount.error,
     uploadDir: resolveUploadDir(env.UPLOAD_DIR, rootDir),
     databaseUrl: env.DATABASE_URL || '',
     pgssl: parseBoolean(env.PGSSL),
@@ -119,6 +164,7 @@ function buildRuntimeStatus(config) {
   if (!Number.isFinite(config.apiRateLimitWindowMs) || config.apiRateLimitWindowMs < 1000) push('API_RATE_LIMIT_WINDOW_MS must be at least 1000.', true);
   if (config.trustProxy && !isProduction) warnings.push('TRUST_PROXY is enabled outside production; enable it only behind a trusted proxy.');
   if ((config.wechatAppId && !config.wechatAppSecret) || (!config.wechatAppId && config.wechatAppSecret)) warnings.push('WECHAT_APP_ID and WECHAT_APP_SECRET must be configured together.');
+  if (config.fcmServiceAccountError) push(config.fcmServiceAccountError, true);
   if (!config.databaseUrl) push('DATABASE_URL is not configured.', true);
   if (config.pgssl && !config.pgsslRejectUnauthorized) push('PGSSL certificate verification is disabled.', true);
 
