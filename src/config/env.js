@@ -1,4 +1,5 @@
 const path = require('path');
+const { isIP } = require('net');
 
 function parseBoolean(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || 'false').toLowerCase());
@@ -23,6 +24,11 @@ function loadConfig(env = process.env) {
     port: Number(env.PORT || 3000),
     adminPassword: env.ADMIN_PASSWORD || '',
     tokenSecret: env.TOKEN_SECRET || 'change-me-please',
+    appName: env.APP_NAME || 'Laboratory Management System',
+    appPublicUrl: env.APP_PUBLIC_URL || '',
+    appPairingSecret: env.APP_PAIRING_SECRET || '',
+    appPairingTtlMinutes: Number(env.APP_PAIRING_TTL_MINUTES || 10),
+    apkDownloadUrl: env.APK_DOWNLOAD_URL || '',
     wechatToken: env.WECHAT_TOKEN || '',
     wechatAppId: env.WECHAT_APP_ID || '',
     wechatAppSecret: env.WECHAT_APP_SECRET || '',
@@ -74,6 +80,17 @@ function isValidHttpOrigin(value) {
   }
 }
 
+function isSecureAppPairingOrigin(value) {
+  if (!isValidHttpOrigin(value)) return false;
+  try {
+    const url = new URL(String(value || ''));
+    const hostname = String(url.hostname || '').replace(/^\[|\]$/g, '');
+    return url.protocol === 'https:' && !url.port && isIP(hostname) === 0;
+  } catch (_) {
+    return false;
+  }
+}
+
 function buildRuntimeStatus(config) {
   const warnings = [];
   const errors = [];
@@ -84,6 +101,10 @@ function buildRuntimeStatus(config) {
   else if (isWeakAdminPassword(config.adminPassword)) push('ADMIN_PASSWORD is weak or still a placeholder.', true);
   if (!config.tokenSecret || isPlaceholderSecret(config.tokenSecret)) push('TOKEN_SECRET is missing or still a placeholder.', true);
   else if (String(config.tokenSecret).length < 32) push('TOKEN_SECRET must be at least 32 characters.', true);
+  if (isSecureAppPairingOrigin(config.appPublicUrl)
+    && (!config.appPairingSecret || isPlaceholderSecret(config.appPairingSecret) || String(config.appPairingSecret).length < 32)) {
+    push('APP_PAIRING_SECRET must be a non-placeholder secret of at least 32 characters when HTTPS app pairing is enabled.', true);
+  }
   if (config.corsOrigin === '*') push('CORS_ORIGIN allows every origin; configure approved origins only.', true);
   else {
     const origins = String(config.corsOrigin || '').split(',').map((item) => item.trim()).filter(Boolean);
@@ -104,4 +125,4 @@ function buildRuntimeStatus(config) {
   return { ready: errors.length === 0 && warnings.length === 0, mode: config.databaseUrl ? 'postgres' : 'standalone', warnings, errors };
 }
 
-module.exports = { buildRuntimeStatus, corsOriginList, isPlaceholderSecret, isValidHttpOrigin, isWeakAdminPassword, loadConfig };
+module.exports = { buildRuntimeStatus, corsOriginList, isPlaceholderSecret, isSecureAppPairingOrigin, isValidHttpOrigin, isWeakAdminPassword, loadConfig };

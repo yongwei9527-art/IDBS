@@ -1,0 +1,48 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>&#23454;&#39564;&#23460;&#31649;&#29702;&#31995;&#32479; - App &#19979;&#36733;</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #172033; background: #f3f6fb; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; box-sizing: border-box; }
+    main { max-width: 680px; width: 100%; padding: 38px; box-sizing: border-box; background: #fff; border-radius: 20px; box-shadow: 0 16px 48px rgba(30, 53, 94, .14); }
+    h1 { margin: 0 0 10px; color: #142c57; font-size: clamp(1.65rem, 4vw, 2.25rem); }
+    p { line-height: 1.7; color: #53627b; }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 24px 0 30px; }
+    a { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: 0 18px; border-radius: 9px; text-decoration: none; font-weight: 700; }
+    .primary { color: #fff; background: #1769e0; }
+    .secondary { color: #174c9c; background: #eaf2ff; }
+    .pairing { display: grid; grid-template-columns: minmax(150px, 256px) 1fr; gap: 24px; align-items: center; padding: 24px; border: 1px solid #d8e4f6; border-radius: 14px; background: #f8fbff; }
+    .pairing img { width: 100%; max-width: 256px; aspect-ratio: 1; background: #fff; border: 10px solid #fff; border-radius: 10px; box-sizing: border-box; }
+    h2 { color: #203b6a; font-size: 1.25rem; margin: 0 0 8px; }
+    .notice { margin-top: 24px; padding: 14px 16px; border-left: 4px solid #e6a600; background: #fff9e8; color: #765b0b; border-radius: 5px; }
+    code { word-break: break-all; }
+    [hidden] { display: none !important; }
+    @media (max-width: 550px) { main { padding: 25px; } .pairing { grid-template-columns: 1fr; } .pairing img { margin: auto; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>&#23454;&#39564;&#23460;&#31649;&#29702;&#31995;&#32479;</h1>
+    <p>&#36890;&#36807;&#32593;&#39029;&#20351;&#29992;&#31995;&#32479;&#65292;&#25110;&#19979;&#36733; Android App&#12290;App &#39318;&#27425;&#25171;&#24320;&#21518;&#25195;&#25551;&#19979;&#26041;&#20108;&#32500;&#30721;&#65292;&#21363;&#21487;&#23433;&#20840;&#20445;&#23384;&#24403;&#21069;&#26381;&#21153;&#22120;&#22320;&#22336;&#12290;</p>
+    <div class="actions">
+      <a class="primary" href="/v5/">&#36827;&#20837;&#32593;&#39029;&#29256;</a>
+      <a class="secondary" href="/download/app.apk" download>Android App (APK)</a>
+    </div>
+    <section id="pairing" class="pairing" aria-labelledby="pairing-title" hidden>
+      <img id="pairing-qr" alt="App &#26381;&#21153;&#22120;&#37197;&#23545;&#20108;&#32500;&#30721;" />
+      <div>
+        <h2 id="pairing-title">App &#26381;&#21153;&#22120;&#37197;&#23545;</h2>
+        <p>&#25171;&#24320; App &#30340;&#8220;&#25195;&#30721;&#37197;&#23545;&#8221;&#65292;&#25195;&#25551;&#27492;&#20108;&#32500;&#30721;&#12290;&#37197;&#23545;&#21482;&#20445;&#23384;&#26381;&#21153;&#22120;&#22320;&#22336;&#65292;&#19981;&#20250;&#30331;&#24405;&#25110;&#20256;&#36755;&#31649;&#29702;&#21592;&#23494;&#30721;&#12290;</p>
+        <p>&#20108;&#32500;&#30721;&#20026;&#30701;&#26399;&#26377;&#25928;&#65307;&#33509;&#25195;&#30721;&#22833;&#36133;&#25110;&#36807;&#26399;&#65292;&#21047;&#26032;&#26412;&#39029;&#33719;&#21462;&#26032;&#30721;&#12290;</p>
+      </div>
+    </section>
+    <p id="pairing-unavailable" class="notice" role="status" aria-live="polite" hidden></p>
+    <p class="notice"><strong>&#23433;&#20840;&#25552;&#31034;&#65306;</strong>&#31649;&#29702;&#21592;&#23494;&#30701;&#12289;&#25968;&#25454;&#24211;&#23494;&#30701;&#12289;JWT &#23494;&#38053;&#21644;&#37197;&#23545;&#23494;&#38053;&#19981;&#20250;&#21253;&#21547;&#22312;&#20108;&#32500;&#30721;&#12289;APK &#25110;&#27492;&#39029;&#20013;&#12290;&#37197;&#23545;&#23436;&#25104;&#21518;&#65292;&#35831;&#20351;&#29992;&#24744;&#33258;&#24049;&#30340;&#36134;&#21495;&#30331;&#24405;&#12290;</p>
+  </main>
+  <script src="/api/v5/app-config/download-page.js"></script>
+</body>
+</html>

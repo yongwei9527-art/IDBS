@@ -1,21 +1,21 @@
 # 实验室管理系统
 
-> **应用版本：实验室管理系统 0.1。当前 GitHub 发布标签：v5.0.4。** The canonical API and realtime contract is [docs/v5-api-contract.md](./docs/v5-api-contract.md). `/v5/` and `/api/v5` are stable compatibility paths, not the product version.
+> **应用版本：实验室管理系统 5.0.6。当前 GitHub 发布标签：v5.0.6。** The canonical API and realtime contract is [docs/v5-api-contract.md](./docs/v5-api-contract.md). `/v5/` and `/api/v5` are stable compatibility paths, not the product version.
 
 实验室管理系统 是一套面向 Ubuntu VPS 的设备预约、借还、图片归还、微信绑定和后台管理系统。后端使用 Node.js + Express，数据库使用 PostgreSQL，前端静态页面位于 `public/`。
 
 使用或部署前，请先阅读 [免责声明](./DISCLAIMER.md)。
 
 
-## v5.0.5 最新版本
+## v5.0.6 最新版本
 
-v5.0.5 增加实验室总群公告历史与进群弹窗、后台注册批准码 1–1440 分钟时限/自动与手动刷新、Android FCM 可选推送、最高管理员用户/设备删除，以及完整的 VPS 安装、升级、备份和 `sudo db` 管理面板。
+v5.0.6 增加 VPS 一键安装、更新和备份脚本、App 下载页、安全的短期二维码服务器配对、Android 深度链接与加密服务器地址存储，并保留 HTTP/IP 部署的手动地址配置后备方案。
 
-- [v5.0.5 发布说明](./docs/RELEASE-v5.0.5.md)
+- [v5.0.6 发布说明](./docs/RELEASE-v5.0.6.md)
 - [VPS 安装、管理与升级说明](./docs/VPS_DEPLOYMENT.md)
-- [GitHub v5.0.5 安装包下载](https://github.com/yongwei9527-art/IDBS/releases/tag/v5.0.5)
+- [GitHub v5.0.6 安装包下载](https://github.com/yongwei9527-art/IDBS/releases/tag/v5.0.6)
 
-新装用户使用正式签名 APK；已安装 v5.0.4 Debug 包的用户使用 Release 中的 `debug-upgrade.apk` 兼容升级包。
+新装用户使用正式签名 APK；已安装 v5.0.5 正式签名版的用户可直接覆盖升级。v5.0.4 Debug 包与正式签名不同，需要先按 v5.0.5 发布说明完成签名迁移或卸载后安装。
 ## Android FCM background and lock-screen notifications
 
 Android Firebase Cloud Messaging (FCM) is integrated for generic new-message alerts while the Android app is in the background or on the lock screen.
@@ -71,7 +71,7 @@ Android **debug 签名内部测试包**会随 [GitHub Releases](https://github.c
 在 Ubuntu 22.04/24.04 VPS 终端执行：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install-vps.sh)
+curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install.sh | sudo bash
 ```
 
 安装脚本会先把 VPS 调整到适合安装 实验室管理系统 的状态，然后自动完成 Node.js、Nginx、PostgreSQL、数据库初始化、systemd 服务、反向代理、每日数据库备份和默认运行配置。
@@ -120,7 +120,7 @@ sudo db
 如果访问 IP 时看到 `Welcome to nginx!`，说明 Nginx 默认站点抢占了请求。重新执行一键安装命令即可自动修复默认站点：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install-vps.sh)
+curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install.sh | sudo bash
 ```
 
 ## 后台必做
@@ -180,7 +180,7 @@ sudo laboratory-management-system-update
 如需升级到指定发布标签：
 
 ```bash
-sudo env RELEASE_REF=v5.0.5 laboratory-management-system-update
+sudo env RELEASE_REF=v5.0.6 laboratory-management-system-update
 ```
 
 一键卸载/清除 实验室管理系统 相关文件与服务：
@@ -234,7 +234,9 @@ systemctl list-timers | grep laboratory_management_system
 - `public/js/common-header.js`：公共导航与登录提醒弹窗。
 - `sql/schema.sql`：PostgreSQL 表结构和默认配置。
 - `sql/migrations/`：增量数据库迁移。生产库执行涉及 `ALTER TABLE` 的迁移时，请使用表 owner 或 PostgreSQL 超级用户；普通运行账号可能没有修改既有表结构的权限。
-- `scripts/install-vps.sh`：VPS 一键安装入口。
+- `scripts/install.sh`：VPS 交互式一键安装入口。
+- `scripts/update.sh`：保留数据的安全更新入口。
+- `scripts/backup.sh`：数据库、上传和导出文件备份入口。
 - `scripts/deploy-ubuntu.sh`：部署、服务、Nginx、备份定时器配置。
 
 ## 升级数据库
@@ -281,4 +283,3 @@ npm run db:seed-demo
 ## 重要说明
 
 微信不提供已发送消息的通用撤回/删除 API。本项目的“覆盖昨日记录”指每天推送新的日报，让管理员以最新日报为准，不代表可以从微信聊天记录里撤回旧消息。
-

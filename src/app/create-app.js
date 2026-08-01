@@ -65,14 +65,15 @@ function createSecurityHeaders(publicDir, config = {}) {
 }
 
 function isPublicPageRequest(req) {
-  return req.method === 'GET' && (req.path === '/' || req.path === '/v5' || req.path.startsWith('/v5/'));
+  return req.method === 'GET' && (req.path === '/' || req.path === '/download' || req.path === '/v5' || req.path.startsWith('/v5/'));
 }
 
 function isPublicApiRequest(req) {
   const pathname = req.path || '';
   return [
     '/api/v5/auth/register', '/api/v5/login/challenge', '/api/v5/login/status',
-    '/api/v5/devices', '/api/v5/calendar', '/api/v5/reservation-slots', '/api/v5/device-time-slots'
+    '/api/v5/devices', '/api/v5/calendar', '/api/v5/reservation-slots', '/api/v5/device-time-slots',
+    '/api/v5/app-config', '/api/v5/app-pairing'
   ].some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 
@@ -151,11 +152,21 @@ function createApp({ config, db, service, refreshSessions, runtimeDiagnostics, s
     }
   });
   app.use('/api/v5', createUploadRouter({ service, uploadDir: config.uploadDir }));
-  app.use('/api/v5', createV5Router(service, { refreshSessions, runtimeDiagnostics }));
+  app.use('/api/v5', createV5Router(service, { refreshSessions, runtimeDiagnostics, config }));
   app.use('/wechat', createWechatRouter(service));
   app.use(createHealthRouter(config, db));
 
+  app.use('/download', express.static(path.join(config.publicDir, 'download'), {
+    index: false, maxAge: 'no-cache', setHeaders(res) {
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Content-Disposition', 'attachment');
+    }
+  }));
   app.get('/', (_req, res) => res.redirect(302, '/v5/'));
+  app.get('/download', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    return res.sendFile(path.join(config.publicDir, 'download.html'));
+  });
   app.use('/v5', express.static(v5PublicDir, {
     index: false,
     maxAge: '7d',

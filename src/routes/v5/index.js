@@ -2,6 +2,7 @@ const express = require('express');
 const { createV5AuthRouter } = require('./auth');
 const { createV5DevicesRouter } = require('./devices');
 const { createV5PublicSystemRouter } = require('./public-system');
+const { createV5AppConfigRouter } = require('./app-config');
 const { createV5ReservationsRouter } = require('./reservations');
 const { createV5BorrowRouter } = require('./borrow');
 const { createV5ChatRouter } = require('./chat');
@@ -9,10 +10,11 @@ const { createV5NotificationRouter } = require('./notifications');
 const { createV5AdminRouter } = require('./admin');
 const { unwrap, serviceAuth } = require('./helpers');
 
-function createV5Router(service, { refreshSessions, runtimeDiagnostics } = {}) {
+function createV5Router(service, { refreshSessions, runtimeDiagnostics, config } = {}) {
   const router = express.Router();
   router.use(createV5AuthRouter(service, { refreshSessions }));
   router.use(createV5PublicSystemRouter(service));
+  router.use(createV5AppConfigRouter(config || {}));
   router.use(createV5DevicesRouter(service));
   router.use(createV5ReservationsRouter(service));
   router.use(createV5BorrowRouter(service));

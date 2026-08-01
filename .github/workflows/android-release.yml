@@ -49,8 +49,8 @@ jobs:
           if (root.version !== expected || web.version !== expected) {
             throw new Error(`Version mismatch: tag=${expected}, root=${root.version}, web=${web.version}`);
           }
-          if (!gradle.includes('versionCode 50005') || !gradle.includes(`versionName "${expected}"`)) {
-            throw new Error('Android release metadata does not match v5.0.5.');
+          if (!gradle.includes('versionCode 50006') || !gradle.includes(`versionName "${expected}"`)) {
+            throw new Error('Android release metadata does not match v5.0.6.');
           }
           NODE
 

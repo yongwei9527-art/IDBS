@@ -4,7 +4,7 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { createCryptoUtils } = require('../../src/services/core/crypto-utils');
-const { buildRuntimeStatus, corsOriginList, isValidHttpOrigin, isWeakAdminPassword, loadConfig } = require('../../src/config/env');
+const { buildRuntimeStatus, corsOriginList, isSecureAppPairingOrigin, isValidHttpOrigin, isWeakAdminPassword, loadConfig } = require('../../src/config/env');
 const { createDistributedRateLimiter } = require('../../src/lib/security');
 const { postgresSslOptions } = require('../../src/lib/postgres-ssl');
 const { createAuthService } = require('../../src/services/domains/auth/auth-service');
@@ -70,6 +70,33 @@ test('production configuration validates origins, ports, and rate-limit bounds',
   assert.ok(runtime.errors.some((message) => message.startsWith('PORT')));
   assert.ok(runtime.errors.some((message) => message.startsWith('AUTH_RATE_LIMIT_MAX')));
   assert.ok(runtime.errors.some((message) => message.startsWith('API_RATE_LIMIT_WINDOW_MS')));
+});
+
+test('HTTPS app pairing requires a strong server-only pairing secret without degrading HTTP mode', () => {
+  assert.equal(isSecureAppPairingOrigin('https://lab.example.com'), true);
+  assert.equal(isSecureAppPairingOrigin('http://lab.example.com'), false);
+  assert.equal(isSecureAppPairingOrigin('https://lab.example.com:8443'), false);
+  assert.equal(isSecureAppPairingOrigin('https://192.0.2.10'), false);
+
+  const secureWithoutSecret = buildRuntimeStatus(loadConfig({
+    NODE_ENV: 'production',
+    APP_PUBLIC_URL: 'https://lab.example.com',
+    ADMIN_PASSWORD: 'LABORATORY_MANAGEMENT_SYSTEM_strong_admin_2026',
+    TOKEN_SECRET: 'LABORATORY_MANAGEMENT_SYSTEM_token_secret_at_least_32_characters_2026',
+    DATABASE_URL: 'postgresql://example.invalid/laboratory_management_system',
+    CORS_ORIGIN: 'https://lab.example.com'
+  }));
+  assert.ok(secureWithoutSecret.errors.some((message) => message.startsWith('APP_PAIRING_SECRET')));
+
+  const httpWithoutSecret = buildRuntimeStatus(loadConfig({
+    NODE_ENV: 'production',
+    APP_PUBLIC_URL: 'http://192.0.2.10',
+    ADMIN_PASSWORD: 'LABORATORY_MANAGEMENT_SYSTEM_strong_admin_2026',
+    TOKEN_SECRET: 'LABORATORY_MANAGEMENT_SYSTEM_token_secret_at_least_32_characters_2026',
+    DATABASE_URL: 'postgresql://example.invalid/laboratory_management_system',
+    CORS_ORIGIN: 'http://192.0.2.10'
+  }));
+  assert.equal(httpWithoutSecret.errors.some((message) => message.startsWith('APP_PAIRING_SECRET')), false);
 });
 
 test('server fails before listening when production configuration is unsafe', () => {

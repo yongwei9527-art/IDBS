@@ -46,6 +46,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- QR code and browser deep links use a short-lived, server-issued pairing token. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="labapp" android:host="pair" />
+            </intent-filter>
+
         </activity>
 
         <provider

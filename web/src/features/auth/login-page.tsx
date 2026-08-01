@@ -7,6 +7,7 @@ import { AuthRouteStatus } from './auth-guard';
 import './login-page.css';
 import { APP_PATHS } from '@/lib/app-paths';
 import { getApiOrigin, normalizeApiOrigin, saveApiOrigin } from '@/lib/api';
+import { consumeNativePendingPairing, pairFromLink, restoreNativeServerConfiguration } from '@/lib/app-pairing';
 
 const copy = {
   systemName: "实验室设备预约系统",
@@ -36,7 +37,14 @@ const extraCopy = {
   revealServer: '\u8d26\u53f7\u548c\u5bc6\u7801\u5747\u4e3a\u7a7a\u65f6\uff0c\u8fde\u7eed\u70b9\u51fb\u4e09\u6b21\u767b\u5f55\u53ef\u4fee\u6539\u670d\u52a1\u5668\u5730\u5740\u3002',
   confirmServer: '\u786e\u8ba4\u5e76\u4fdd\u5b58',
   serverSaved: '\u670d\u52a1\u5668\u5730\u5740\u5df2\u4fdd\u5b58\uff0c\u4e0b\u6b21\u6253\u5f00\u4ecd\u4f1a\u4f7f\u7528\u8be5\u5730\u5740\u3002',
-  sessionHint: '\u767b\u5f55\u72b6\u6001\u4f1a\u5b89\u5168\u4fdd\u7559\uff1b\u7cfb\u7edf\u4e0d\u4f1a\u4fdd\u5b58\u60a8\u8f93\u5165\u7684\u660e\u6587\u5bc6\u7801\u3002'
+  sessionHint: '\u767b\u5f55\u72b6\u6001\u4f1a\u5b89\u5168\u4fdd\u7559\uff1b\u7cfb\u7edf\u4e0d\u4f1a\u4fdd\u5b58\u60a8\u8f93\u5165\u7684\u660e\u6587\u5bc6\u7801\u3002',
+  pairingLink: '\u7c98\u8d34 App \u670d\u52a1\u5668\u914d\u5bf9\u94fe\u63a5',
+  pairingPlaceholder: 'labapp://pair?v=1&server=https%3A%2F%2Fexample.com&token=...',
+  pairingAction: '\u914d\u5bf9\u5e76\u4fdd\u5b58\u670d\u52a1\u5668',
+  pairingRequired: '\u8bf7\u7c98\u8d34\u4ece\u4e0b\u8f7d\u9875\u6216\u4e8c\u7ef4\u7801\u83b7\u5f97\u7684 App \u914d\u5bf9\u94fe\u63a5\u3002',
+  pairingSaved: '\u670d\u52a1\u5668\u5df2\u5b89\u5168\u914d\u5bf9\u5e76\u4fdd\u5b58\uff0c\u8bf7\u4f7f\u7528\u60a8\u81ea\u5df1\u7684\u8d26\u53f7\u548c\u5bc6\u7801\u767b\u5f55\u3002',
+  pairingRestored: '\u5df2\u6062\u590d\u5df2\u4fdd\u5b58\u7684\u670d\u52a1\u5668\u5730\u5740\uff0c\u8bf7\u4f7f\u7528\u60a8\u81ea\u5df1\u7684\u8d26\u53f7\u548c\u5bc6\u7801\u767b\u5f55\u3002',
+  pairingFailed: '\u914d\u5bf9\u94fe\u63a5\u65e0\u6548\u3001\u5df2\u8fc7\u671f\u6216\u4e0d\u5c5e\u4e8e\u5f53\u524d\u670d\u52a1\u5668\uff0c\u8bf7\u5237\u65b0\u4e0b\u8f7d\u9875\u540e\u91cd\u8bd5\u3002'
 } as const;
 
 function safeRedirectTarget(raw: string | null) {
@@ -104,6 +112,8 @@ export function LoginPage() {
   const [serverStatus, setServerStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pairingLink, setPairingLink] = useState('');
+  const [pairingLoading, setPairingLoading] = useState(false);
   const blankSubmitGesture = useRef({ count: 0, lastAt: 0 });
   const normalizedServer = normalizeApiOrigin(server);
 
@@ -117,6 +127,57 @@ export function LoginPage() {
     } as any);
   }, [auth.isReady, auth.isLoggedIn, auth.passwordResetRequired, navigate]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function restoreAppPairing() {
+      try {
+        const paired = await consumeNativePendingPairing();
+        if (paired) {
+          if (!cancelled) {
+            setServer(paired.server_url.replace(/^https?:\/\//i, ''));
+            setServerStatus(extraCopy.pairingSaved);
+          }
+          return;
+        }
+
+        const restoredServer = await restoreNativeServerConfiguration();
+        if (restoredServer && !cancelled) {
+          setServer(restoredServer.replace(/^https?:\/\//i, ''));
+          setServerStatus(extraCopy.pairingRestored);
+        }
+      } catch {
+        if (!cancelled) setError(extraCopy.pairingFailed);
+      }
+    }
+
+    void restoreAppPairing();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handlePairing() {
+    const rawLink = pairingLink.trim();
+    if (!rawLink) {
+      setError(extraCopy.pairingRequired);
+      return;
+    }
+
+    setError(null);
+    setServerStatus(null);
+    setPairingLoading(true);
+    try {
+      const config = await pairFromLink(rawLink);
+      setServer(config.server_url.replace(/^https?:\/\//i, ''));
+      setPairingLink('');
+      setServerStatus(extraCopy.pairingSaved);
+    } catch {
+      setError(extraCopy.pairingFailed);
+    } finally {
+      setPairingLoading(false);
+    }
+  }
   function handleBlankLoginGesture() {
     const now = Date.now();
     const previous = blankSubmitGesture.current;
@@ -293,6 +354,24 @@ export function LoginPage() {
           ) : null}
           {mode === 'login' ? (
             <>
+              <section className="login-server-editor" aria-label={extraCopy.pairingLink}>
+                <label className="login-field" htmlFor="app-pairing-link">
+                  <span>{extraCopy.pairingLink}</span>
+                  <Input
+                    id="app-pairing-link"
+                    value={pairingLink}
+                    onChange={(event) => setPairingLink(event.target.value)}
+                    placeholder={extraCopy.pairingPlaceholder}
+                    autoComplete="off"
+                    inputMode="url"
+                    className="login-input"
+                  />
+                  <small className="login-field-hint">\u7c98\u8d34\u626b\u7801\u540e\u5f97\u5230\u7684\u94fe\u63a5\uff1b\u914d\u5bf9\u4e0d\u4f1a\u767b\u5f55\u8d26\u53f7\u3002</small>
+                </label>
+                <Button type="button" variant="outline" className="login-server-confirm" onClick={() => void handlePairing()} disabled={pairingLoading}>
+                  {pairingLoading ? '\u6b63\u5728\u914d\u5bf9\u2026' : extraCopy.pairingAction}
+                </Button>
+              </section>
               <label className="login-field" htmlFor="login-phone">
                 <span>{copy.phone}</span>
                 <Input
