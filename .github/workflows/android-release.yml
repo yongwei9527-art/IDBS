@@ -115,8 +115,8 @@ jobs:
           apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print | sort -V | tail -n 1)"
           test -x "$apksigner" || { echo 'Android apksigner was not found.'; exit 1; }
           "$apksigner" verify --verbose "$apk"
-          actual_cert="$($apksigner verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)"
-          test "${actual_cert,,}" = "$EXPECTED_CERT_SHA256" || { echo 'APK signer certificate does not match the official production certificate.'; exit 1; }
+          cert_output="$("$apksigner" verify --print-certs "$apk")"
+          grep -qiF -- "$EXPECTED_CERT_SHA256" <<<"$cert_output" || { echo 'APK signer certificate does not match the official production certificate.'; exit 1; }
           echo 'Production APK signature verified.'
 
       - name: Prepare versioned release assets
