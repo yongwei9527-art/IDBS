@@ -83,15 +83,35 @@ prompt_admin_credentials() {
     && [[ "$admin_name" != *$'\n'* && "$admin_name" != *$'\r'* ]] \
     || die '最高管理员姓名不能为空，长度不能超过 50 个字符，且不能包含换行符。'
   generated_password="$(generate_password)"
-  read -r -s -p '最高管理员密码（留空则自动生成，输入时不会显示）：' password_input </dev/tty || true
-  echo
-  if [ -n "$password_input" ]; then
-    read -r -s -p '请再次输入最高管理员密码（输入时不会显示）：' password_confirm </dev/tty || true
-    echo
-    [ "$password_input" = "$password_confirm" ] || die '两次输入的密码不一致。'
-    admin_password="$password_input"
-  else
+  if ask_yes_no '是否由系统自动生成最高管理员密码？（推荐；安装完成后仅显示一次）' 'Y'; then
     admin_password="$generated_password"
+    echo '已选择自动生成密码。安装完成后请立即保存，并在首次登录后修改。'
+  else
+    echo '手动输入密码时，终端不会显示字符、圆点或星号，这是正常的安全保护。'
+    while true; do
+      password_input=''
+      password_confirm=''
+      if ! read -r -s -p '请输入最高管理员密码（12-128 个字符，输入时不会显示）：' password_input </dev/tty; then
+        echo
+        die '无法从当前终端读取密码，请重新运行安装器并选择自动生成密码。'
+      fi
+      echo
+      if [ "${#password_input}" -lt 12 ] || [ "${#password_input}" -gt 128 ]; then
+        echo '密码长度必须为 12-128 个字符，请重新输入。' >&2
+        continue
+      fi
+      if ! read -r -s -p '请再次输入相同密码（输入时不会显示）：' password_confirm </dev/tty; then
+        echo
+        die '无法从当前终端读取确认密码，请重新运行安装器并选择自动生成密码。'
+      fi
+      echo
+      if [ "$password_input" != "$password_confirm" ]; then
+        echo '两次输入的密码不一致，请重新输入；安装不会退出。' >&2
+        continue
+      fi
+      admin_password="$password_input"
+      break
+    done
   fi
   [ "${#admin_password}" -ge 12 ] && [ "${#admin_password}" -le 128 ] \
     || die '最高管理员密码长度必须为 12-128 个字符。'

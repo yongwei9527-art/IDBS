@@ -29,6 +29,14 @@ test('VPS install information is root-only and temporary-password risk is explic
   assert.match(installer, /首次登录后立即修改/);
 });
 
+test('VPS installer defaults to generated admin passwords and retries manual input safely', () => {
+  assert.match(installer, /是否由系统自动生成最高管理员密码？（推荐；安装完成后仅显示一次）' 'Y'/);
+  assert.match(installer, /终端不会显示字符、圆点或星号/);
+  assert.match(installer, /两次输入的密码不一致，请重新输入；安装不会退出/);
+  assert.match(installer, /while true; do[\s\S]*continue[\s\S]*break/);
+  assert.doesNotMatch(installer, /die '两次输入的密码不一致/);
+});
+
 test('deployment installs canonical update command and db panel', () => {
   assert.match(deploy, /UPDATE_COMMAND="\/usr\/local\/bin\/laboratory-management-system-update"/);
   assert.match(deploy, /DB_COMMAND="\/usr\/local\/bin\/db"/);
