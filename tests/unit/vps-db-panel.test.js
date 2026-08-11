@@ -25,8 +25,8 @@ test('VPS install information is root-only and temporary-password risk is explic
   assert.match(panel, /install -o root -g root -m 600/);
   assert.match(panel, /PASSWORD_STATE=temporary_must_change/);
   assert.match(panel, /明文凭据仍有风险/);
-  assert.match(installer, /Highest administrator password/);
-  assert.match(installer, /Change it immediately after first login/);
+  assert.match(installer, /最高管理员密码/);
+  assert.match(installer, /首次登录后立即修改/);
 });
 
 test('deployment installs canonical update command and db panel', () => {
@@ -47,11 +47,11 @@ test('VPS installation has one canonical entrypoint and one canonical service na
 test('interrupted first installation preserves credentials and records final connection info', () => {
   assert.match(installer, /\.initial-super-admin-pending/);
   assert.match(installer, /install -o root -g root -m 600/);
-  assert.match(installer, /Incomplete installation detected/);
-  assert.match(installer, /No highest administrator exists in the database/);
+  assert.match(installer, /检测到未完成的安装/);
+  assert.match(installer, /数据库中不存在最高管理员/);
   assert.match(installer, /\/usr\/local\/bin\/db --record/);
   assert.match(installer, /rm -f "\$PENDING_ADMIN_FILE"/);
-  assert.match(installer, /Installation failed during step/);
+  assert.match(installer, /安装在以下步骤失败/);
   assert.doesNotMatch(installer, /RESET_LABORATORY_MANAGEMENT_SYSTEM_DATA=0 bash/);
 });
 
@@ -83,7 +83,7 @@ test('VPS directory validation rejects dangerous and nested targets', () => {
   assert.match(common, /\/sbin\/\*\|\/srv\|\/sys/);
   assert.match(common, /\/var\/lib\|\/var\/lib\/postgresql/);
   assert.match(common, /\/var\/lib\/postgresql/);
-  assert.match(installer, /Database operations directory \(not PostgreSQL PGDATA\)/);
+  assert.match(installer, /数据库运维文件目录（不是 PostgreSQL PGDATA）/);
   assert.match(prepare, /realpath -m -s --/);
   assert.match(prepare, /rm -rf --one-file-system --/);
   assert.match(prepare, /RESET_CONFIRMATION=DELETE-LABORATORY-MANAGEMENT-SYSTEM-DATA/);
@@ -135,14 +135,14 @@ test('APK delivery defaults to the matching GitHub release and preserves self-ho
   assert.match(installer, /set_env_value APK_DOWNLOAD_URL_MANAGED "\$managed_mode"/);
   assert.match(installer, /previous_origin/);
   assert.match(installer, /\$\{previous_origin%\/\}\/download\/app\.apk/);
-  assert.match(installer, /Android APK: %s/);
+  assert.match(installer, /Android APK：%s/);
   assert.match(update, /refresh_managed_apk_download_url()/);
   assert.match(deploy, /--exclude 'public\/download\/'/);
 });
 
 test('VPS installer preserves existing public URL, directories, and pairing TTL on rerun', () => {
   assert.match(installer, /existing_origin="\$\(read_env_value APP_PUBLIC_URL/);
-  assert.match(installer, /Existing HTTPS public URL preserved/);
+  assert.match(installer, /已保留现有 HTTPS 公网地址/);
   assert.match(installer, /enable_https=1/);
   assert.match(installer, /existing_export_dir="\$\(read_env_value EXPORT_DIR/);
   assert.match(installer, /existing_upload_dir="\$\(read_env_value UPLOAD_DIR/);
@@ -155,16 +155,16 @@ test('VPS installer preserves existing public URL, directories, and pairing TTL 
 
 test('VPS installer supports a domain-free install and secure defaults for blank admin input', () => {
   assert.match(installer, /DEFAULT_ADMIN_PHONE="\$\{DEFAULT_ADMIN_PHONE:-13900000000\}"/);
-  assert.match(installer, /ask_value 'Highest administrator phone\/login' "\$DEFAULT_ADMIN_PHONE"/);
+  assert.match(installer, /ask_value '最高管理员手机号\/登录账号' "\$DEFAULT_ADMIN_PHONE"/);
   assert.match(installer, /admin_password="\$generated_password"/);
-  assert.match(installer, /No interactive terminal is available/);
+  assert.match(installer, /当前没有可用的交互终端/);
   assert.match(common, /generate_password\(\)[\s\S]*openssl rand -hex 12/);
   assert.match(common, /is_ipv4\(\)/);
   assert.match(common, /is_non_public_ipv4\(\)/);
   assert.match(installer, /server_ip="\$\(detect_public_ip \|\| true\)"/);
   assert.match(installer, /ip_was_auto_detected=1/);
-  assert.match(installer, /Only a private\/LAN IPv4 was auto-detected/);
-  assert.match(installer, /required for unattended installation/);
+  assert.match(installer, /仅自动检测到内网\/LAN IPv4/);
+  assert.match(installer, /无人值守安装需要公网 IPv4 或域名/);
   assert.match(installer, /origin="http:\/\/\$host"/);
   assert.match(installer, /DOMAIN_NAME="\$\{domain:-_\}"/);
   assert.match(installer, /if \[ "\$enable_https" = '1' \]; then/);
