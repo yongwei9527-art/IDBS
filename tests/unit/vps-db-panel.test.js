@@ -13,6 +13,7 @@ const backup = fs.readFileSync(path.resolve(__dirname, '../../scripts/backup.sh'
 const common = fs.readFileSync(path.resolve(__dirname, '../../deploy/vps-common.sh'), 'utf8');
 const firebase = fs.readFileSync(path.resolve(__dirname, '../../scripts/configure-firebase.sh'), 'utf8');
 const uninstall = fs.readFileSync(path.resolve(__dirname, '../../scripts/uninstall-vps.sh'), 'utf8');
+const localDbPasswordHelper = fs.readFileSync(path.resolve(__dirname, '../../scripts/set-local-db-role-password.js'), 'utf8');
 
 test('VPS db panel exposes the required three-item menu', () => {
   assert.match(panel, /1\) 查看连接地址和最高管理员临时凭据/);
@@ -114,9 +115,13 @@ test('VPS environment and local database password updates avoid shell and SQL in
   assert.match(common, /awk -v key="\$key" -v value_file="\$value_file"/);
   assert.doesNotMatch(deploy, /sed -i/);
   assert.match(deploy, /decodeURIComponent\(parsed\.password\)/);
-  assert.match(deploy, /\\prompt db_password/);
-  assert.match(deploy, /PASSWORD :'db_password'/);
+  assert.match(deploy, /printf '%s' "\$password"[\s\S]*set-local-db-role-password\.js" "\$operation"/);
+  assert.doesNotMatch(deploy, /\\prompt db_password/);
   assert.doesNotMatch(deploy, /PASSWORD '\$\{db_password\}'/);
+  assert.match(localDbPasswordHelper, /fs\.readFileSync\(0, 'utf8'\)/);
+  assert.match(localDbPasswordHelper, /format\('[^']*PASSWORD %L', \$1::text\)/);
+  assert.match(localDbPasswordHelper, /\[password\]/);
+  assert.doesNotMatch(localDbPasswordHelper, /process\.argv\[[^\]]+\].*password/i);
   assert.match(firebase, /value_file="\$\(mktemp/);
 });
 

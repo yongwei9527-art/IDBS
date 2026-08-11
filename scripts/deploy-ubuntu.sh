@@ -390,11 +390,11 @@ NODE
 set_local_database_role_password() {
   local operation="$1" password="$2"
   case "$operation" in CREATE|ALTER) ;; *) die 'Invalid local database role operation.' ;; esac
-  {
-    printf '\\prompt db_password\n'
-    printf '%s\n' "$password"
-    printf "%s ROLE laboratory_management_system_user WITH LOGIN PASSWORD :'db_password';\n" "$operation"
-  } | sudo -u postgres psql -X -q -d postgres -v ON_ERROR_STOP=1
+  # Keep the password out of argv and SQL text assembled by the shell. The helper
+  # reads it from stdin, quotes it through a PostgreSQL parameter, then executes
+  # only the resulting fixed-role CREATE/ALTER statement.
+  printf '%s' "$password" \
+    | sudo -u postgres node "$CANDIDATE_RELEASE/scripts/set-local-db-role-password.js" "$operation"
 }
 
 ensure_local_database() {
