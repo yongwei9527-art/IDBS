@@ -206,7 +206,6 @@ function createFcmPushService({
         if (controller) controller.abort();
         reject(new Error('FCM request timed out.'));
       }, timeoutMs);
-      if (typeof timer.unref === 'function') timer.unref();
     });
     const request = Promise.resolve().then(async () => {
       const response = await fetchImpl(url, { ...init, ...(controller ? { signal: controller.signal } : {}) });
