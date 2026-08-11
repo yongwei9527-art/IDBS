@@ -18,7 +18,7 @@ curl -4fL --connect-timeout 15 --max-time 120 --retry 3 https://raw.githubuserco
 如果 VPS 无法连接 GitHub，可明确选择第三方代理（代理不由本项目运营，请确认信任后使用）：
 
 ```bash
-curl -4fL --connect-timeout 15 --max-time 120 --retry 3 https://ghproxy.net/https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install.sh | sudo env GITHUB_PROXY_PREFIX=https://ghproxy.net bash
+curl -4fL --connect-timeout 15 --max-time 120 --retry 3 "https://ghproxy.net/https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install.sh?v=$(date +%s)" | sudo env GITHUB_PROXY_PREFIX=https://ghproxy.net bash
 ```
 
 也可将命令中的两个 `ghproxy.net` 同时替换为 `gh-proxy.com` 或 `github.akams.cn`。

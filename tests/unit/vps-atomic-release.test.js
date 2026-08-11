@@ -29,7 +29,8 @@ test('deployment builds an isolated release before interrupting the current serv
   assert.match(deploy, /"\$ROOT_DIR\/" "\$CANDIDATE_RELEASE\/"/);
   assert.doesNotMatch(deploy, /"\$ROOT_DIR\/" "\$APP_CURRENT\/"/);
   assert.match(deploy, /chown -R root:root "\$CANDIDATE_RELEASE"/);
-  assert.match(deploy, /chmod -R go-w "\$CANDIDATE_RELEASE"/);
+  assert.match(deploy, /chmod -R a\+rX,u\+w,go-w "\$CANDIDATE_RELEASE"/);
+  assert.equal((deploy.match(/seal_candidate_release/g) || []).length, 3);
   ordered(main, [
     'prepare_candidate_release',
     'npm --prefix "$CANDIDATE_RELEASE" ci --omit=dev',

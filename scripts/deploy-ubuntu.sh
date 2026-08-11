@@ -204,8 +204,18 @@ prepare_candidate_release() {
   printf '%s\n' "$RELEASE_ID" > "$CANDIDATE_RELEASE/.release-id"
   # Release code is immutable to the runtime account. Root-run management commands
   # must never execute shell scripts writable by the application process.
+  seal_candidate_release
+}
+
+seal_candidate_release() {
+  # install.sh uses umask 077 so credentials created during installation stay
+  # private. Git, rsync and npm inherit that umask, however, and can therefore
+  # create code directories that neither the runtime account nor postgres can
+  # traverse. Release contents contain no shared secrets (.env is outside the
+  # release), so make code readable/traversable while keeping it root-owned and
+  # immutable to non-root accounts.
   chown -R root:root "$CANDIDATE_RELEASE"
-  chmod -R go-w "$CANDIDATE_RELEASE"
+  chmod -R a+rX,u+w,go-w "$CANDIDATE_RELEASE"
 }
 
 ensure_env() {
@@ -1071,8 +1081,7 @@ main() {
   configure_release_retention
   npm --prefix "$CANDIDATE_RELEASE" ci --omit=dev
   build_v3_frontend
-  chown -R root:root "$CANDIDATE_RELEASE"
-  chmod -R go-w "$CANDIDATE_RELEASE"
+  seal_candidate_release
   ensure_local_database
   ensure_verified_pre_migration_backup
   stop_application_for_migration
