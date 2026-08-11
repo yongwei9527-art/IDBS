@@ -256,8 +256,12 @@ jobs:
           test -x "$apksigner" || { echo 'Android apksigner was not found.' >&2; exit 1; }
           apk_report="$RUNNER_TEMP/apksigner-verify.txt"
           "$apksigner" verify --verbose --print-certs "$apk" > "$apk_report"
-          apk_cert_sha256="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$apk_report" | head -n 1 | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
-          test "$apk_cert_sha256" = "$EXPECTED_CERT_SHA256" || { echo 'APK signer certificate does not match the official production certificate.' >&2; exit 1; }
+          apk_cert_line="$(grep -i -m 1 -E 'Signer #[0-9]+ certificate SHA-256 digest' "$apk_report" || true)"
+          apk_cert_sha256="$(printf '%s' "$apk_cert_line" | sed -E 's/^[^:]*:[[:space:]]*(0[xX])?//' | tr -cd '[:xdigit:]' | tr '[:upper:]' '[:lower:]')"
+          if [ "${#apk_cert_sha256}" -ne 64 ] || [ "$apk_cert_sha256" != "$EXPECTED_CERT_SHA256" ]; then
+            echo 'APK signer certificate does not match the official production certificate.' >&2
+            exit 1
+          fi
 
           apkanalyzer="$(find "$android_sdk/cmdline-tools" -type f -name apkanalyzer -print | sort -V | tail -n 1)"
           test -x "$apkanalyzer" || { echo 'Android apkanalyzer was not found.' >&2; exit 1; }
