@@ -19,6 +19,13 @@ require_root() {
   fi
 }
 
+run_as_postgres() {
+  (
+    cd /var/lib/postgresql
+    exec sudo -u postgres "$@"
+  )
+}
+
 canonicalize_managed_root() {
   local value="$1" label="$2" lexical resolved
   [[ "$value" == /* ]] || die "$label must be an absolute Linux path."
@@ -150,9 +157,9 @@ reset_data_if_requested() {
 
   systemctl enable postgresql
   systemctl start postgresql
-  sudo -u postgres psql -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='laboratory_management_system';" || true
-  sudo -u postgres dropdb --if-exists laboratory_management_system || true
-  sudo -u postgres dropuser --if-exists laboratory_management_system_user || true
+  run_as_postgres psql -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='laboratory_management_system';" || true
+  run_as_postgres dropdb --if-exists laboratory_management_system || true
+  run_as_postgres dropuser --if-exists laboratory_management_system_user || true
 }
 
 validate_reset_request() {

@@ -48,12 +48,11 @@ test('local database role password helper rejects invalid operations and line br
   );
 });
 
-test('deployment contains a syntactically valid password-on-stdin fallback', () => {
+test('deployment changes the local role without executing release code as postgres', () => {
   const deploy = fs.readFileSync(path.resolve(__dirname, '../../scripts/deploy-ubuntu.sh'), 'utf8');
-  const fallback = deploy.match(/NODE_PATH="\$CANDIDATE_RELEASE\/node_modules" node -e '\n([\s\S]*?)\n' "\$operation"/);
-  assert.ok(fallback, 'inline fallback was not found');
-  assert.doesNotMatch(fallback[1], /'/, 'a single quote would terminate the shell-quoted Node program');
-  assert.doesNotThrow(() => new Function(fallback[1]));
-  assert.match(fallback[1], /fs\.readFileSync\(0, "utf8"\)/);
-  assert.doesNotMatch(fallback[1], /process\.argv\[[^\]]+\].*password/i);
+  assert.match(deploy, /--set=password_file="\$LOCAL_DB_PASSWORD_FILE"/);
+  assert.match(deploy, /pg_read_file\(:'password_file'\)/);
+  assert.match(deploy, /format\('[^']*PASSWORD %L'/);
+  assert.doesNotMatch(deploy, /sudo -u postgres node/);
+  assert.doesNotMatch(deploy, /psql[^\n]*(?:\$password|DATABASE_URL)/);
 });

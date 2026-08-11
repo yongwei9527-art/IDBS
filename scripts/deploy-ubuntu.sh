@@ -52,6 +52,7 @@ SERVICE_INTERRUPTED=0
 MIGRATION_ATTEMPTED=0
 RELEASE_SWITCHED=0
 DEPLOYMENT_COMPLETE=0
+LOCAL_DB_PASSWORD_FILE=''
 
 log() { printf '\n[%s] %s\n' "${SERVICE_NAME}" "$*"; }
 
@@ -67,6 +68,15 @@ require_root() {
     log "Run this script as root (or with sudo)."
     exit 1
   fi
+}
+
+run_as_postgres() {
+  # Avoid sudo's harmless but confusing "could not change directory to /root"
+  # warning when the installer itself was launched from root's private home.
+  (
+    cd /var/lib/postgresql
+    exec sudo -u postgres "$@"
+  )
 }
 
 install_packages() {
@@ -403,49 +413,25 @@ NODE
 }
 
 set_local_database_role_password() {
-  local operation="$1" password="$2"
+  local operation="$1" password="$2" status=0
   case "$operation" in CREATE|ALTER) ;; *) die 'Invalid local database role operation.' ;; esac
-  # Keep the password out of argv and SQL text assembled by the shell. The helper
-  # reads it from stdin, quotes it through a PostgreSQL parameter, then executes
-  # only the resulting fixed-role CREATE/ALTER statement.
-  if [ -f "$CANDIDATE_RELEASE/scripts/set-local-db-role-password.js" ]; then
-    printf '%s' "$password" \
-      | sudo -u postgres node "$CANDIDATE_RELEASE/scripts/set-local-db-role-password.js" "$operation"
-    return 0
-  fi
-
-  # Some third-party Git proxies have produced a sparse working tree even though
-  # HEAD names the new file. Keep first-install recovery independent of that file.
-  log '数据库角色辅助文件缺失，正在使用内置安全回退流程。'
-  printf '%s' "$password" \
-    | sudo -u postgres env NODE_PATH="$CANDIDATE_RELEASE/node_modules" node -e '
-const fs = require("node:fs");
-const { Client } = require("pg");
-const operation = String(process.argv[1] || "").trim().toUpperCase();
-const roleName = "laboratory_management_system_user";
-const password = fs.readFileSync(0, "utf8");
-if (operation !== "CREATE" && operation !== "ALTER") throw new Error("Invalid role operation.");
-if (!password || password.includes("\0") || /[\r\n]/.test(password)) throw new Error("Invalid database password.");
-const client = new Client({ user: "postgres", database: "postgres", host: "/var/run/postgresql" });
-(async () => {
-  await client.connect();
-  try {
-    const result = await client.query(
-      `select format($fmt$${operation} ROLE ${roleName} WITH LOGIN PASSWORD %L$fmt$, $1::text) as sql`,
-      [password]
-    );
-    const statement = String(result.rows?.[0]?.sql || "");
-    const expected = `${operation} ROLE ${roleName} WITH LOGIN PASSWORD `;
-    if (!statement.startsWith(expected)) throw new Error("Unexpected role statement.");
-    await client.query(statement);
-  } finally {
-    await client.end().catch(() => {});
-  }
-})().catch((error) => {
-  process.stderr.write(String(error.message || error) + "\n");
-  process.exitCode = 1;
-});
-' "$operation"
+  # Do not execute deployment JavaScript as the postgres OS account: a strict
+  # installer umask or a hardened mount can make release code intentionally
+  # unreadable to that account. Keep the secret out of argv, environment values,
+  # and SQL text by placing it briefly in a postgres-only file. pg_read_file reads
+  # it server-side and PostgreSQL format(%L) performs the SQL literal quoting.
+  LOCAL_DB_PASSWORD_FILE="$(mktemp /var/lib/postgresql/.laboratory-role-password.XXXXXX)"
+  printf '%s' "$password" > "$LOCAL_DB_PASSWORD_FILE"
+  chown postgres:postgres "$LOCAL_DB_PASSWORD_FILE"
+  chmod 600 "$LOCAL_DB_PASSWORD_FILE"
+  run_as_postgres psql -X --quiet --set ON_ERROR_STOP=1 --dbname postgres \
+    --set=password_file="$LOCAL_DB_PASSWORD_FILE" <<SQL || status=$?
+SELECT format('${operation} ROLE laboratory_management_system_user WITH LOGIN PASSWORD %L', pg_read_file(:'password_file')) \gexec
+SQL
+  rm -f -- "$LOCAL_DB_PASSWORD_FILE"
+  LOCAL_DB_PASSWORD_FILE=''
+  password=''
+  return "$status"
 }
 
 ensure_local_database() {
@@ -466,18 +452,18 @@ ensure_local_database() {
   systemctl enable postgresql
   systemctl start postgresql
 
-  if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='laboratory_management_system_user'" | grep -q 1; then
+  if ! run_as_postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='laboratory_management_system_user'" | grep -q 1; then
     set_local_database_role_password CREATE "$db_password"
   else
     set_local_database_role_password ALTER "$db_password"
   fi
   db_password=''
 
-  if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='laboratory_management_system'" | grep -q 1; then
-    sudo -u postgres createdb -O laboratory_management_system_user laboratory_management_system
+  if ! run_as_postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='laboratory_management_system'" | grep -q 1; then
+    run_as_postgres createdb -O laboratory_management_system_user laboratory_management_system
   fi
 
-  sudo -u postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON DATABASE laboratory_management_system TO laboratory_management_system_user;"
+  run_as_postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON DATABASE laboratory_management_system TO laboratory_management_system_user;"
 }
 
 apply_database_schema() {
@@ -506,7 +492,7 @@ apply_database_schema() {
       )
     else
       log 'Applying database baseline/forward migrations through the local PostgreSQL owner.'
-      sudo -u postgres env \
+      run_as_postgres env \
         DATABASE_URL='postgresql:///laboratory_management_system?host=/var/run/postgresql' \
         PGSSL=false \
         PGSSL_REJECT_UNAUTHORIZED=true \
@@ -547,8 +533,8 @@ finalize_local_database_permissions() {
     die 'The configured local DATABASE_URL could not be parsed safely.'
   fi
 
-  sudo -u postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "ALTER SCHEMA public OWNER TO laboratory_management_system_user;"
-  sudo -u postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 <<'SQL'
+  run_as_postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "ALTER SCHEMA public OWNER TO laboratory_management_system_user;"
+  run_as_postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 <<'SQL'
 DO $$
 DECLARE
   r record;
@@ -564,11 +550,11 @@ BEGIN
   END LOOP;
 END $$;
 SQL
-  sudo -u postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "GRANT ALL ON SCHEMA public TO laboratory_management_system_user;"
-  sudo -u postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO laboratory_management_system_user;"
-  sudo -u postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO laboratory_management_system_user;"
-  sudo -u postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES FOR ROLE laboratory_management_system_user IN SCHEMA public GRANT ALL ON TABLES TO laboratory_management_system_user;"
-  sudo -u postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES FOR ROLE laboratory_management_system_user IN SCHEMA public GRANT ALL ON SEQUENCES TO laboratory_management_system_user;"
+  run_as_postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "GRANT ALL ON SCHEMA public TO laboratory_management_system_user;"
+  run_as_postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO laboratory_management_system_user;"
+  run_as_postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO laboratory_management_system_user;"
+  run_as_postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES FOR ROLE laboratory_management_system_user IN SCHEMA public GRANT ALL ON TABLES TO laboratory_management_system_user;"
+  run_as_postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES FOR ROLE laboratory_management_system_user IN SCHEMA public GRANT ALL ON SEQUENCES TO laboratory_management_system_user;"
 }
 
 stop_application_for_migration() {
@@ -694,6 +680,10 @@ prune_old_releases() {
 deployment_exit() {
   local status="$1"
   trap - EXIT
+  if [ -n "$LOCAL_DB_PASSWORD_FILE" ]; then
+    rm -f -- "$LOCAL_DB_PASSWORD_FILE"
+    LOCAL_DB_PASSWORD_FILE=''
+  fi
   if [ "$status" -ne 0 ] && [ "$DEPLOYMENT_COMPLETE" != '1' ]; then
     if [ "$RELEASE_SWITCHED" = '1' ]; then
       rollback_application_release

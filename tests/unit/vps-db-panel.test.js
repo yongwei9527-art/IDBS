@@ -120,17 +120,21 @@ test('VPS environment and local database password updates avoid shell and SQL in
   assert.match(common, /awk -v key="\$key" -v value_file="\$value_file"/);
   assert.doesNotMatch(deploy, /sed -i/);
   assert.match(deploy, /decodeURIComponent\(parsed\.password\)/);
-  assert.match(deploy, /printf '%s' "\$password"[\s\S]*set-local-db-role-password\.js" "\$operation"/);
   assert.doesNotMatch(deploy, /\\prompt db_password/);
   assert.doesNotMatch(deploy, /PASSWORD '\$\{db_password\}'/);
   assert.match(localDbPasswordHelper, /fs\.readFileSync\(0, 'utf8'\)/);
   assert.match(localDbPasswordHelper, /format\('[^']*PASSWORD %L', \$1::text\)/);
   assert.match(localDbPasswordHelper, /\[password\]/);
   assert.doesNotMatch(localDbPasswordHelper, /process\.argv\[[^\]]+\].*password/i);
-  assert.match(deploy, /数据库角色辅助文件缺失，正在使用内置安全回退流程/);
-  assert.match(deploy, /NODE_PATH="\$CANDIDATE_RELEASE\/node_modules" node -e/);
-  assert.match(deploy, /fs\.readFileSync\(0, "utf8"\)/);
-  assert.match(deploy, /format\(\$fmt\$\$\{operation\} ROLE \$\{roleName\} WITH LOGIN PASSWORD %L\$fmt\$, \$1::text\)/);
+  assert.match(deploy, /mktemp \/var\/lib\/postgresql\/\.laboratory-role-password\.XXXXXX/);
+  assert.match(deploy, /chown postgres:postgres "\$LOCAL_DB_PASSWORD_FILE"/);
+  assert.match(deploy, /chmod 600 "\$LOCAL_DB_PASSWORD_FILE"/);
+  assert.match(deploy, /pg_read_file\(:'password_file'\)/);
+  assert.match(deploy, /format\('\$\{operation\} ROLE laboratory_management_system_user WITH LOGIN PASSWORD %L'/);
+  assert.match(deploy, /rm -f -- "\$LOCAL_DB_PASSWORD_FILE"/);
+  assert.doesNotMatch(deploy, /sudo -u postgres node/);
+  assert.match(deploy, /run_as_postgres\(\)[\s\S]*cd \/var\/lib\/postgresql[\s\S]*exec sudo -u postgres "\$@"/);
+  assert.equal((deploy.match(/sudo -u postgres/g) || []).length, 1);
   assert.match(firebase, /value_file="\$\(mktemp/);
 });
 
