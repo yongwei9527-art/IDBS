@@ -114,9 +114,8 @@ test('Android release workflow fails closed on missing official signing material
   assert.match(workflow, /No replacement key will be generated and no APK will be published/);
   assert.match(workflow, /EXPECTED_CERT_SHA256/);
   assert.match(workflow, /apksigner[^\n]*verify --verbose --print-certs/);
-  assert.match(workflow, /grep -i -m 1 -E 'Signer #\[0-9\]\+ certificate SHA-256 digest'/);
-  assert.match(workflow, /tr -cd '\[:xdigit:\]'/);
-  assert.match(workflow, /\$\{#apk_cert_sha256\}" -ne 64/);
+  assert.match(workflow, /normalized_apk_report="\$\(tr -d ':\[:space:\]'/);
+  assert.match(workflow, /grep -qF -- "\$EXPECTED_CERT_SHA256" <<< "\$normalized_apk_report"/);
   assert.doesNotMatch(workflow, /sed -n 's\/\^Signer #1 certificate SHA-256 digest: \/\/p'/);
   assert.match(workflow, /needs: build-and-verify/);
   assert.match(workflow, /sha256sum --check/);

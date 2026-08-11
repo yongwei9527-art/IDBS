@@ -256,9 +256,8 @@ jobs:
           test -x "$apksigner" || { echo 'Android apksigner was not found.' >&2; exit 1; }
           apk_report="$RUNNER_TEMP/apksigner-verify.txt"
           "$apksigner" verify --verbose --print-certs "$apk" > "$apk_report"
-          apk_cert_line="$(grep -i -m 1 -E 'Signer #[0-9]+ certificate SHA-256 digest' "$apk_report" || true)"
-          apk_cert_sha256="$(printf '%s' "$apk_cert_line" | sed -E 's/^[^:]*:[[:space:]]*(0[xX])?//' | tr -cd '[:xdigit:]' | tr '[:upper:]' '[:lower:]')"
-          if [ "${#apk_cert_sha256}" -ne 64 ] || [ "$apk_cert_sha256" != "$EXPECTED_CERT_SHA256" ]; then
+          normalized_apk_report="$(tr -d ':[:space:]' < "$apk_report" | tr '[:upper:]' '[:lower:]')"
+          if ! grep -qF -- "$EXPECTED_CERT_SHA256" <<< "$normalized_apk_report"; then
             echo 'APK signer certificate does not match the official production certificate.' >&2
             exit 1
           fi
