@@ -24,6 +24,10 @@ test('VPS installation disables only retired Debian 11 backports before apt upda
   assert.match(installer, /--connect-timeout 15 --max-time 120 --retry 3/);
   assert.match(installer, /http\.lowSpeedLimit=1024/);
   assert.match(installer, /clone --progress/);
+  assert.match(installer, /GITHUB_PROXY_PREFIX/);
+  assert.match(installer, /\$\{GITHUB_PROXY_PREFIX\}https:\/\/raw\.githubusercontent\.com/);
+  assert.match(installer, /\$\{GITHUB_PROXY_PREFIX\}https:\/\/github\.com/);
+  assert.match(installer, /third-party GitHub proxy/);
   assert.match(preparer, /disable_retired_bullseye_backports/);
   assert.match(preparer, /laboratory-management-system-backup/);
   assert.doesNotMatch(installer, /^\s*apt-get update\s*$/m);

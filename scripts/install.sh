@@ -3,7 +3,15 @@
 set -Eeuo pipefail
 umask 077
 
-REPO_URL="${REPO_URL:-https://github.com/yongwei9527-art/IDBS.git}"
+GITHUB_PROXY_PREFIX="${GITHUB_PROXY_PREFIX:-}"
+if [ -n "$GITHUB_PROXY_PREFIX" ]; then
+  [[ "$GITHUB_PROXY_PREFIX" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$ ]] \
+    || { echo '[installer] Invalid GITHUB_PROXY_PREFIX; use an HTTPS origin without a path, query, or credentials.' >&2; exit 1; }
+  GITHUB_PROXY_PREFIX="${GITHUB_PROXY_PREFIX%/}/"
+  echo "[installer] Using the explicitly selected third-party GitHub proxy: $GITHUB_PROXY_PREFIX"
+  echo '[installer] The proxy is not operated or trusted by this project; continue only if you trust it.'
+fi
+REPO_URL="${REPO_URL:-${GITHUB_PROXY_PREFIX}https://github.com/yongwei9527-art/IDBS.git}"
 BRANCH="${BRANCH:-main}"
 SCRIPT_SOURCE="${BASH_SOURCE[0]:-}"
 SCRIPT_DIR=''
@@ -18,7 +26,7 @@ cleanup_install() {
 trap cleanup_install EXIT
 if [ -z "$COMMON_HELPER" ] || [ ! -f "$COMMON_HELPER" ]; then
   TEMP_COMMON_HELPER="$(mktemp)"
-  RAW_BASE_URL="${RAW_BASE_URL:-https://raw.githubusercontent.com/yongwei9527-art/IDBS/$BRANCH}"
+  RAW_BASE_URL="${RAW_BASE_URL:-${GITHUB_PROXY_PREFIX}https://raw.githubusercontent.com/yongwei9527-art/IDBS/$BRANCH}"
   echo '[installer] Downloading installation helper...'
   curl -4fL --show-error --connect-timeout 15 --max-time 120 --retry 3 --retry-delay 2 \
     "$RAW_BASE_URL/deploy/vps-common.sh" -o "$TEMP_COMMON_HELPER"
