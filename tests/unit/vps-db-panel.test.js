@@ -127,6 +127,10 @@ test('VPS environment and local database password updates avoid shell and SQL in
   assert.match(localDbPasswordHelper, /format\('[^']*PASSWORD %L', \$1::text\)/);
   assert.match(localDbPasswordHelper, /\[password\]/);
   assert.doesNotMatch(localDbPasswordHelper, /process\.argv\[[^\]]+\].*password/i);
+  assert.match(deploy, /数据库角色辅助文件缺失，正在使用内置安全回退流程/);
+  assert.match(deploy, /NODE_PATH="\$CANDIDATE_RELEASE\/node_modules" node -e/);
+  assert.match(deploy, /fs\.readFileSync\(0, "utf8"\)/);
+  assert.match(deploy, /format\(\$fmt\$\$\{operation\} ROLE \$\{roleName\} WITH LOGIN PASSWORD %L\$fmt\$, \$1::text\)/);
   assert.match(firebase, /value_file="\$\(mktemp/);
 });
 

@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const {
   setLocalDatabaseRolePassword
@@ -44,4 +46,14 @@ test('local database role password helper rejects invalid operations and line br
     setLocalDatabaseRolePassword({ operation: 'CREATE', password: 'bad\npassword' }),
     /empty or invalid/
   );
+});
+
+test('deployment contains a syntactically valid password-on-stdin fallback', () => {
+  const deploy = fs.readFileSync(path.resolve(__dirname, '../../scripts/deploy-ubuntu.sh'), 'utf8');
+  const fallback = deploy.match(/NODE_PATH="\$CANDIDATE_RELEASE\/node_modules" node -e '\n([\s\S]*?)\n' "\$operation"/);
+  assert.ok(fallback, 'inline fallback was not found');
+  assert.doesNotMatch(fallback[1], /'/, 'a single quote would terminate the shell-quoted Node program');
+  assert.doesNotThrow(() => new Function(fallback[1]));
+  assert.match(fallback[1], /fs\.readFileSync\(0, "utf8"\)/);
+  assert.doesNotMatch(fallback[1], /process\.argv\[[^\]]+\].*password/i);
 });

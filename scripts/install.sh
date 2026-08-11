@@ -264,6 +264,10 @@ fetch_source() {
       log "正在更新 GitHub 下载地址：$REPO_URL"
       git -C "$SRC_DIR" remote set-url origin "$REPO_URL"
     fi
+    if [ "$(git -C "$SRC_DIR" config --bool core.sparseCheckout 2>/dev/null || true)" = 'true' ]; then
+      log '检测到稀疏检出，正在恢复完整项目文件。'
+      git -C "$SRC_DIR" sparse-checkout disable
+    fi
     "${git_network[@]}" -C "$SRC_DIR" fetch origin --tags
     if git -C "$SRC_DIR" show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
       if git -C "$SRC_DIR" show-ref --verify --quiet "refs/heads/$BRANCH"; then
@@ -274,6 +278,7 @@ fetch_source() {
       git -C "$SRC_DIR" merge --ff-only "origin/$BRANCH"
       [ "$(git -C "$SRC_DIR" rev-parse HEAD)" = "$(git -C "$SRC_DIR" rev-parse "origin/$BRANCH")" ] \
         || die "Local source branch contains unpublished commits: $SRC_DIR ($BRANCH)"
+      git -C "$SRC_DIR" reset --hard "origin/$BRANCH"
     elif git -C "$SRC_DIR" show-ref --verify --quiet "refs/tags/$BRANCH"; then
       git -C "$SRC_DIR" checkout --detach "refs/tags/$BRANCH"
     else

@@ -398,8 +398,44 @@ set_local_database_role_password() {
   # Keep the password out of argv and SQL text assembled by the shell. The helper
   # reads it from stdin, quotes it through a PostgreSQL parameter, then executes
   # only the resulting fixed-role CREATE/ALTER statement.
+  if [ -f "$CANDIDATE_RELEASE/scripts/set-local-db-role-password.js" ]; then
+    printf '%s' "$password" \
+      | sudo -u postgres node "$CANDIDATE_RELEASE/scripts/set-local-db-role-password.js" "$operation"
+    return 0
+  fi
+
+  # Some third-party Git proxies have produced a sparse working tree even though
+  # HEAD names the new file. Keep first-install recovery independent of that file.
+  log '数据库角色辅助文件缺失，正在使用内置安全回退流程。'
   printf '%s' "$password" \
-    | sudo -u postgres node "$CANDIDATE_RELEASE/scripts/set-local-db-role-password.js" "$operation"
+    | sudo -u postgres env NODE_PATH="$CANDIDATE_RELEASE/node_modules" node -e '
+const fs = require("node:fs");
+const { Client } = require("pg");
+const operation = String(process.argv[1] || "").trim().toUpperCase();
+const roleName = "laboratory_management_system_user";
+const password = fs.readFileSync(0, "utf8");
+if (operation !== "CREATE" && operation !== "ALTER") throw new Error("Invalid role operation.");
+if (!password || password.includes("\0") || /[\r\n]/.test(password)) throw new Error("Invalid database password.");
+const client = new Client({ user: "postgres", database: "postgres", host: "/var/run/postgresql" });
+(async () => {
+  await client.connect();
+  try {
+    const result = await client.query(
+      `select format($fmt$${operation} ROLE ${roleName} WITH LOGIN PASSWORD %L$fmt$, $1::text) as sql`,
+      [password]
+    );
+    const statement = String(result.rows?.[0]?.sql || "");
+    const expected = `${operation} ROLE ${roleName} WITH LOGIN PASSWORD `;
+    if (!statement.startsWith(expected)) throw new Error("Unexpected role statement.");
+    await client.query(statement);
+  } finally {
+    await client.end().catch(() => {});
+  }
+})().catch((error) => {
+  process.stderr.write(String(error.message || error) + "\n");
+  process.exitCode = 1;
+});
+' "$operation"
 }
 
 ensure_local_database() {
