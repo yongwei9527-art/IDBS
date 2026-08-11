@@ -251,7 +251,7 @@ main() {
   echo 'Existing application data is preserved unless you explicitly remove it.'
   echo "Canonical service name: $SERVICE_NAME (legacy alias: $LEGACY_SERVICE_NAME)"
   CURRENT_STEP='installing base packages'
-  apt-get update
+  safe_apt_update
   apt-get install -y git curl ca-certificates openssl
   if ! command -v node >/dev/null 2>&1 || [ "$(node -p 'Number(process.versions.node.split(".")[0])')" -lt 22 ]; then
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash -

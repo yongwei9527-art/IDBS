@@ -71,7 +71,7 @@ require_root() {
 
 install_packages() {
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -y
+  safe_apt_update -y
   apt-get install -y curl ca-certificates gnupg nginx openssl postgresql postgresql-client rsync sudo util-linux
   if ! command -v node >/dev/null 2>&1 || [ "$(node -p 'Number(process.versions.node.split(".")[0])')" -lt 22 ]; then
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash -

@@ -61,9 +61,39 @@ remove_managed_tree() {
   [ ! -e "$target" ] || rm -rf --one-file-system -- "$target"
 }
 
+disable_retired_bullseye_backports() {
+  local source_file
+  [ -r /etc/os-release ] || return 0
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  [ "${ID:-}" = 'debian' ] && [ "${VERSION_CODENAME:-}" = 'bullseye' ] || return 0
+  for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
+    [ -f "$source_file" ] || continue
+    grep -Eq '^[[:space:]]*deb(-src)?[[:space:]].*[[:space:]]bullseye-backports([[:space:]]|$)' "$source_file" || continue
+    [ -e "${source_file}.laboratory-management-system-backup" ] \
+      || cp -a -- "$source_file" "${source_file}.laboratory-management-system-backup"
+    sed -E -i \
+      '/^[[:space:]]*deb(-src)?[[:space:]].*[[:space:]]bullseye-backports([[:space:]]|$)/ s|^|# Disabled retired bullseye-backports by Laboratory Management System: |' \
+      "$source_file"
+    log "Disabled retired Debian 11 backports entry in $source_file"
+  done
+  for source_file in /etc/apt/sources.list.d/*.sources; do
+    [ -f "$source_file" ] || continue
+    grep -Eq '^[[:space:]]*Suites:.*bullseye-backports([[:space:]]|$)' "$source_file" || continue
+    [ -e "${source_file}.laboratory-management-system-backup" ] \
+      || cp -a -- "$source_file" "${source_file}.laboratory-management-system-backup"
+    sed -E -i \
+      -e 's/^[[:space:]]*Suites:[[:space:]]*bullseye-backports[[:space:]]*$/Suites: bullseye/' \
+      -e '/^[[:space:]]*Suites:/ s/(^|[[:space:]])bullseye-backports([[:space:]]|$)/ /g' \
+      "$source_file"
+    log "Removed retired Debian 11 backports suite from $source_file"
+  done
+}
+
 install_base_packages() {
   export DEBIAN_FRONTEND=noninteractive
   log "Refreshing apt and installing base packages"
+  disable_retired_bullseye_backports
   apt-get update -y
   apt-get install -y curl ca-certificates gnupg git openssl nginx postgresql postgresql-client rsync sudo
 }
