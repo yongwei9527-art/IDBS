@@ -50,6 +50,17 @@ case "$remove_app_data" in
       || die 'Source directory traverses a symbolic link; refusing destructive removal.'
     [ ! -L "$APP_BASE" ] || die 'Application base directory is a symbolic link; refusing destructive removal.'
     [ ! -L "$SRC_DIR" ] || die 'Source directory is a symbolic link; refusing destructive removal.'
+    owner_marker="$resolved_app_base/shared/installation-owner"
+    [ -f "$owner_marker" ] \
+      || die "Installation ownership marker is missing: $owner_marker. Rerun the installer once to create it before deleting data."
+    [ "$(awk -F= '$1 == "MARKER_VERSION" { print substr($0, index($0, "=") + 1); exit }' "$owner_marker")" = '1' ] \
+      || die 'Installation ownership marker has an unsupported version.'
+    [ "$(awk -F= '$1 == "APP_BASE" { print substr($0, index($0, "=") + 1); exit }' "$owner_marker")" = "$resolved_app_base" ] \
+      || die 'Installation ownership marker does not match APP_BASE; refusing destructive removal.'
+    [ "$(awk -F= '$1 == "SRC_DIR" { print substr($0, index($0, "=") + 1); exit }' "$owner_marker")" = "$resolved_src_dir" ] \
+      || die 'Installation ownership marker does not match SRC_DIR; refusing destructive removal.'
+    [ "$(awk -F= '$1 == "SERVICE_NAME" { print substr($0, index($0, "=") + 1); exit }' "$owner_marker")" = "$SERVICE_NAME" ] \
+      || die 'Installation ownership marker does not match SERVICE_NAME; refusing destructive removal.'
     ;;
   *) die 'REMOVE_APP_DATA must be 0 or 1.' ;;
 esac

@@ -171,6 +171,19 @@ public class TrustedServerConfigurationTest {
     }
 
     @Test
+    public void replacementPolicy_allowsMetadataRefreshWithoutServerSwitchApproval() {
+        TrustedServerConfiguration original = defaultConfiguration();
+        TrustedServerConfiguration refreshed = configuration(
+            "https://example.com", "New organization label", "New instance label",
+            INSTANCE_ID, FINGERPRINT, "2026-08-11T00:00:00.000Z"
+        );
+
+        assertTrue(TrustedServerConfiguration.mayReplaceTrustedIdentity(original, refreshed, false));
+        assertEquals("New organization label", refreshed.getOrganizationName());
+        assertEquals("New instance label", refreshed.getInstanceName());
+    }
+
+    @Test
     public void installationId_matchesWebContractAndIsRandom() {
         String first = TrustedServerConfiguration.generateInstallationId();
         String second = TrustedServerConfiguration.generateInstallationId();

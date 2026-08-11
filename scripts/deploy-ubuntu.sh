@@ -33,6 +33,7 @@ LEGACY_UPDATE_COMMAND="/usr/local/bin/${LEGACY_SERVICE_NAME}-update"
 DB_COMMAND="/usr/local/bin/db"
 FIREBASE_CONFIG_COMMAND="/usr/local/sbin/laboratory-management-system-configure-firebase"
 INSTALL_INFO_FILE="$APP_SHARED/install-info"
+INSTALL_OWNER_FILE="$APP_SHARED/installation-owner"
 PENDING_ADMIN_FILE="$APP_SHARED/.initial-super-admin-pending"
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-3000}"
@@ -117,8 +118,11 @@ resolve_persistent_directories() {
 }
 
 ensure_user() {
+  if ! getent group "$APP_GROUP" >/dev/null 2>&1; then
+    groupadd --system "$APP_GROUP"
+  fi
   if ! id "$APP_USER" >/dev/null 2>&1; then
-    useradd --system --create-home --shell /usr/sbin/nologin "$APP_USER"
+    useradd --system --create-home --shell /usr/sbin/nologin --gid "$APP_GROUP" "$APP_USER"
   fi
   mkdir -p -- "$APP_BASE" "$APP_RELEASES" "$APP_SHARED" "$APP_DOWNLOADS" "$APP_UPLOADS" "$APP_EXPORTS" "$APP_BACKUPS" "$APP_DATABASE_OPS"
   chown root:root "$APP_BASE" "$APP_SHARED"
@@ -149,6 +153,22 @@ ensure_user() {
       chmod 600 "$root_only_file"
     fi
   done
+}
+
+write_installation_owner_marker() {
+  local marker_temp resolved_app_base resolved_source_dir
+  resolved_app_base="$(readlink -m -- "$APP_BASE")"
+  resolved_source_dir="$(readlink -m -- "$ROOT_DIR")"
+  marker_temp="$(mktemp)"
+  chmod 600 "$marker_temp"
+  {
+    printf 'MARKER_VERSION=1\n'
+    printf 'APP_BASE=%s\n' "$resolved_app_base"
+    printf 'SRC_DIR=%s\n' "$resolved_source_dir"
+    printf 'SERVICE_NAME=%s\n' "$SERVICE_NAME"
+  } > "$marker_temp"
+  install -o root -g root -m 600 "$marker_temp" "$INSTALL_OWNER_FILE"
+  rm -f -- "$marker_temp"
 }
 
 prepare_candidate_release() {
@@ -1000,6 +1020,7 @@ main() {
   need_cmd rsync
   resolve_persistent_directories
   ensure_user
+  write_installation_owner_marker
   # Copy and build into an isolated candidate while the current service remains online.
   prepare_candidate_release
   ensure_env
@@ -1022,10 +1043,13 @@ main() {
   install_update_command
   install_firebase_config_command
   install_db_panel
-  install_nginx
   activate_candidate_release
   systemctl restart "$SERVICE_NAME"
   verify_service_health
+  # Replace the public proxy only after the candidate is healthy. If Nginx
+  # validation fails, install_nginx restores the previous site and the EXIT
+  # trap switches the application code back to the previous release.
+  install_nginx
   prune_old_releases
   DEPLOYMENT_COMPLETE=1
   if [ "$ENV_CREATED" = "1" ] || [ "$ADMIN_PASSWORD_ROTATED" = "1" ]; then
@@ -1044,7 +1068,7 @@ main() {
     log "Previous release: $ROLLBACK_RELEASE"
   fi
   log 'Database rollback is always manual; application rollback never restores a database automatically.'
-  log "Deployment finished. Open http://SERVER_IP/ or your bound domain."
+  log "Deployment finished. Open http://SERVER_IP/v5/ or https://YOUR_DOMAIN/v5/."
 }
 
 main "$@"

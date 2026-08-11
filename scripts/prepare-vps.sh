@@ -101,8 +101,11 @@ cleanup_nginx_defaults() {
 
 ensure_runtime_dirs() {
   log "Preparing runtime directories"
+  if ! getent group "$APP_USER" >/dev/null 2>&1; then
+    groupadd --system "$APP_USER"
+  fi
   if ! id "$APP_USER" >/dev/null 2>&1; then
-    useradd --system --create-home --shell /usr/sbin/nologin "$APP_USER"
+    useradd --system --create-home --shell /usr/sbin/nologin --gid "$APP_USER" "$APP_USER"
   fi
   mkdir -p "$APP_BASE" "$SRC_DIR"
   # Never recursively hand shared/.env or pending root credentials to the runtime user.
@@ -137,14 +140,20 @@ print_next_steps() {
   log "VPS is ready for 实验室管理系统 installation"
   cat <<'EOF'
 Next step:
-  curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install.sh | sudo bash
+  tmp="$(mktemp)"
+  curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install.sh -o "$tmp"
+  sudo bash "$tmp"
+  rm -f "$tmp"
 
 If this is a brand-new destructive reinstall, run prepare with:
-  curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/prepare-vps.sh | sudo env RESET_LABORATORY_MANAGEMENT_SYSTEM_DATA=1 RESET_CONFIRMATION=DELETE-LABORATORY-MANAGEMENT-SYSTEM-DATA bash
+  tmp="$(mktemp)"
+  curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/prepare-vps.sh -o "$tmp"
+  sudo env RESET_LABORATORY_MANAGEMENT_SYSTEM_DATA=1 RESET_CONFIRMATION=DELETE-LABORATORY-MANAGEMENT-SYSTEM-DATA bash "$tmp"
+  rm -f "$tmp"
 
 After install, open:
-  - With domain: https://your-domain/
-  - Without domain: http://SERVER_IP/
+  - With domain: https://your-domain/v5/
+  - Without domain: http://SERVER_IP/v5/
 EOF
 }
 

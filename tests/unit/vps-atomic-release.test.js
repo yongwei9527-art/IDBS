@@ -158,3 +158,27 @@ fi
   });
   assert.equal(result.status, 0, `${result.stdout || ''}\n${result.stderr || ''}`);
 });
+
+test('VPS host normalization and public-IP checks reject reserved addresses', (t) => {
+  const probe = spawnSync('bash', ['--version'], { encoding: 'utf8', windowsHide: true });
+  if (probe.error || probe.status !== 0) {
+    t.skip('bash is not available on this host');
+    return;
+  }
+  const script = String.raw`
+set -euo pipefail
+source deploy/vps-common.sh
+[ "$(normalize_host 'HTTPS://LAB.Example.COM./v5/')" = 'lab.example.com' ]
+for address in 10.0.0.1 100.64.0.1 192.0.2.1 198.18.0.1 198.51.100.1 203.0.113.1 224.0.0.1 255.255.255.255; do
+  is_non_public_ipv4 "$address"
+done
+! is_non_public_ipv4 8.8.8.8
+`;
+  const result = spawnSync('bash', ['-s'], {
+    cwd: root,
+    encoding: 'utf8',
+    input: script,
+    windowsHide: true
+  });
+  assert.equal(result.status, 0, `${result.stdout || ''}\n${result.stderr || ''}`);
+});

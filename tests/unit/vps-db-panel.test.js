@@ -216,7 +216,8 @@ test('installer explicitly controls HTTPS and probes every configured PostgreSQL
   assert.match(deploy, /"\$ENABLE_HTTPS" != '0'/);
   assert.doesNotMatch(installer, /External\/custom PostgreSQL detected/);
   assert.doesNotMatch(installer, /return 3/);
-  assert.match(installer, /psql "\$database_url"/);
+  assert.match(installer, /connectionString: process\.env\.DATABASE_URL/);
+  assert.doesNotMatch(installer, /psql "\$database_url"/);
 });
 
 test('canonical and legacy systemd names remain compatible without exposing deployment secrets', () => {

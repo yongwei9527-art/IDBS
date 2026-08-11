@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Interactive Ubuntu/Debian VPS installer. Run: curl .../scripts/install.sh | sudo bash
+# Interactive Ubuntu/Debian VPS installer. Download it first, then run it with sudo bash.
 set -Eeuo pipefail
 umask 077
 
@@ -88,15 +88,45 @@ prompt_admin_credentials() {
 }
 
 highest_admin_exists() {
-  local database_url result
-  database_url="$(read_env_value DATABASE_URL || true)"
-  [ -n "$database_url" ] || return 2
-  command -v psql >/dev/null 2>&1 || return 2
-  if ! result="$(psql "$database_url" -v ON_ERROR_STOP=1 -tAc \
-    "select 1 from users where role = 'super_admin' and deleted_at is null limit 1" 2>/dev/null)"; then
-    return 2
-  fi
-  [ "$result" = '1' ]
+  local node_status=0
+  [ -n "$(read_env_value DATABASE_URL || true)" ] || return 2
+  [ -d "$APP_CURRENT/node_modules/pg" ] || return 2
+  ENV_FILE="$ENV_FILE" APP_CURRENT="$APP_CURRENT" node <<'NODE' || node_status=$?
+const path = require('node:path');
+const current = process.env.APP_CURRENT;
+require(path.join(current, 'node_modules/dotenv')).config({
+  path: process.env.ENV_FILE,
+  quiet: true,
+  override: true
+});
+const { Pool } = require(path.join(current, 'node_modules/pg'));
+const { postgresSslOptions } = require(path.join(current, 'src/lib/postgres-ssl'));
+const sslMode = String(process.env.PGSSLMODE || '').trim().toLowerCase();
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: sslMode && sslMode !== 'disable' ? postgresSslOptions() : undefined,
+  max: 1,
+  connectionTimeoutMillis: 10_000
+});
+(async () => {
+  try {
+    const result = await pool.query(
+      `select 1
+       from users u
+       left join admin_roles ar on ar.user_id = u.id
+       where u.deleted_at is null
+         and (u.role = 'super_admin' or ar.role_key = 'super_admin' or ar.permissions ? '*')
+       limit 1`
+    );
+    process.exitCode = result.rowCount > 0 ? 0 : 1;
+  } catch {
+    process.exitCode = 2;
+  } finally {
+    await pool.end().catch(() => {});
+  }
+})();
+NODE
+  return "$node_status"
 }
 
 provision_recovery_admin() {
@@ -275,7 +305,7 @@ main() {
     enable_https=1
     echo "Existing HTTPS public URL preserved; the Nginx certificate configuration will be verified: $origin"
   else
-    if [ -n "$domain" ] && ask_yes_no 'Automatically configure Let\x27s Encrypt HTTPS after DNS is ready?' 'Y'; then
+    if [ -n "$domain" ] && ask_yes_no "Automatically configure Let's Encrypt HTTPS after DNS is ready?" 'Y'; then
       enable_https=1
       tls_email="$(ask_value 'Certificate expiry notification email (optional)' '')"
     fi

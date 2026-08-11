@@ -21,20 +21,20 @@ npm run db:migrate
 
 登录页提供“忘记密码？请求管理员重置”。用户填写登录手机号、姓名、学号、专业和导师信息后提交；接口不会公开账号是否存在，并采用账号、来源 IP、IP+账号三层限流。申请 7 天后过期。最高管理员在“用户管理”核对申请资料，通过后系统生成仅显示一次、24 小时有效的随机临时密码，并撤销该账号已有登录会话。用户使用临时密码登录后必须立即修改密码。密保问题不作为独立重置凭据，最高管理员账号仍只能通过 VPS `db` 面板恢复。
 
-> **应用版本：实验室管理系统 5.0.7。当前 GitHub 发布标签：v5.0.7。** The canonical API and realtime contract is [docs/v5-api-contract.md](./docs/v5-api-contract.md). `/v5/` and `/api/v5` are stable compatibility paths, not the product version.
+> **应用版本：实验室管理系统 5.0.8。当前 GitHub 发布标签：v5.0.8。** The canonical API and realtime contract is [docs/v5-api-contract.md](./docs/v5-api-contract.md). `/v5/` and `/api/v5` are stable compatibility paths, not the product version.
 
 实验室管理系统 是一套面向 Ubuntu VPS 的设备预约、借还、图片归还、微信绑定和后台管理系统。后端使用 Node.js + Express，数据库使用 PostgreSQL，前端静态页面位于 `public/`。
 
 使用或部署前，请先阅读 [免责声明](./DISCLAIMER.md)。
 
 
-## v5.0.7 最新版本
+## v5.0.8 最新版本
 
-v5.0.7 在 VPS 一键安装、更新、备份、App 下载页和安全配对能力上补齐 Firebase 推送部署链路，并继续支持 HTTP/IP 手动服务器地址配置。
+v5.0.8 完成 VPS 安装、原子应用版本切换、安全备份与卸载校验，并补齐 Android App 的可信服务器身份持久化、一次性安全配对、旧文档导入和管理员密码恢复流程。
 
-- [v5.0.7 发布说明](./docs/RELEASE-v5.0.7.md)
+- [v5.0.8 发布说明](./docs/RELEASE-v5.0.8.md)
 - [VPS 安装、管理与升级说明](./docs/VPS_DEPLOYMENT.md)
-- [GitHub v5.0.7 安装包下载](https://github.com/yongwei9527-art/IDBS/releases/tag/v5.0.7)
+- [GitHub v5.0.8 安装包下载](https://github.com/yongwei9527-art/IDBS/releases/tag/v5.0.8)
 
 新装用户使用正式签名 APK；已安装 v5.0.5 正式签名版的用户可直接覆盖升级。v5.0.4 Debug 包与正式签名不同，需要先按 v5.0.5 发布说明完成签名迁移或卸载后安装。
 ## Android FCM background and lock-screen notifications
@@ -120,7 +120,7 @@ Android **debug 签名内部测试包**会随 [GitHub Releases](https://github.c
 )
 ```
 
-准备脚本不是日常安装或更新入口；它会停止已有的本系统服务并清理对应 Nginx/systemd 配置，因此已部署的服务器不要单独运行它。新 VPS 完成准备后仍须执行上方唯一正式安装命令。准备脚本默认不会删除业务数据库。只有确认要彻底重装时，才使用下面这个危险命令：
+准备脚本不是日常安装或更新入口。默认模式只安装基础依赖并确保受管目录存在，不停止现有应用、不移除 Nginx/systemd 配置，也不删除数据库或文件；新 VPS 完成准备后仍须执行上方唯一正式安装命令。只有确认要彻底重装时，才使用下面这个危险命令：
 
 ```bash
 (
@@ -146,21 +146,23 @@ App 服务器连接地址：https://lab.example.com
 
 初始或通过 VPS 面板重置后的密码都是临时密码，账号首次登录后必须立即修改。安装信息保存在 `/var/www/laboratory-management-system/shared/install-info`，权限为 `root:root 600`；明文临时凭据仍有泄露风险，请限制 root 权限并避免复制到聊天、工单或日志。
 
-如果安装中途失败，可直接重新执行同一条一键安装命令。安装器会保留数据库、上传文件以及 root-only 的待完成管理员凭据，并从失败步骤继续；不要删除 `shared/.env` 或 `.initial-super-admin-pending`。失败信息会同时给出 systemd、journalctl 和 Nginx 诊断命令。
+如果安装中途失败，可直接重新执行同一条一键安装命令。安装器会重新执行部署流程，并尽量复用已完成的环境、保留数据库、上传文件以及 root-only 的待完成管理员凭据；这不等于所有步骤都能事务性回滚。不要删除 `shared/.env` 或 `.initial-super-admin-pending`。失败信息会同时给出 systemd、journalctl 和 Nginx 诊断命令。
 
 安装脚本会询问“服务器是否有域名”，请按实际情况选择：
 
 | 方式 | 浏览器访问 | APK 登录页填写 | 说明 |
 | --- | --- | --- | --- |
-| 有域名（推荐） | `https://你的域名/` | `你的域名` 或 `https://你的域名` | 生产推荐，HTTPS 加密传输。 |
-| 无域名 | `http://服务器公网IP/` | `服务器公网IP` | 可先用 IP 跑通；公网 IP 通常无法申请浏览器信任的免费 HTTPS 证书。 |
-| 本地/局域网调试 | `http://电脑局域网IP:3000/` | `电脑局域网IP:3000` | 仅适合开发调试。 |
+| 有域名（推荐） | `https://你的域名/v5/` | `你的域名` 或 `https://你的域名` | 生产推荐，HTTPS 加密传输。 |
+| 无域名 | `http://服务器公网IP/v5/` | `服务器公网IP` | 可先用 HTTP + 公网 IP 跑通；公网 IP 通常无法申请浏览器信任的免费 HTTPS 证书。 |
+| 局域网部署 | `http://服务器局域网IP/v5/` | `服务器局域网IP` | 仅限能访问该局域网地址的设备，不是公网入口。 |
 
-**域名留空不会导致安装失败。** 安装器会优先自动检测 VPS 公网 IPv4，跳过 Certbot，并让 Nginx 通过 HTTP 80 端口提供服务；也可以在域名提示处直接输入公网 IPv4。若外部公网 IP 检测不可用，安装器会尝试本机 IPv4，并在检测到内网地址时给出警告。完全无法取得有效 IPv4 时，安装器会停止并明确要求重新输入公网 IPv4 或域名，避免写入无效访问地址。
+**没有域名也可以安装。** 安装器会优先自动检测 VPS 公网 IPv4，跳过 Certbot，并让 Nginx 通过 HTTP 80 端口提供服务；也可以在域名提示处直接输入公网 IPv4。若自动探测只能得到私网/局域网 IPv4，交互安装必须明确确认才会继续为 LAN-only 部署，非交互安装默认拒绝；若完全无法取得有效 IPv4，安装器会停止并要求重新输入公网 IPv4 或域名。用户显式输入私网 IPv4 时仍会显示该地址不可供互联网客户端使用的警告。
 
 VPS 云厂商安全组/防火墙仍需允许入站 TCP 80；使用 HTTPS 域名时还需允许 TCP 443。安装器不会擅自修改已有防火墙策略。若本机启用了 UFW，可按实际需要执行 `sudo ufw allow 80/tcp` 和 `sudo ufw allow 443/tcp`。
 
-APK 内不写死服务器地址。登录页会自动识别：域名默认补 `https://`，IP/localhost 默认补 `http://`；后端安装脚本会把 APK WebView 来源 `https://localhost` 加入 `CORS_ORIGIN`。
+VPS 部署中的 Node 服务只监听 `127.0.0.1`，公网或局域网客户端必须通过 Nginx 的 80/443 端口访问，不能直接连接 `:3000`。APK 内不写死服务器地址；登录页会自动识别：域名默认补 `https://`，IP/localhost 默认补 `http://`；后端安装脚本会把 APK WebView 来源 `https://localhost` 加入 `CORS_ORIGIN`。
+
+安全二维码配对只对“可公开解析的域名 + 有效 HTTPS 证书 + 标准 443 端口”开放。无域名的 HTTP/IP、私网地址、证书申请失败或非 443 HTTPS 仍可使用网页和 App 手动服务器地址配置，但不会提供安全配对二维码。
 
 安装后运行以下命令打开 VPS 小面板：
 
@@ -233,19 +235,21 @@ curl -fsS "http://127.0.0.1:${PORT}/health"
 curl -fsS "http://127.0.0.1:${PORT}/ready"
 ```
 
-升级到 GitHub 最新版本（会先备份数据库和上传文件）：
+升级到 GitHub 最新版本（会先备份数据库、上传文件和导出文件）：
 
 ```bash
 sudo laboratory-management-system-update
 ```
 
+更新器会在独立候选目录中构建，并对应用代码使用软链接切换；健康检查失败时会尝试切回旧应用代码。数据库迁移是向前执行且不会自动回滚，因此整个更新不能理解为数据库与代码一起事务性恢复；更新前应确认备份有效，并为数据库恢复预留维护窗口。
+
 如需升级到指定发布标签：
 
 ```bash
-sudo env RELEASE_REF=v5.0.7 laboratory-management-system-update
+sudo env RELEASE_REF=v5.0.8 laboratory-management-system-update
 ```
 
-一键卸载/清除 实验室管理系统 相关文件与服务：
+安全卸载（默认保留业务数据）：
 
 ```bash
 (
@@ -270,7 +274,9 @@ sudo env RELEASE_REF=v5.0.7 laboratory-management-system-update
 )
 ```
 
-自定义到应用目录外的上传、导出、备份和数据库运维目录不会被自动删除；PostgreSQL 数据库和用户、以及现有 Let’s Encrypt 证书也不会由卸载脚本自动删除。如果确实需要清除数据库，请先确认业务数据已备份，再在 PostgreSQL 中手动删除对应数据库与用户。
+自定义到应用目录外的上传、导出、备份和数据库运维目录不会被自动删除；PostgreSQL 数据库和用户、以及现有 Let’s Encrypt 证书也不会由卸载脚本自动删除。如果确实需要清除数据库，请先确认业务数据已备份，再在 PostgreSQL 中手动删除对应数据库与用户。完整删除模式还会校验绝对路径、危险目录、符号链接和安装器写入的 `shared/installation-owner` 所有权标记；旧安装缺少标记时会拒绝删除，应先重新运行当前安装器补齐标记。即使校验通过，使用自定义 `APP_BASE`/`SRC_DIR` 时仍应人工核对路径。
+
+上述远程卸载命令使用默认服务名和默认目录。自定义过 `APP_BASE`、`SRC_DIR` 或服务名的部署，应从服务器保留的同版本源码运行卸载器，并显式传入安装时相同的变量；不要直接套用默认完整删除命令。
 
 ## 导出表格
 
@@ -300,7 +306,7 @@ systemctl list-timers | grep laboratory-management-system
 /var/www/laboratory-management-system/backups
 ```
 
-默认保留 14 天。
+默认保留 14 天。自动清理只匹配本系统命名的数据库备份、清单以及 `uploads-*.tar.gz`、`exports-*.tar.gz` 归档，不会按目录年龄删除管理员手工放入的其他文件；手工文件仍应另行管理和离线备份。
 
 ## 模块结构
 
@@ -352,7 +358,7 @@ npm run db:seed-demo
 普通用户：13800000001 / 123456
 普通用户：13800000002 / 123456
 待审核用户：13800000003 / 123456
-超级管理员用户：13900000000 / 123456
+超级管理员用户：13900000000 / 123456（仅本地演示数据，不是 VPS 安装默认密码）
 ```
 
 生成后可打开后台查看：后台总览、数据分析、预约审核、故障报备、使用日历、统计导出和操作日志。

@@ -43,6 +43,7 @@ public class NativeRuntimePlugin extends Plugin {
     private static final String CONFIGURATION_IV = "trusted_server_configuration_v2_iv";
     private static final String LEGACY_SERVER_URL_CIPHERTEXT = "server_url_ciphertext";
     private static final String LEGACY_SERVER_URL_IV = "server_url_iv";
+    private static final String LEGACY_KEYSTORE_ALIAS = "laboratory_management_server_config_v1";
     private static final String KEYSTORE_ALIAS = "laboratory_management_server_config_v2";
     private static final byte[] CONFIGURATION_AAD = "laboratory-management-system:trusted-server:v2"
         .getBytes(StandardCharsets.UTF_8);
@@ -51,6 +52,7 @@ public class NativeRuntimePlugin extends Plugin {
 
     private final SecureRandom secureRandom = new SecureRandom();
     private final Object installationIdLock = new Object();
+    private final Object serverConfigurationLock = new Object();
     @Nullable
     private JSObject pendingPairing;
 
@@ -76,7 +78,9 @@ public class NativeRuntimePlugin extends Plugin {
         ) != 0;
         JSObject result = new JSObject();
         result.put("firebasePushConfigured", firebasePushConfigured);
-        result.put("serverConfigured", readServerConfiguration() != null);
+        synchronized (serverConfigurationLock) {
+            result.put("serverConfigured", readServerConfiguration() != null);
+        }
         call.resolve(result);
     }
 
@@ -100,7 +104,9 @@ public class NativeRuntimePlugin extends Plugin {
 
     @PluginMethod
     public void getServerConfiguration(PluginCall call) {
-        call.resolve(toJsObject(readServerConfiguration()));
+        synchronized (serverConfigurationLock) {
+            call.resolve(toJsObject(readServerConfiguration()));
+        }
     }
 
     @PluginMethod
@@ -117,31 +123,37 @@ public class NativeRuntimePlugin extends Plugin {
             return;
         }
 
-        TrustedServerConfiguration existing = readServerConfiguration();
-        boolean allowServerSwitch = Boolean.TRUE.equals(call.getBoolean("allowServerSwitch", false));
-        if (!TrustedServerConfiguration.mayReplaceTrustedIdentity(existing, candidate, allowServerSwitch)) {
-            call.reject(
-                "The trusted server identity changed and requires explicit confirmation.",
-                "SERVER_SWITCH_CONFIRMATION_REQUIRED"
-            );
-            return;
-        }
+        synchronized (serverConfigurationLock) {
+            TrustedServerConfiguration existing = readServerConfiguration();
+            boolean allowServerSwitch = Boolean.TRUE.equals(call.getBoolean("allowServerSwitch", false));
+            if (!TrustedServerConfiguration.mayReplaceTrustedIdentity(existing, candidate, allowServerSwitch)) {
+                call.reject(
+                    "The trusted server identity changed and requires explicit confirmation.",
+                    "SERVER_SWITCH_CONFIRMATION_REQUIRED"
+                );
+                return;
+            }
 
-        try {
-            writeServerConfiguration(candidate);
-            call.resolve(toJsObject(candidate));
-        } catch (GeneralSecurityException | IOException exception) {
-            call.reject("Unable to securely save the server configuration.", "SECURE_STORAGE_ERROR", exception);
+            try {
+                writeServerConfiguration(candidate);
+                call.resolve(toJsObject(candidate));
+            } catch (GeneralSecurityException | IOException exception) {
+                call.reject("Unable to securely save the server configuration.", "SECURE_STORAGE_ERROR", exception);
+            }
         }
     }
 
     @PluginMethod
     public void clearServerConfiguration(PluginCall call) {
-        if (!clearStoredServerConfiguration()) {
-            call.reject("Unable to clear the server configuration.", "SECURE_STORAGE_ERROR");
-            return;
+        synchronized (serverConfigurationLock) {
+            if (!clearStoredServerConfiguration()) {
+                call.reject("Unable to clear the server configuration.", "SECURE_STORAGE_ERROR");
+                return;
+            }
+            deleteKeystoreAlias(KEYSTORE_ALIAS);
+            deleteKeystoreAlias(LEGACY_KEYSTORE_ALIAS);
+            call.resolve();
         }
-        call.resolve();
     }
 
     @PluginMethod
@@ -227,6 +239,13 @@ public class NativeRuntimePlugin extends Plugin {
     @Nullable
     private TrustedServerConfiguration readServerConfiguration() {
         SharedPreferences preferences = getPreferences();
+        // URL-only storage can never be promoted to a trusted identity. Remove it even if a
+        // complete v2 payload also exists (for example after an interrupted app upgrade).
+        preferences.edit()
+            .remove(LEGACY_SERVER_URL_CIPHERTEXT)
+            .remove(LEGACY_SERVER_URL_IV)
+            .apply();
+        deleteKeystoreAlias(LEGACY_KEYSTORE_ALIAS);
         String ciphertextValue = preferences.getString(CONFIGURATION_CIPHERTEXT, null);
         String ivValue = preferences.getString(CONFIGURATION_IV, null);
         if (ciphertextValue == null || ivValue == null) {
@@ -292,6 +311,19 @@ public class NativeRuntimePlugin extends Plugin {
 
     private SharedPreferences getPreferences() {
         return getContext().getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE);
+    }
+
+    private void deleteKeystoreAlias(String alias) {
+        try {
+            KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
+            keyStore.load(null);
+            if (keyStore.containsAlias(alias)) {
+                keyStore.deleteEntry(alias);
+            }
+        } catch (GeneralSecurityException | IOException ignored) {
+            // Preference removal is the trust boundary. An orphaned key contains no server
+            // identity and is retried on the next read or explicit clear.
+        }
     }
 
     private boolean clearStoredServerConfiguration() {

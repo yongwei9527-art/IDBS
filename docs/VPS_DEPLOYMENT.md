@@ -2,7 +2,7 @@
 
 本文说明当前仓库中 `scripts/install.sh`、`scripts/update.sh`、`scripts/backup.sh` 的使用方式，以及 Android App 与服务器的安全配对流程。脚本面向 Ubuntu/Debian VPS，要求以 `root` 或具有 `sudo` 权限的账号执行。
 
-> 生产环境建议先配置可解析到 VPS 的 HTTPS 域名。没有域名时可以安装并以公网 IP 访问网页；但当前 Android 安全配对只接受 `https://` 服务器地址，无 HTTPS 时请先配置域名证书，或在 App 中使用已有的手动服务器地址配置作为临时后备方案。
+> 生产环境建议先配置可解析到 VPS 的 HTTPS 域名。没有域名时仍可安装，并通过 `http://公网IP/v5/` 访问网页、在 App 中手动填写服务器地址；安全二维码配对则要求可公开解析的 HTTPS 域名和标准 443 端口。
 
 ## 1. 一键安装
 
@@ -32,13 +32,13 @@ sudo bash scripts/install.sh
 
 1. **访问域名**：可留空，留空时自动检测服务器公网 IP；输入域名时可选择自动申请 Let's Encrypt HTTPS 证书。
 2. **最高管理员账号**：默认 `13900000000`，可改为管理员手机号/登录账号。
-3. **最高管理员密码**：可自行输入 12–128 位密码；留空时生成强随机密码，并仅在安装完成的终端输出中显示。首次登录后应立即修改。
+3. **最高管理员密码**：可自行输入 12–128 位密码；留空时为本次安装生成独立的强随机临时密码。安装成功后会在终端显示，并写入 root-only 的安装信息；首次登录强制修改。
 4. **数据目录**：导出、上传、备份和数据库运维目录均可自定义，必须是专用的绝对路径。四个目录不得相同或互相嵌套，也不得指向系统根目录、`current`/`previous`、`releases`、自托管 APK、源码或共享密钥目录；路径仅允许常规 Linux 文件名字符，不接受空格、换行或 shell 元字符。
 5. **Firebase 推送（可选）**：可输入 VPS 上 Firebase Admin SDK 服务账号 JSON 的绝对路径。安装器验证文件后仅把压缩 JSON 的 Base64 写入权限为 `600` 的共享 `.env`，不会输出私钥内容。
 
 账号、姓名和密码提示均可直接按 Enter。默认账号为 `13900000000`，默认姓名为 `System Administrator`；密码留空时，安装器会为本次安装生成独立的随机强临时密码，而不是使用所有服务器相同的固定密码。该密码会在安装成功后输出并写入 root-only 的安装信息，首次登录后强制修改。
 
-域名留空不会阻止安装。安装器会优先检测公网 IPv4，无法访问外部检测服务时再选择本机有效 IPv4；无域名模式跳过 Certbot，使用 `http://公网IPv4` 和 Nginx 80 端口。也可在域名提示处直接输入公网 IPv4。若只能检测到内网地址，安装仍可用于局域网但会显示警告；若完全无法取得有效 IPv4，则会停止并要求重新输入公网 IPv4 或域名，避免生成不可用地址。
+域名留空不会阻止安装。安装器会优先检测公网 IPv4，无法访问外部检测服务时再选择本机有效 IPv4；无域名模式跳过 Certbot，使用 `http://公网IPv4` 和 Nginx 80 端口。也可在域名提示处直接输入公网 IPv4。若自动探测只能得到私网/局域网 IPv4，交互安装必须明确确认才会继续为 LAN-only 部署，非交互安装默认拒绝；用户显式输入私网 IPv4 时仍会收到不可供互联网客户端使用的警告。若完全无法取得有效 IPv4，则会停止并要求重新输入公网 IPv4 或域名。
 
 云厂商安全组或外部防火墙必须允许 TCP 80 入站；使用 HTTPS 域名时还要允许 TCP 443。安装器不会自动放宽服务器已有的防火墙策略。若 UFW 已启用，可根据实际入口执行 `sudo ufw allow 80/tcp`，域名 HTTPS 环境再执行 `sudo ufw allow 443/tcp`。
 
@@ -66,12 +66,20 @@ sudo bash scripts/install.sh
 后台地址：https://lab.example.com/v5/admin
 App 下载页：https://lab.example.com/download
 最高管理员账号：13900000000
-最高管理员密码：仅首次安装终端显示的随机密码（或您输入的密码）
+最高管理员临时密码：本次安装随机生成的密码（或您输入的密码）
 ```
+
+安装后可运行 VPS 管理面板：
+
+```bash
+sudo db
+```
+
+菜单提供：1）查看 App/网页地址和最近记录的最高管理员临时凭据；2）重置最高管理员账号密码，可使用面板生成的随机强临时密码或输入 12–128 位自定义密码；3）退出。安装信息文件为 `/var/www/laboratory-management-system/shared/install-info`，权限为 `root:root 600`。用户修改密码后，面板中记录的旧临时密码可能已经失效；旧安装若没有可用的凭据记录，应使用菜单第 2 项重置。安装或面板重置后的账号均在下次登录时强制修改密码。
 
 若 HTTPS 证书申请失败，安装不会删除已创建的数据；服务会继续使用 HTTP，并应在 DNS 生效后重新配置证书。再次运行安装器检测到已有安装时，会保留现有最高管理员账号和密码。
 
-若安装在依赖下载、数据库初始化或服务启动阶段中断，直接重新运行同一条 `scripts/install.sh` 命令。安装器会保留数据库和上传文件，并通过 `/var/www/laboratory-management-system/shared/.initial-super-admin-pending`（`root:root 600`）恢复尚未完成的首次管理员初始化；成功后该临时文件会被删除并写入 root-only 的 `install-info`。不要为了重试而删除 `.env`。
+若安装在依赖下载、数据库初始化或服务启动阶段中断，直接重新运行同一条 `scripts/install.sh` 命令。安装器会重新执行部署流程，并尽量复用已完成的环境、保留数据库和上传文件；这不代表所有安装步骤都能事务性回滚。首次管理员初始化可通过 `/var/www/laboratory-management-system/shared/.initial-super-admin-pending`（`root:root 600`）恢复；成功后该临时文件会被删除并写入 root-only 的 `install-info`。不要为了重试而删除 `.env`。
 
 ## 2. 安装后的配置与检查
 
@@ -94,6 +102,8 @@ APP_PAIRING_TTL_MINUTES=10
 `RELEASE_RETENTION_COUNT` 控制服务器保留的代码版本总数，默认 `5`，允许范围为 `2`–`20`。`current` 与 `previous` 指向的版本始终受保护；清理程序只删除 `releases/` 中带部署标记的更旧版本，不处理上传、导出、备份、共享 `.env` 或数据库。
 
 安装器还会生成 `APP_PAIRING_SECRET`。该值仅保存在服务器 `.env`，不得复制到客户端、日志、截图或仓库。
+
+VPS 部署强制设置 `HOST=127.0.0.1`：Node 服务只接受本机反向代理连接，外部客户端必须通过 Nginx 的 80/443 端口访问，不能直接连接 Node 的 `:3000` 端口。
 
 检查服务状态：
 
@@ -134,9 +144,9 @@ sudo /usr/local/sbin/laboratory-management-system-configure-firebase /root/fireb
 sudo laboratory-management-system-update
 ```
 
-`update.sh` 仅允许在已安装环境中运行，并委托原子更新流程：拒绝覆盖有本地修改的源码、按照 `.env` 中的自定义目录执行更新前备份、拉取代码、在线构建独立候选版本、执行数据库迁移、原子切换代码软链接、重启服务并检查 `/ready`。请在升级前确认源码目录没有未提交的人工修改。
+`update.sh` 仅允许在已安装环境中运行：它拒绝覆盖有本地修改的源码、按照 `.env` 中的自定义目录执行更新前备份、拉取代码、在当前服务继续运行时构建独立候选版本、执行数据库迁移、切换代码软链接、重启服务并检查 `/ready`。应用代码切换是原子的，但数据库迁移不属于同一个事务性发布单元；请在升级前确认源码目录没有未提交的人工修改和备份可用。
 
-### 3.1 原子发布与失败回退
+### 3.1 应用代码原子切换与失败回退
 
 VPS 代码目录采用以下结构：
 
@@ -159,7 +169,7 @@ VPS 代码目录采用以下结构：
 5. 新服务通过 `/ready` 后发布完成，并按 `RELEASE_RETENTION_COUNT` 清理旧代码目录。
 6. 若重启或健康检查失败，脚本会立即把 `current` 切回旧代码并重新启动旧版本，同时保留失败候选用于诊断。
 
-> **数据库不会自动回滚。** 应用代码回退与数据库恢复是两件不同的操作。迁移可能已提交且旧代码未必兼容新结构；自动执行 `pg_restore` 会覆盖迁移后的新数据，因此脚本只报告已验证备份地址。数据库恢复必须由管理员在维护窗口中审查迁移影响后显式执行。
+> **数据库不会自动回滚。** 应用代码回退与数据库恢复是两件不同的操作，整个更新流程不能视为数据库与代码一起事务性回滚。迁移可能已提交且旧代码未必兼容新结构；自动执行 `pg_restore` 会覆盖迁移后的新数据，因此脚本只报告已验证备份地址。数据库恢复必须由管理员在维护窗口中审查迁移影响后显式执行。
 
 首次从旧的“实体 `current/` 目录”升级时，部署器会在停机切换阶段把旧目录移入 `releases/legacy-<时间>`，然后建立 `current`/`previous` 软链接；不会删除旧版本或持久数据。
 
@@ -170,7 +180,7 @@ cd /var/www/laboratory-management-system-src
 sudo bash scripts/backup.sh
 ```
 
-每日 systemd 定时器与手动命令共用同一个 `backup.sh`：它使用文件锁避免并发执行，创建并校验 PostgreSQL 备份，同时归档上传目录与独立的导出目录。它会按 `BACKUP_RETENTION_DAYS`（默认 14 天，允许 1–3650 天）清理旧备份；安装或升级会补齐并校验该配置。仅校验最新数据库备份时使用：
+每日 systemd 定时器与手动命令共用同一个 `backup.sh`：它使用文件锁避免并发执行，创建并校验 PostgreSQL 备份，同时归档上传目录与独立的导出目录。它会按 `BACKUP_RETENTION_DAYS`（默认 14 天，允许 1–3650 天）清理本系统命名的旧数据库备份、清单以及 `uploads-*.tar.gz`、`exports-*.tar.gz`，不会按目录年龄删除管理员手工放入的其他文件；安装或升级会补齐并校验该配置。数据库连接密码通过环境传递，不放入 `pg_dump` 的进程参数。仅校验最新数据库备份时使用：
 
 ```bash
 cd /var/www/laboratory-management-system-src
@@ -191,6 +201,8 @@ sudo env REMOVE_APP_DATA=1 \
 
 删除前脚本会再次校验绝对路径、危险系统目录和符号链接；PostgreSQL 数据库与用户始终不会被卸载脚本自动删除。
 
+完整删除还要求 `$APP_BASE/shared/installation-owner` 存在，并且其中记录的 `APP_BASE`、`SRC_DIR`、服务名与当前参数一致；旧安装缺少标记时脚本会拒绝删除，应先重新运行当前安装器补齐标记。这些检查用于降低误删风险，但使用自定义目录时仍必须人工核对解析后的专用路径，确认字符串和所有权标记都不能替代离线备份。
+
 远程执行正式卸载器时使用：
 
 ```bash
@@ -202,6 +214,8 @@ sudo env REMOVE_APP_DATA=1 \
   sudo bash "$tmp"
 )
 ```
+
+该远程命令使用默认服务名和默认目录。若安装时自定义了 `APP_BASE`、`SRC_DIR` 或服务名，应从服务器保留的同版本源码运行卸载器，并显式传入安装时相同的变量；不要让默认路径代替实际安装配置。
 
 完整删除模式还会删除默认源码目录 `/var/www/laboratory-management-system-src`；应用目录外的自定义上传、导出、备份和数据库运维目录始终保留，现有 Let's Encrypt 证书也不会自动删除。
 
@@ -220,10 +234,12 @@ sudo env RESET_LABORATORY_MANAGEMENT_SYSTEM_DATA=1 \
 部署后的下载页地址为：
 
 ```text
-https://<服务器>/download
+<APP_PUBLIC_URL>/download
 ```
 
-下载页提供网页版入口、Android APK 下载入口和当前服务器的配对二维码。首次通过正式安装器部署时，`APK_DOWNLOAD_URL` 会自动配置为当前服务版本对应的 GitHub Release APK，因此 `/download` 不依赖仓库中携带二进制安装包。
+例如域名 HTTPS 安装为 `https://lab.example.com/download`，无域名安装为 `http://服务器公网IP/download`。
+
+下载页提供网页版入口和 Android APK 下载入口；只有服务器满足标准 443 HTTPS 域名等安全条件时才显示配对二维码。首次通过正式安装器部署时，`APK_DOWNLOAD_URL` 会自动配置为当前服务版本对应的 GitHub Release APK，因此 `/download` 不依赖仓库中携带二进制安装包。
 
 如果 VPS 不能访问 GitHub，或希望由自己的服务器提供 APK，可将已签名的 Release APK 放到持久目录：
 
@@ -234,11 +250,11 @@ https://<服务器>/download
 然后在 root-only 的 `.env` 中设置：
 
 ```env
-APK_DOWNLOAD_URL=https://<服务器>/download/app.apk
+APK_DOWNLOAD_URL=<APP_PUBLIC_URL>/download/app.apk
 APK_DOWNLOAD_URL_MANAGED=self_hosted
 ```
 
-每个候选版本的 `public/download` 都是指向该持久目录的软链接。重启服务后，`/download` 和 `GET /api/v5/app-config` 会返回该自托管地址，原子更新和旧版本清理都不会删除 APK。首次从旧目录布局升级时，部署器会把现有的普通 `current/public/download/app.apk` 迁移到该目录；出于安全原因不会迁移符号链接。不要把 Android 签名私钥、`key.properties` 或任何生产密钥上传到 GitHub Release。
+每个候选版本的 `public/download` 都是指向该持久目录的软链接。重启服务后，`/download` 和 `GET /api/v5/app-config` 会返回该自托管地址，版本切换和旧版本清理不会删除 APK。首次从旧目录布局升级时，部署器会把现有的普通 `current/public/download/app.apk` 迁移到该目录；出于安全原因不会迁移符号链接。不要把 Android 签名私钥、`key.properties` 或任何生产密钥上传到 GitHub Release。
 
 ## 5. App 公开配置与二维码配对接口
 
@@ -249,6 +265,7 @@ APK_DOWNLOAD_URL_MANAGED=self_hosted
 | `GET` | `/api/v5/app-config` | 返回 App 名称、服务器地址、Web/API/下载地址和 APK 地址。 |
 | `GET` | `/api/v5/app-pairing` | 生成当前短期配对数据，包含二维码协议地址和过期时间。 |
 | `GET` | `/api/v5/app-pairing/qr.svg` | 生成 SVG 二维码；响应使用 `Cache-Control: no-store`。 |
+| `GET` | `/api/v5/app-pairing/link` | 校验 HTTPS App Link 后重定向到 App 的 `labapp://pair` 后备链接。 |
 | `POST` | `/api/v5/app-pairing/exchange` | 验证扫码数据并返回规范化的公开 App 配置。 |
 
 `GET /api/v5/app-config` 响应示例：
@@ -261,35 +278,39 @@ APK_DOWNLOAD_URL_MANAGED=self_hosted
   "api_base_url": "https://lab.example.com/api/v5",
   "download_url": "https://lab.example.com/download",
   "apk_download_url": "https://lab.example.com/download/app.apk",
-  "pairing_scheme": "labapp://pair"
+  "pairing_scheme": "labapp://pair",
+  "pairing_app_link_path": "/api/v5/app-pairing/link",
+  "instance_id": "laboratory-instance-01",
+  "instance_fingerprint": "<64 位小写十六进制指纹>"
 }
 ```
 
-二维码承载的协议格式是：
+二维码优先承载同域 HTTPS App Link，并提供 `labapp://` 后备链接，协议版本为 v2：
 
 ```text
-labapp://pair?v=1&server=https%3A%2F%2Flab.example.com&token=<短期令牌>
+https://lab.example.com/api/v5/app-pairing/link?v=2&server=https%3A%2F%2Flab.example.com&token=<短期令牌>
+labapp://pair?v=2&server=https%3A%2F%2Flab.example.com&token=<短期令牌>
 ```
 
 令牌由服务器使用仅存于 `.env` 的 `APP_PAIRING_SECRET` 签名。默认有效期为 10 分钟（`APP_PAIRING_TTL_MINUTES`，服务端限制为 1–60 分钟）。令牌不是登录凭据，也不会授予任何用户权限。
 
 App 扫码后的正确流程：
 
-1. Android 接收 `labapp://pair` 深度链接，验证其为 HTTPS 服务器地址；不接受账号密码、查询/片段或非标准 HTTPS 地址。
-2. App 仅在内存中暂存二维码中的短期 `token`，然后向该服务器提交：
+1. Android 通过同域 HTTPS App Link（或校验后的 `labapp://pair` 后备链接）接收配对数据，验证其中的 `server` 为无路径、无查询、无片段、标准 443 端口的 HTTPS 域名原点；链接不包含账号密码。
+2. App 仅在内存中暂存二维码中的短期 `token`，并携带本机稳定但不含用户凭据的 `installation_id` 向该服务器提交：
 
    ```http
    POST /api/v5/app-pairing/exchange
    Content-Type: application/json
 
-   {"v":"1","server":"https://lab.example.com","token":"<短期令牌>"}
+   {"v":"2","server":"https://lab.example.com","token":"<短期令牌>","installation_id":"<安装标识>"}
    ```
 
-3. 服务器验证服务器地址、有效期和签名，成功后返回公开配置。
-4. App 保存服务器返回的规范 HTTPS 地址，并清除内存中的令牌；Android 端使用 Android Keystore 派生的加密存储保存服务器地址。
-5. 用户进入正常登录页，使用**自己的**账号和密码登录。
+3. 服务器验证服务器地址、有效期、签名和单次使用状态；兑换成功后令牌不能再次使用，并返回服务器公开配置、实例 ID 和实例指纹。
+4. App 先显示服务器身份供用户确认；只有用户确认后，才将规范 HTTPS 地址和实例身份作为一个受信配置写入 Android Keystore 派生的加密存储。安全身份发生变化时必须按服务器切换流程再次确认。
+5. App 清除内存中的令牌，用户进入正常登录页并使用**自己的**账号和密码登录。
 
-二维码过期、属于其他服务器或验证失败时，刷新 `/download` 页面生成新码后重新扫码。配对只配置服务器地址，**不创建登录会话、不自动登录、不能重置管理员密码**。
+二维码过期、已兑换、属于其他服务器或验证失败时，刷新 `/download` 页面生成新码后重新扫码。配对只建立受信服务器配置，**不创建登录会话、不自动登录、不能重置管理员密码**。
 
 ## 6. 必须遵守的安全边界
 
@@ -321,4 +342,4 @@ App 的二维码配对只用于导入已验证的服务器地址；它不是登�
 4. 在服务器 `.env` 中配置高强度随机 `APP_PAIRING_SECRET`；仅由服务器读取，禁止写入 App、二维码、GitHub、Release、日志或截图。
 5. 重启应用和反向代理后，重新打开 `/download`。满足条件时页面会显示新的短期配对二维码；旧二维码过期后请刷新页面重新获取。
 
-扫码成功仅会交换并保存规范化服务器地址，随后仍必须由用户输入自己的普通账号和密码完成登录。若 HTTPS 尚未就绪，请继续使用手动地址配置，不要为方便扫码而降低 App 或服务端的传输安全策略。
+扫码成功仅会交换并在用户确认后保存规范化服务器地址与实例身份，随后仍必须由用户输入自己的普通账号和密码完成登录。若 HTTPS 尚未就绪，请继续使用手动地址配置，不要为方便扫码而降低 App 或服务端的传输安全策略。

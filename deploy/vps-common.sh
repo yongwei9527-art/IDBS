@@ -42,6 +42,7 @@ ask_yes_no() {
 
 normalize_host() {
   local value="$1"
+  value="${value,,}"
   value="${value#http://}"
   value="${value#https://}"
   value="${value%%/*}"
@@ -252,7 +253,19 @@ is_non_public_ipv4() {
     100) [ "$second" -ge 64 ] && [ "$second" -le 127 ] && return 0 ;;
     169) [ "$second" -eq 254 ] && return 0 ;;
     172) [ "$second" -ge 16 ] && [ "$second" -le 31 ] && return 0 ;;
-    192) [ "$second" -eq 168 ] && return 0 ;;
+    192)
+      case "$second" in
+        0|2|168) return 0 ;;
+        88) [ "$_third" -eq 99 ] && return 0 ;;
+      esac
+      ;;
+    198)
+      case "$second" in
+        18|19) return 0 ;;
+        51) [ "$_third" -eq 100 ] && return 0 ;;
+      esac
+      ;;
+    203) [ "$second" -eq 0 ] && [ "$_third" -eq 113 ] && return 0 ;;
   esac
   [ "$first" -ge 224 ]
 }
