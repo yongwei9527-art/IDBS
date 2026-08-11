@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -21,6 +22,10 @@ test('VPS installation disables only retired Debian 11 backports before apt upda
   assert.match(installer, /safe_apt_update/);
   assert.match(deployer, /safe_apt_update -y/);
   assert.match(installer, /正在下载安装辅助文件/);
+  assert.match(installer, /COMMON_HELPER_SHA256='[a-f0-9]{64}'/);
+  assert.match(installer, /COMMON_HELPER_REF='[a-f0-9]{40}'/);
+  assert.match(installer, /sha256sum "\$TEMP_COMMON_HELPER"/);
+  assert.match(installer, /安装辅助文件完整性校验失败/);
   assert.match(installer, /--connect-timeout 15 --max-time 120 --retry 3/);
   assert.match(installer, /http\.lowSpeedLimit=1024/);
   assert.match(installer, /clone --progress/);
@@ -28,8 +33,17 @@ test('VPS installation disables only retired Debian 11 backports before apt upda
   assert.match(installer, /\$\{GITHUB_PROXY_PREFIX\}https:\/\/raw\.githubusercontent\.com/);
   assert.match(installer, /\$\{GITHUB_PROXY_PREFIX\}https:\/\/github\.com/);
   assert.match(installer, /第三方 GitHub 代理/);
+  assert.match(installer, /remote set-url origin "\$REPO_URL"/);
   assert.match(preparer, /disable_retired_bullseye_backports/);
   assert.match(preparer, /laboratory-management-system-backup/);
   assert.doesNotMatch(installer, /^\s*apt-get update\s*$/m);
   assert.doesNotMatch(deployer, /^\s*apt-get update\s+-y\s*$/m);
+});
+
+test('remote installer helper checksum matches the bundled helper exactly', () => {
+  const installer = read('scripts/install.sh');
+  const common = read('deploy/vps-common.sh');
+  const expected = installer.match(/COMMON_HELPER_SHA256='([a-f0-9]{64})'/)?.[1];
+  const actual = crypto.createHash('sha256').update(common).digest('hex');
+  assert.equal(expected, actual);
 });

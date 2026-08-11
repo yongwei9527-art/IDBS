@@ -98,7 +98,13 @@ test('custom backups are validated with pg_restore --list and no database secret
 
   verifyCustomDump(dumpPath, {
     pgRestore: 'pg_restore-test',
-    env: sanitizedToolEnvironment({ DATABASE_URL: 'postgresql://u:secret@db/lab', SAFE: '1' }),
+    env: sanitizedToolEnvironment({
+      DATABASE_URL: 'postgresql://u:secret@db/lab',
+      TOKEN_SECRET: 'application-secret',
+      FCM_SERVICE_ACCOUNT_JSON_BASE64: 'firebase-secret',
+      PATH: '/usr/bin',
+      LANG: 'C.UTF-8'
+    }),
     spawnSync(command, args, options) {
       calls.push({ command, args, options });
       return { status: 0, stdout: 'archive list', stderr: '' };
@@ -109,7 +115,10 @@ test('custom backups are validated with pg_restore --list and no database secret
   assert.equal(calls[0].command, 'pg_restore-test');
   assert.deepEqual(calls[0].args, ['--list', dumpPath]);
   assert.equal(calls[0].options.env.DATABASE_URL, undefined);
-  assert.equal(calls[0].options.env.SAFE, '1');
+  assert.equal(calls[0].options.env.TOKEN_SECRET, undefined);
+  assert.equal(calls[0].options.env.FCM_SERVICE_ACCOUNT_JSON_BASE64, undefined);
+  assert.equal(calls[0].options.env.PATH, '/usr/bin');
+  assert.equal(calls[0].options.env.LANG, 'C.UTF-8');
 });
 
 test('verify-latest re-runs pg_restore --list for a custom dump after checksum validation', (t) => {

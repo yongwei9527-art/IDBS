@@ -376,10 +376,11 @@ async function applyBaseline(client, files, baselinePath = schemaPath) {
 }
 
 async function applyPendingMigrations(client, files) {
-  for (const file of files) {
-    await beginMigrationTransaction(client);
-    try {
-      await ensureMigrationTable(client);
+  const completedMessages = [];
+  await beginMigrationTransaction(client);
+  try {
+    await ensureMigrationTable(client);
+    for (const file of files) {
       const applied = await client.query(
         'select checksum from public.schema_migrations where version = $1 for update',
         [file.version]
@@ -391,10 +392,9 @@ async function applyPendingMigrations(client, files) {
         }
         if (!checksum) {
           await client.query('update public.schema_migrations set checksum = $2 where version = $1', [file.version, file.checksum]);
-          console.log(`BACKFILL CHECKSUM ${file.file}`);
+          completedMessages.push(`BACKFILL CHECKSUM ${file.file}`);
         }
-        await client.query('commit');
-        console.log(`SKIP ${file.file}`);
+        completedMessages.push(`SKIP ${file.file}`);
         continue;
       }
 
@@ -404,12 +404,13 @@ async function applyPendingMigrations(client, files) {
         'insert into public.schema_migrations (version, checksum) values ($1, $2)',
         [file.version, file.checksum]
       );
-      await client.query('commit');
-      console.log(`DONE ${file.file}`);
-    } catch (error) {
-      await client.query('rollback').catch(() => {});
-      throw error;
+      completedMessages.push(`DONE ${file.file}`);
     }
+    await client.query('commit');
+    for (const message of completedMessages) console.log(message);
+  } catch (error) {
+    await client.query('rollback').catch(() => {});
+    throw error;
   }
 }
 

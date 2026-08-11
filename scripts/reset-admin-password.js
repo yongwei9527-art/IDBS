@@ -7,12 +7,14 @@ const path = require('path');
 
 const localEnvPath = path.resolve(process.cwd(), '.env');
 const vpsSharedEnvPath = '/var/www/laboratory-management-system/shared/.env';
+const configuredEnvPath = String(process.env.ENV_FILE || '').trim();
 require('dotenv').config({
-  path: fs.existsSync(localEnvPath) ? localEnvPath : vpsSharedEnvPath
+  quiet: true,
+  path: configuredEnvPath || (fs.existsSync(localEnvPath) ? localEnvPath : vpsSharedEnvPath)
 });
 
 const connectionString = process.env.DATABASE_URL || '';
-const newPassword = process.env.ADMIN_NEW_PASSWORD || process.argv[2] || '';
+const newPassword = process.env.ADMIN_NEW_PASSWORD || '';
 
 function hashPassword(password, salt) {
   return crypto.scryptSync(String(password), String(salt), 64, {
@@ -40,7 +42,6 @@ async function main() {
     throw new Error([
       'Usage:',
       '  ADMIN_NEW_PASSWORD=<at-least-12-chars> npm run admin:reset-password',
-      '  npm run admin:reset-password -- <at-least-12-chars>',
       '  laboratory-management-system-reset-admin-password  # on VPS after deployment'
     ].join('\n'));
   }

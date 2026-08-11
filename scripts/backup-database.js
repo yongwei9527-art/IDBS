@@ -108,12 +108,20 @@ function deleteSearchParam(searchParams, expectedName) {
 }
 
 function sanitizedToolEnvironment(env = process.env, options = {}) {
-  const childEnv = { ...env };
-  delete childEnv.DATABASE_URL;
-  delete childEnv.MIGRATION_DATABASE_URL;
-  delete childEnv.PGSSL_CA;
-  delete childEnv.ENV_FILE;
-  if (!options.keepPgPassword) delete childEnv.PGPASSWORD;
+  const childEnv = {};
+  const allowedKeys = new Set([
+    'PATH', 'Path', 'HOME', 'USERPROFILE', 'SYSTEMROOT', 'SystemRoot', 'WINDIR',
+    'COMSPEC', 'ComSpec', 'PATHEXT', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LANGUAGE',
+    'TZ', 'PGHOST', 'PGHOSTADDR', 'PGPORT', 'PGDATABASE', 'PGUSER', 'PGPASSFILE',
+    'PGSERVICE', 'PGSERVICEFILE', 'PGOPTIONS', 'PGAPPNAME', 'PGSSLMODE',
+    'PGREQUIRESSL', 'PGSSLCOMPRESSION', 'PGSSLCERT', 'PGSSLKEY', 'PGSSLROOTCERT',
+    'PGSSLCRL', 'PGCHANNELBINDING', 'PGTARGETSESSIONATTRS', 'PGCONNECT_TIMEOUT',
+    'PGCLIENTENCODING'
+  ]);
+  for (const [key, value] of Object.entries(env)) {
+    if (allowedKeys.has(key) || key.startsWith('LC_')) childEnv[key] = value;
+  }
+  if (options.keepPgPassword && env.PGPASSWORD) childEnv.PGPASSWORD = env.PGPASSWORD;
   return childEnv;
 }
 

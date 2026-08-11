@@ -91,11 +91,7 @@ sudo laboratory-management-system-reset-admin-password
 
 该命令会读取 `/var/www/laboratory-management-system/shared/.env` 中的生产数据库连接，交互式输入两次新后台管理员密码，并更新数据库里的 `admin_password_salt` 与 `admin_password_hash`。输入密码时终端不会回显。
 
-非交互自动化场景可使用：
-
-```bash
-sudo ADMIN_NEW_PASSWORD='新的强密码至少8位' laboratory-management-system-reset-admin-password
-```
+为避免密码进入 shell 历史或进程参数，VPS 命令仅接受终端隐藏输入，不接受命令行密码参数。
 
 ## 8. 上线后观察
 

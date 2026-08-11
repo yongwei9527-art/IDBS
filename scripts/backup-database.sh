@@ -4,18 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 if [[ -f "$ROOT_DIR/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "$ROOT_DIR/.env"
-  set +a
+  export ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 elif [[ -f /var/www/laboratory-management-system/shared/.env ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source /var/www/laboratory-management-system/shared/.env
-  set +a
+  export ENV_FILE="${ENV_FILE:-/var/www/laboratory-management-system/shared/.env}"
 fi
-export BACKUP_DIR="${BACKUP_DIR:-$ROOT_DIR/backups/db}"
-export BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
-mkdir -p "$BACKUP_DIR"
 node "$ROOT_DIR/scripts/backup-database.js"
 node "$ROOT_DIR/scripts/backup-database.js" --verify-latest

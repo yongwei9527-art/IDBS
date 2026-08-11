@@ -14,12 +14,16 @@ const common = fs.readFileSync(path.resolve(__dirname, '../../deploy/vps-common.
 const firebase = fs.readFileSync(path.resolve(__dirname, '../../scripts/configure-firebase.sh'), 'utf8');
 const uninstall = fs.readFileSync(path.resolve(__dirname, '../../scripts/uninstall-vps.sh'), 'utf8');
 const localDbPasswordHelper = fs.readFileSync(path.resolve(__dirname, '../../scripts/set-local-db-role-password.js'), 'utf8');
+const legacyBackup = fs.readFileSync(path.resolve(__dirname, '../../scripts/backup-database.sh'), 'utf8');
+const doctor = fs.readFileSync(path.resolve(__dirname, '../../scripts/doctor.js'), 'utf8');
+const resetAdmin = fs.readFileSync(path.resolve(__dirname, '../../scripts/reset-admin-password.js'), 'utf8');
 
 test('VPS db panel exposes the required three-item menu', () => {
   assert.match(panel, /1\) 查看连接地址和最高管理员临时凭据/);
   assert.match(panel, /2\) 重置最高管理员账号密码/);
   assert.match(panel, /3\) 退出/);
   assert.match(panel, /SUPER_ADMIN_PASSWORD="\$password"/);
+  assert.match(panel, /请选择 \[1-3\]: " choice <\/dev\/tty/);
 });
 
 test('VPS install information is root-only and temporary-password risk is explicit', () => {
@@ -42,6 +46,7 @@ test('deployment installs canonical update command and db panel', () => {
   assert.match(deploy, /UPDATE_COMMAND="\/usr\/local\/bin\/laboratory-management-system-update"/);
   assert.match(deploy, /DB_COMMAND="\/usr\/local\/bin\/db"/);
   assert.match(deploy, /install_db_panel/);
+  assert.match(deploy, /PostgreSQL 15\+/);
 });
 
 test('VPS installation has one canonical entrypoint and one canonical service name', () => {
@@ -123,6 +128,19 @@ test('VPS environment and local database password updates avoid shell and SQL in
   assert.match(localDbPasswordHelper, /\[password\]/);
   assert.doesNotMatch(localDbPasswordHelper, /process\.argv\[[^\]]+\].*password/i);
   assert.match(firebase, /value_file="\$\(mktemp/);
+});
+
+test('VPS secrets stay out of argv and dotenv files are parsed instead of shell-sourced', () => {
+  assert.match(installer, /export INITIAL_SUPER_ADMIN_PASSWORD="\$admin_password"/);
+  assert.doesNotMatch(installer, /env "\$\{deploy_env\[@\]\}"/);
+  assert.doesNotMatch(deploy, /\. "\$ENV_FILE"/);
+  assert.doesNotMatch(legacyBackup, /source .*\.env/);
+  assert.match(legacyBackup, /export ENV_FILE=/);
+  assert.match(doctor, /process\.env\.ENV_FILE/);
+  assert.match(resetAdmin, /process\.env\.ENV_FILE/);
+  assert.doesNotMatch(resetAdmin, /process\.argv\[2\]/);
+  assert.doesNotMatch(deploy, /reset-admin-password 'NewStrongPassword123'/);
+  assert.match(deploy, /Do not pass a password as a command-line argument/);
 });
 
 test('VPS updates honor custom uploads and preserve export retention settings', () => {

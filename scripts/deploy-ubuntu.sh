@@ -47,7 +47,7 @@ ENV_CREATED=0
 ADMIN_PASSWORD_ROTATED=0
 CANDIDATE_RELEASE=''
 ROLLBACK_RELEASE=''
-OLD_SERVICE_WAS_ACTIVE=0
+declare -a OLD_ACTIVE_SERVICE_UNITS=()
 SERVICE_INTERRUPTED=0
 MIGRATION_ATTEMPTED=0
 RELEASE_SWITCHED=0
@@ -70,6 +70,7 @@ require_root() {
 }
 
 install_packages() {
+  local postgres_major=''
   export DEBIAN_FRONTEND=noninteractive
   safe_apt_update -y
   apt-get install -y curl ca-certificates gnupg nginx openssl postgresql postgresql-client rsync sudo util-linux
@@ -77,6 +78,10 @@ install_packages() {
     curl -4fL --show-error --connect-timeout 15 --max-time 180 --retry 3 \
       https://deb.nodesource.com/setup_22.x | bash -
     apt-get install -y nodejs
+  fi
+  postgres_major="$(psql --version 2>/dev/null | grep -oE '[0-9]+' | head -n 1 || true)"
+  if [ -n "$postgres_major" ] && [ "$postgres_major" -lt 15 ]; then
+    log "警告：当前 PostgreSQL ${postgres_major} 已不适合作为新的长期生产环境。此次安装会继续以便恢复服务，但请尽快升级到受支持的 PostgreSQL 15+ 和受支持的操作系统。"
   fi
 }
 
@@ -444,14 +449,15 @@ apply_database_schema() {
   if parse_local_database_password "$database_url" >/dev/null; then
     if [ -n "$migration_database_url" ]; then
       log 'Applying database baseline/forward migrations with the configured MIGRATION_DATABASE_URL.'
-      env \
-        DATABASE_URL="$database_url" \
-        MIGRATION_DATABASE_URL="$migration_database_url" \
-        PGSSL="${pgssl:-false}" \
-        PGSSL_REJECT_UNAUTHORIZED="${pgssl_reject:-true}" \
-        PGSSL_CA="$pgssl_ca" \
-        GRANT_RUNTIME_DATABASE_PRIVILEGES="$grant_runtime" \
+      (
+        export DATABASE_URL="$database_url"
+        export MIGRATION_DATABASE_URL="$migration_database_url"
+        export PGSSL="${pgssl:-false}"
+        export PGSSL_REJECT_UNAUTHORIZED="${pgssl_reject:-true}"
+        export PGSSL_CA="$pgssl_ca"
+        export GRANT_RUNTIME_DATABASE_PRIVILEGES="$grant_runtime"
         node "$CANDIDATE_RELEASE/scripts/migrate-db.js"
+      )
     else
       log 'Applying database baseline/forward migrations through the local PostgreSQL owner.'
       sudo -u postgres env \
@@ -471,14 +477,15 @@ apply_database_schema() {
   fi
 
   log 'Applying database baseline/forward migrations to the external PostgreSQL database.'
-  env \
-    DATABASE_URL="$database_url" \
-    MIGRATION_DATABASE_URL="$migration_database_url" \
-    PGSSL="${pgssl:-false}" \
-    PGSSL_REJECT_UNAUTHORIZED="${pgssl_reject:-true}" \
-    PGSSL_CA="$pgssl_ca" \
-    GRANT_RUNTIME_DATABASE_PRIVILEGES="$grant_runtime" \
+  (
+    export DATABASE_URL="$database_url"
+    export MIGRATION_DATABASE_URL="$migration_database_url"
+    export PGSSL="${pgssl:-false}"
+    export PGSSL_REJECT_UNAUTHORIZED="${pgssl_reject:-true}"
+    export PGSSL_CA="$pgssl_ca"
+    export GRANT_RUNTIME_DATABASE_PRIVILEGES="$grant_runtime"
     node "$CANDIDATE_RELEASE/scripts/migrate-db.js"
+  )
 }
 
 finalize_local_database_permissions() {
@@ -520,16 +527,24 @@ SQL
 
 stop_application_for_migration() {
   local unit
-  if systemctl is-active --quiet "${SERVICE_NAME}.service"; then
-    OLD_SERVICE_WAS_ACTIVE=1
-  fi
   for unit in "$SERVICE_NAME" "$LEGACY_SERVICE_NAME"; do
     [ -n "$unit" ] || continue
+    if systemctl is-active --quiet "${unit}.service"; then
+      OLD_ACTIVE_SERVICE_UNITS+=("$unit")
+    fi
     if systemctl cat "${unit}.service" >/dev/null 2>&1; then
       log "Stopping ${unit}.service before database migration."
       systemctl stop "${unit}.service"
       SERVICE_INTERRUPTED=1
     fi
+  done
+}
+
+restart_previously_active_services() {
+  local unit
+  for unit in "${OLD_ACTIVE_SERVICE_UNITS[@]}"; do
+    [ -n "$unit" ] || continue
+    systemctl restart "${unit}.service" || true
   done
 }
 
@@ -636,8 +651,8 @@ deployment_exit() {
   if [ "$status" -ne 0 ] && [ "$DEPLOYMENT_COMPLETE" != '1' ]; then
     if [ "$RELEASE_SWITCHED" = '1' ]; then
       rollback_application_release
-    elif [ "$SERVICE_INTERRUPTED" = '1' ] && [ "$OLD_SERVICE_WAS_ACTIVE" = '1' ]; then
-      systemctl restart "$SERVICE_NAME" || true
+    elif [ "$SERVICE_INTERRUPTED" = '1' ] && [ "${#OLD_ACTIVE_SERVICE_UNITS[@]}" -gt 0 ]; then
+      restart_previously_active_services
     fi
     if [ "$MIGRATION_ATTEMPTED" = '1' ]; then
       log 'Deployment failed after migration started. Database changes were NOT rolled back automatically.'
@@ -649,11 +664,7 @@ deployment_exit() {
 
 run_doctor_check() {
   log "Running deployment doctor check..."
-  set -a
-  # shellcheck disable=SC1090
-  . "$ENV_FILE"
-  set +a
-  NODE_ENV=production npm --prefix "$CANDIDATE_RELEASE" run doctor
+  ENV_FILE="$ENV_FILE" NODE_ENV=production npm --prefix "$CANDIDATE_RELEASE" run doctor
 }
 
 install_service() {
@@ -761,38 +772,37 @@ Reset 实验室管理系统 admin console password.
 
 Usage:
   sudo laboratory-management-system-reset-admin-password
-  sudo laboratory-management-system-reset-admin-password 'NewStrongPassword123'
-  sudo ADMIN_NEW_PASSWORD='NewStrongPassword123' laboratory-management-system-reset-admin-password
 
-When no password is passed, the command asks for it without echoing input.
+The password is accepted only through the hidden interactive prompt so it does
+not appear in the process list or shell command history.
 HELP
   exit 0
 fi
 
-NEW_PASSWORD="${ADMIN_NEW_PASSWORD:-${1:-}}"
-if [ -z "$NEW_PASSWORD" ]; then
-  read -r -s -p "New admin password (at least 12 chars): " NEW_PASSWORD
+if [ "$#" -ne 0 ]; then
+  echo "Do not pass a password as a command-line argument. Run the command without arguments." >&2
+  exit 2
+fi
+
+NEW_PASSWORD=''
+while true; do
+  read -r -s -p "New admin password (at least 12 chars): " NEW_PASSWORD </dev/tty
   echo
-  read -r -s -p "Confirm new admin password: " CONFIRM_PASSWORD
+  if [ "${#NEW_PASSWORD}" -lt 12 ]; then
+    echo "Password must be at least 12 characters. Please try again." >&2
+    continue
+  fi
+  read -r -s -p "Confirm new admin password: " CONFIRM_PASSWORD </dev/tty
   echo
   if [ "$NEW_PASSWORD" != "$CONFIRM_PASSWORD" ]; then
-    echo "Passwords do not match." >&2
-    exit 1
+    echo "Passwords do not match. Please try again." >&2
+    continue
   fi
-fi
-
-if [ "${#NEW_PASSWORD}" -lt 12 ]; then
-  echo "Password must be at least 12 characters." >&2
-  exit 1
-fi
-
-set -a
-# shellcheck disable=SC1090
-. "$ENV_FILE"
-set +a
+  break
+done
 
 cd "$APP_CURRENT"
-ADMIN_NEW_PASSWORD="$NEW_PASSWORD" node scripts/reset-admin-password.js
+ENV_FILE="$ENV_FILE" ADMIN_NEW_PASSWORD="$NEW_PASSWORD" node scripts/reset-admin-password.js
 echo "Done. Please log in to the admin console with the new password."
 EOF
   chmod 755 "$ADMIN_RESET_COMMAND"
@@ -986,11 +996,8 @@ provision_initial_super_admin() {
   fi
 
   log "Provisioning the highest administrator login account..."
-  set -a
-  # shellcheck disable=SC1090
-  . "$ENV_FILE"
-  set +a
-  SUPER_ADMIN_PHONE="$INITIAL_SUPER_ADMIN_PHONE" \
+  ENV_FILE="$ENV_FILE" \
+    SUPER_ADMIN_PHONE="$INITIAL_SUPER_ADMIN_PHONE" \
     SUPER_ADMIN_NAME="${INITIAL_SUPER_ADMIN_NAME:-系统管理员}" \
     SUPER_ADMIN_PASSWORD="$INITIAL_SUPER_ADMIN_PASSWORD" \
     node "$CANDIDATE_RELEASE/scripts/provision-super-admin.js"

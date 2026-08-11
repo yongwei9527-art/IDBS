@@ -4,7 +4,11 @@ const crypto = require('crypto');
 const { Pool } = require('pg');
 const { postgresSslOptions } = require('../src/lib/postgres-ssl');
 const { isPlaceholderSecret, isWeakAdminPassword } = require('../src/config/env');
-require('dotenv').config({ quiet: true });
+const configuredEnvPath = String(process.env.ENV_FILE || '').trim();
+require('dotenv').config({
+  quiet: true,
+  path: configuredEnvPath || path.resolve(process.cwd(), '.env')
+});
 
 const checks = [];
 

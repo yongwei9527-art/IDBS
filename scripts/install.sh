@@ -20,16 +20,29 @@ if [ -n "$SCRIPT_SOURCE" ] && [ -f "$SCRIPT_SOURCE" ]; then
 fi
 COMMON_HELPER="${SCRIPT_DIR:+$SCRIPT_DIR/../deploy/vps-common.sh}"
 TEMP_COMMON_HELPER=''
+COMMON_HELPER_REF='d8c538b4fbec636b8523473d5f2bd72522b00c6d'
+COMMON_HELPER_SHA256='fdabd61d92eb83be6b8a972395197016f636cd445b7d98d4aa6acd2710b09044'
 cleanup_install() {
   [ -z "$TEMP_COMMON_HELPER" ] || rm -f "$TEMP_COMMON_HELPER"
 }
 trap cleanup_install EXIT
 if [ -z "$COMMON_HELPER" ] || [ ! -f "$COMMON_HELPER" ]; then
   TEMP_COMMON_HELPER="$(mktemp)"
-  RAW_BASE_URL="${RAW_BASE_URL:-${GITHUB_PROXY_PREFIX}https://raw.githubusercontent.com/yongwei9527-art/IDBS/$BRANCH}"
+  RAW_BASE_URL="${RAW_BASE_URL:-${GITHUB_PROXY_PREFIX}https://raw.githubusercontent.com/yongwei9527-art/IDBS/$COMMON_HELPER_REF}"
   echo '[安装器] 正在下载安装辅助文件……'
+  helper_url="$RAW_BASE_URL/deploy/vps-common.sh"
+  if [[ "$helper_url" == *\?* ]]; then
+    helper_url="${helper_url}&bundle=${COMMON_HELPER_SHA256}"
+  else
+    helper_url="${helper_url}?bundle=${COMMON_HELPER_SHA256}"
+  fi
   curl -4fL --show-error --connect-timeout 15 --max-time 120 --retry 3 --retry-delay 2 \
-    "$RAW_BASE_URL/deploy/vps-common.sh" -o "$TEMP_COMMON_HELPER"
+    "$helper_url" -o "$TEMP_COMMON_HELPER"
+  actual_helper_sha256="$(sha256sum "$TEMP_COMMON_HELPER" | awk '{ print $1 }')"
+  if [ "$actual_helper_sha256" != "$COMMON_HELPER_SHA256" ]; then
+    echo '[安装器] 安装辅助文件完整性校验失败。代理可能返回了缓存旧文件或被篡改的内容，请更换网络或代理后重试。' >&2
+    exit 1
+  fi
   COMMON_HELPER="$TEMP_COMMON_HELPER"
 fi
 # shellcheck disable=SC1090
@@ -240,10 +253,16 @@ configure_default_apk_download_url() {
 
 fetch_source() {
   local -a git_network=(git -c http.lowSpeedLimit=1024 -c http.lowSpeedTime=30)
+  local current_origin=''
   log "正在从 GitHub 下载应用程序源码（$BRANCH）"
   if [ -d "$SRC_DIR/.git" ]; then
     if [ -n "$(git -C "$SRC_DIR" status --porcelain)" ]; then
       die "Refusing to overwrite local source changes in $SRC_DIR."
+    fi
+    current_origin="$(git -C "$SRC_DIR" remote get-url origin 2>/dev/null || true)"
+    if [ "$current_origin" != "$REPO_URL" ]; then
+      log "正在更新 GitHub 下载地址：$REPO_URL"
+      git -C "$SRC_DIR" remote set-url origin "$REPO_URL"
     fi
     "${git_network[@]}" -C "$SRC_DIR" fetch origin --tags
     if git -C "$SRC_DIR" show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
@@ -407,24 +426,28 @@ main() {
   deploy_port="${deploy_port:-3000}"
   [[ "$deploy_port" =~ ^[0-9]+$ ]] && [ "$deploy_port" -ge 1 ] && [ "$deploy_port" -le 65535 ] \
     || die 'PORT 必须是 1 到 65535 之间的整数。'
-  deploy_env=(
-    APP_BASE="$APP_BASE"
-    SERVICE_NAME="$SERVICE_NAME"
-    LEGACY_SERVICE_NAME="$LEGACY_SERVICE_NAME"
-    HOST="127.0.0.1"
-    PORT="$deploy_port"
-    DOMAIN_NAME="${domain:-_}"
-    ENABLE_HTTPS="$enable_https"
-    CORS_ORIGIN="$cors_origin"
-    UPLOAD_DIR="$upload_dir"
-    EXPORT_DIR="$export_dir"
-    BACKUP_DIR="$backup_dir"
-    DATABASE_DIR="$database_dir"
+  # Export deployment settings inside a subshell instead of passing KEY=value
+  # arguments to env, so the initial administrator password never enters argv.
+  (
+    export APP_BASE="$APP_BASE"
+    export SERVICE_NAME="$SERVICE_NAME"
+    export LEGACY_SERVICE_NAME="$LEGACY_SERVICE_NAME"
+    export HOST="127.0.0.1"
+    export PORT="$deploy_port"
+    export DOMAIN_NAME="${domain:-_}"
+    export ENABLE_HTTPS="$enable_https"
+    export CORS_ORIGIN="$cors_origin"
+    export UPLOAD_DIR="$upload_dir"
+    export EXPORT_DIR="$export_dir"
+    export BACKUP_DIR="$backup_dir"
+    export DATABASE_DIR="$database_dir"
+    if [ "$is_new_install" = '1' ]; then
+      export INITIAL_SUPER_ADMIN_PHONE="$admin_phone"
+      export INITIAL_SUPER_ADMIN_NAME="$admin_name"
+      export INITIAL_SUPER_ADMIN_PASSWORD="$admin_password"
+    fi
+    bash "$SRC_DIR/scripts/deploy-ubuntu.sh"
   )
-  if [ "$is_new_install" = '1' ]; then
-    deploy_env+=(INITIAL_SUPER_ADMIN_PHONE="$admin_phone" INITIAL_SUPER_ADMIN_NAME="$admin_name" INITIAL_SUPER_ADMIN_PASSWORD="$admin_password")
-  fi
-  env "${deploy_env[@]}" bash "$SRC_DIR/scripts/deploy-ubuntu.sh"
 
   CURRENT_STEP='配置持久化目录和运行环境'
   ENV_FILE="$APP_BASE/shared/.env"

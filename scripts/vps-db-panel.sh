@@ -149,7 +149,7 @@ show_install_info() {
 
 ask_value() {
   local prompt="$1" default="${2:-}" reply
-  read -r -p "${prompt}${default:+ [$default]}: " reply
+  read -r -p "${prompt}${default:+ [$default]}: " reply </dev/tty
   printf '%s' "${reply:-$default}"
 }
 
@@ -158,11 +158,11 @@ ask_temporary_password() {
   generated="$(generate_password)"
   printf '已生成默认强临时密码：%s\n' "$generated" >&2
   printf '直接按 Enter 使用默认密码，或输入 12–128 位自定义密码。\n' >&2
-  read -r -s -p "新临时密码: " first
+  read -r -s -p "新临时密码: " first </dev/tty
   echo >&2
   first="${first:-$generated}"
   if [ "$first" != "$generated" ]; then
-    read -r -s -p "再次输入新临时密码: " second
+    read -r -s -p "再次输入新临时密码: " second </dev/tty
     echo >&2
     [ "$first" = "$second" ] || { echo "两次密码不一致。" >&2; return 1; }
   fi
@@ -185,7 +185,7 @@ reset_super_admin() {
   validate_credentials "$phone" "$name" "$password"
 
   if [ -n "$current_phone" ] && [ "$phone" != "$current_phone" ]; then
-    read -r -p "这将转移最高管理员身份到 ${phone}，确认继续？[y/N]: " reply
+    read -r -p "这将转移最高管理员身份到 ${phone}，确认继续？[y/N]: " reply </dev/tty
     case "$reply" in
       [Yy]*) force_transfer=1 ;;
       *) echo "已取消。"; return 0 ;;
@@ -216,7 +216,7 @@ menu() {
     echo "1) 查看连接地址和最高管理员临时凭据"
     echo "2) 重置最高管理员账号密码"
     echo "3) 退出"
-    read -r -p "请选择 [1-3]: " choice
+    read -r -p "请选择 [1-3]: " choice </dev/tty
     case "$choice" in
       1) show_install_info ;;
       2) reset_super_admin ;;

@@ -69,6 +69,9 @@ test('current and previous are replaced with same-filesystem atomic symbolic lin
 
 test('health failure rolls code back but never pretends to roll the database back', () => {
   assert.match(deploy, /rollback_application_release/);
+  assert.match(deploy, /OLD_ACTIVE_SERVICE_UNITS\+=\("\$unit"\)/);
+  assert.match(deploy, /restart_previously_active_services/);
+  assert.match(deploy, /systemctl restart "\$\{unit\}\.service"/);
   assert.match(deploy, /atomic_symlink_replace "\$ROLLBACK_RELEASE" "\$APP_CURRENT"/);
   assert.match(deploy, /Database changes were NOT rolled back automatically/);
   assert.doesNotMatch(deploy, /(?:pg_restore|psql)[^\n]*(?:ROLLBACK_RELEASE|rollback_application_release)/i);

@@ -52,6 +52,8 @@ test('deployment and migrators statically enforce the safe upgrade path', () => 
   assert.match(migrate, /checksum mismatch/i);
   assert.match(migrate, /for update/);
   assert.match(migrate, /validateCriticalSchema/);
+  assert.match(migrate, /async function applyPendingMigrations[\s\S]*beginMigrationTransaction\(client\)[\s\S]*for \(const file of files\)[\s\S]*client\.query\('commit'\)/);
+  assert.doesNotMatch(migrate, /for \(const file of files\) \{\s*await beginMigrationTransaction/);
   assert.match(upgrade, /migrateDatabase/);
   assert.doesNotMatch(upgrade, /completed with warnings/i);
 
@@ -202,9 +204,9 @@ test('VPS migration environment forwards PGSSL_CA and enables runtime grants for
   const deploy = fs.readFileSync(path.join(root, 'scripts', 'deploy-ubuntu.sh'), 'utf8');
   assert.match(deploy, /^PGSSL_CA=$/m);
   assert.match(deploy, /pgssl_ca="\$\(get_env_value PGSSL_CA \|\| true\)"/);
-  assert.match(deploy, /PGSSL_CA="\$pgssl_ca" \\/);
+  assert.match(deploy, /export PGSSL_CA="\$pgssl_ca"/);
   assert.match(deploy, /if \[ -n "\$migration_database_url" \]; then[\s\S]*grant_runtime=true/);
-  assert.match(deploy, /GRANT_RUNTIME_DATABASE_PRIVILEGES="\$grant_runtime" \\/);
+  assert.match(deploy, /export GRANT_RUNTIME_DATABASE_PRIVILEGES="\$grant_runtime"/);
 });
 
 const adminUrlText = String(process.env.MIGRATION_TEST_ADMIN_URL || '').trim();
