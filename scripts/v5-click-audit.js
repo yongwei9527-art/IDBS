@@ -14,6 +14,9 @@ const BASE = /\/v5$/i.test(baseWithoutTrailingSlash) ? baseWithoutTrailingSlash 
 const OUT = process.env.CLICK_AUDIT_REPORT_PATH || path.join(process.cwd(), 'backups', 'reports', 'v5-click-audit-report.json');
 const HIGH_RISK = /(delete|remove|reject|approve|submit|save|create|export|download|restore|resolve|close|disable|upload|send|logout|extend|renew|\u5220\u9664|\u9a73\u56de|\u5ba1\u6279|\u4fdd\u5b58|\u65b0\u589e|\u521b\u5efa|\u63d0\u4ea4|\u4e0b\u8f7d|\u5bfc\u51fa|\u5173\u95ed|\u7981\u7528|\u5f52\u8fd8|\u786e\u8ba4|\u91cd\u7f6e|\u6e05\u7a7a|\u8f6c\u4ea4|\u5904\u7406|\u53d1\u9001|\u4e0a\u4f20|\u7acb\u5373|\u8fd0\u884c|\u5f00\u59cb|\u9886\u53d6|\u626b\u7801|\u53d6\u6d88\u9884\u7ea6|\u7eed\u7ea6|\u9000\u51fa|\u767b\u51fa)/i;
 const ENGLISH_ERROR = /HTTP\s*\d{3}|Internal server error|Unauthorized|Forbidden|Cannot read|undefined is not|is not a function|Failed to fetch|NetworkError|TypeError:|ReferenceError:|SyntaxError:/i;
+const heartbeat = setInterval(() => {
+  console.log(`[click-audit] still running at ${new Date().toISOString()}`);
+}, 60_000);
 
 const userPages = [
   '/devices',
@@ -162,6 +165,7 @@ function isTransientInteractionFailure(error) {
 }
 
 async function auditPage(page, route, roleName) {
+  console.log(`[click-audit] ${roleName}: ${route}`);
   const url = abs(route);
   const item = { role: roleName, route, url, clicked: [], skipped: [], errors: [] };
   const consoleErrors = [];
@@ -280,6 +284,8 @@ async function verifyNoAdminLeak(page) {
 })().catch((err) => {
   console.error(err);
   process.exit(1);
+}).finally(() => {
+  clearInterval(heartbeat);
 });
 
 
