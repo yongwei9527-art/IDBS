@@ -74,7 +74,8 @@ install_packages() {
   safe_apt_update -y
   apt-get install -y curl ca-certificates gnupg nginx openssl postgresql postgresql-client rsync sudo util-linux
   if ! command -v node >/dev/null 2>&1 || [ "$(node -p 'Number(process.versions.node.split(".")[0])')" -lt 22 ]; then
-    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    curl -4fL --show-error --connect-timeout 15 --max-time 180 --retry 3 \
+      https://deb.nodesource.com/setup_22.x | bash -
     apt-get install -y nodejs
   fi
 }

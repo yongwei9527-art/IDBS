@@ -10,7 +10,7 @@
 在全新 Ubuntu VPS 中执行：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install.sh | sudo bash
+curl -4fL --connect-timeout 15 --max-time 120 --retry 3 https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install.sh | sudo bash
 ```
 
 安装器会询问域名、HTTPS、最高管理员账号、密码和数据目录。直接按 Enter 可采用安全默认值；随机管理员密码只显示一次。

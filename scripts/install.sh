@@ -19,7 +19,9 @@ trap cleanup_install EXIT
 if [ -z "$COMMON_HELPER" ] || [ ! -f "$COMMON_HELPER" ]; then
   TEMP_COMMON_HELPER="$(mktemp)"
   RAW_BASE_URL="${RAW_BASE_URL:-https://raw.githubusercontent.com/yongwei9527-art/IDBS/$BRANCH}"
-  curl -fsSL "$RAW_BASE_URL/deploy/vps-common.sh" -o "$TEMP_COMMON_HELPER"
+  echo '[installer] Downloading installation helper...'
+  curl -4fL --show-error --connect-timeout 15 --max-time 120 --retry 3 --retry-delay 2 \
+    "$RAW_BASE_URL/deploy/vps-common.sh" -o "$TEMP_COMMON_HELPER"
   COMMON_HELPER="$TEMP_COMMON_HELPER"
 fi
 # shellcheck disable=SC1090
@@ -209,11 +211,13 @@ configure_default_apk_download_url() {
 }
 
 fetch_source() {
+  local -a git_network=(git -c http.lowSpeedLimit=1024 -c http.lowSpeedTime=30)
+  log "Downloading application source from GitHub ($BRANCH)"
   if [ -d "$SRC_DIR/.git" ]; then
     if [ -n "$(git -C "$SRC_DIR" status --porcelain)" ]; then
       die "Refusing to overwrite local source changes in $SRC_DIR."
     fi
-    git -C "$SRC_DIR" fetch origin --tags
+    "${git_network[@]}" -C "$SRC_DIR" fetch origin --tags
     if git -C "$SRC_DIR" show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
       if git -C "$SRC_DIR" show-ref --verify --quiet "refs/heads/$BRANCH"; then
         git -C "$SRC_DIR" checkout "$BRANCH"
@@ -230,7 +234,7 @@ fetch_source() {
     fi
   else
     [ ! -e "$SRC_DIR" ] || [ -z "$(find "$SRC_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ] || die "$SRC_DIR is not an empty Git repository directory."
-    git clone --branch "$BRANCH" "$REPO_URL" "$SRC_DIR"
+    "${git_network[@]}" clone --progress --branch "$BRANCH" "$REPO_URL" "$SRC_DIR"
   fi
 }
 
@@ -254,7 +258,8 @@ main() {
   safe_apt_update
   apt-get install -y git curl ca-certificates openssl
   if ! command -v node >/dev/null 2>&1 || [ "$(node -p 'Number(process.versions.node.split(".")[0])')" -lt 22 ]; then
-    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    curl -4fL --show-error --connect-timeout 15 --max-time 180 --retry 3 \
+      https://deb.nodesource.com/setup_22.x | bash -
     apt-get install -y nodejs
   fi
 
