@@ -4,7 +4,7 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { createCryptoUtils } = require('../../src/services/core/crypto-utils');
-const { buildRuntimeStatus, corsOriginList, isSecureAppPairingOrigin, isValidHttpOrigin, isWeakAdminPassword, loadConfig } = require('../../src/config/env');
+const { buildRuntimeStatus, corsOriginList, isSecureAppPairingOrigin, isValidHttpOrigin, isValidHttpUrl, isWeakAdminPassword, loadConfig } = require('../../src/config/env');
 const { createDistributedRateLimiter } = require('../../src/lib/security');
 const { postgresSslOptions } = require('../../src/lib/postgres-ssl');
 const { createAuthService } = require('../../src/services/domains/auth/auth-service');
@@ -39,6 +39,19 @@ test('production runtime rejects placeholder secrets, weak passwords, and wildca
   assert.ok(runtime.errors.length >= 3);
 });
 
+test('export storage is independently configurable and defaults to 30-day retention', () => {
+  const config = loadConfig({
+    UPLOAD_DIR: 'custom-uploads',
+    EXPORT_DIR: 'private-exports'
+  });
+  assert.equal(config.uploadDir, path.resolve(__dirname, '..', '..', 'custom-uploads'));
+  assert.equal(config.exportDir, path.resolve(__dirname, '..', '..', 'private-exports'));
+  assert.equal(config.exportRetentionDays, 30);
+
+  const invalid = buildRuntimeStatus(loadConfig({ EXPORT_RETENTION_DAYS: '0' }));
+  assert.ok(invalid.warnings.some((message) => message.startsWith('EXPORT_RETENTION_DAYS')));
+});
+
 test('administrator password policy rejects short, placeholder, and repeated passwords', () => {
   assert.equal(isWeakAdminPassword('elevenchars'), true);
   assert.equal(isWeakAdminPassword('password'), true);
@@ -50,6 +63,8 @@ test('production configuration validates origins, ports, and rate-limit bounds',
   assert.equal(isValidHttpOrigin('https://laboratory_management_system.example.edu'), true);
   assert.equal(isValidHttpOrigin('https://laboratory_management_system.example.edu/path'), false);
   assert.equal(isValidHttpOrigin('javascript:alert(1)'), false);
+  assert.equal(isValidHttpUrl('https://lab.example.com/download/app.apk'), true);
+  assert.equal(isValidHttpUrl('https://user:secret@lab.example.com/app.apk'), false);
   assert.deepEqual(corsOriginList({ corsOrigin: 'https://laboratory_management_system.example.edu/, http://127.0.0.1:3000' }), [
     'https://laboratory_management_system.example.edu',
     'http://127.0.0.1:3000'
@@ -97,6 +112,20 @@ test('HTTPS app pairing requires a strong server-only pairing secret without deg
     CORS_ORIGIN: 'http://192.0.2.10'
   }));
   assert.equal(httpWithoutSecret.errors.some((message) => message.startsWith('APP_PAIRING_SECRET')), false);
+
+  const invalidPublicUrl = buildRuntimeStatus(loadConfig({
+    NODE_ENV: 'production',
+    APP_PUBLIC_URL: 'https://lab.example.com/unexpected-path',
+    APK_DOWNLOAD_URL: 'https://user:secret@lab.example.com/app.apk',
+    APP_PAIRING_TTL_MINUTES: '61',
+    ADMIN_PASSWORD: 'LABORATORY_MANAGEMENT_SYSTEM_strong_admin_2026',
+    TOKEN_SECRET: 'LABORATORY_MANAGEMENT_SYSTEM_token_secret_at_least_32_characters_2026',
+    DATABASE_URL: 'postgresql://example.invalid/laboratory_management_system',
+    CORS_ORIGIN: 'https://lab.example.com'
+  }));
+  assert.ok(invalidPublicUrl.errors.some((message) => message.startsWith('APP_PUBLIC_URL')));
+  assert.ok(invalidPublicUrl.errors.some((message) => message.startsWith('APK_DOWNLOAD_URL')));
+  assert.ok(invalidPublicUrl.errors.some((message) => message.startsWith('APP_PAIRING_TTL_MINUTES')));
 });
 
 test('server fails before listening when production configuration is unsafe', () => {

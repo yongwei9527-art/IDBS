@@ -4,6 +4,10 @@ interface ApiOptions extends RequestInit {
 
 const API_BASE_PATH = '/api/v5';
 const API_ORIGIN_STORAGE_KEY = 'laboratory-management-system.api_origin';
+const ACCESS_TOKEN_STORAGE_KEY = 'laboratory-management-system.access_token';
+const REFRESH_TOKEN_STORAGE_KEY = 'laboratory-management-system.refresh_token';
+const TOKEN_ORIGIN_STORAGE_KEY = 'laboratory-management-system.access_token_origin';
+let apiContextVersion = 0;
 
 function stripTrailingSlash(value: string) {
   return value.replace(/\/+$/, '');
@@ -71,14 +75,42 @@ export function getApiBase(): string {
   return normalizeApiBase(getApiOrigin());
 }
 
+function sessionOrigin(): string {
+  const configuredOrigin = getApiOrigin();
+  if (configuredOrigin) return configuredOrigin;
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return normalizeApiOrigin(window.location.origin) || window.location.origin;
+  }
+  return 'same-origin';
+}
+
+function clearStoredAuthTokens(notify = true) {
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+    localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+    localStorage.removeItem(TOKEN_ORIGIN_STORAGE_KEY);
+  }
+  if (notify) notifyAuthChanged();
+}
+
 export function saveApiOrigin(value: string): string {
   const origin = normalizeApiOrigin(value);
+  const previousOrigin = getApiOrigin();
+  const previousSessionOrigin = sessionOrigin();
   if (typeof localStorage !== 'undefined') {
     if (origin) localStorage.setItem(API_ORIGIN_STORAGE_KEY, origin);
     else localStorage.removeItem(API_ORIGIN_STORAGE_KEY);
   }
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('laboratory-management-system:api-origin-changed', { detail: { origin } }));
+  const nextOrigin = getApiOrigin();
+  const changed = previousSessionOrigin !== sessionOrigin();
+  if (changed) {
+    apiContextVersion += 1;
+    clearStoredAuthTokens();
+  }
+  if (changed && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('laboratory-management-system:api-origin-changed', {
+      detail: { origin: nextOrigin, previousOrigin }
+    }));
   }
   return origin;
 }
@@ -96,16 +128,24 @@ function notifyAuthChanged() {
 
 const tokenStore = {
   get(): string | null {
-    return localStorage.getItem('laboratory-management-system.access_token');
+    if (typeof localStorage === 'undefined') return null;
+    const token = localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+    if (!token) return null;
+    const boundOrigin = localStorage.getItem(TOKEN_ORIGIN_STORAGE_KEY);
+    if (!boundOrigin || boundOrigin !== sessionOrigin()) {
+      clearStoredAuthTokens();
+      return null;
+    }
+    return token;
   },
   set(v: string) {
-    localStorage.setItem('laboratory-management-system.access_token', v);
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, v);
+    localStorage.setItem(TOKEN_ORIGIN_STORAGE_KEY, sessionOrigin());
     notifyAuthChanged();
   },
   clear() {
-    localStorage.removeItem('laboratory-management-system.access_token');
-    localStorage.removeItem('laboratory-management-system.refresh_token');
-    notifyAuthChanged();
+    clearStoredAuthTokens();
   }
 };
 
@@ -181,9 +221,11 @@ export async function uploadImage(file: File): Promise<string> {
   const form = new FormData();
   form.append('file', file);
   const accessToken = tokenStore.get();
+  const requestVersion = apiContextVersion;
+  const requestBase = getApiBase();
   let res: Response;
   try {
-    res = await fetch(getApiBase() + '/upload', {
+    res = await fetch(requestBase + '/upload', {
       method: 'POST',
       credentials: requestCredentials(),
       headers: {
@@ -195,6 +237,9 @@ export async function uploadImage(file: File): Promise<string> {
     throw createApiError(0, error instanceof Error ? error.message : String(error));
   }
 
+  if (apiContextVersion !== requestVersion) {
+    throw createApiError(409, 'API origin changed while the upload was in progress.');
+  }
   const body = await res.json().catch(() => null);
   if (!res.ok) throw createApiError(res.status, normalizeApiBodyMessage(body), body);
   return body?.url || body?.data?.url || '';
@@ -203,14 +248,19 @@ export async function uploadImage(file: File): Promise<string> {
 export async function downloadAuthenticatedFile(path: string, filename: string) {
   async function fetchFile(allowRefresh: boolean): Promise<Response> {
     const accessToken = tokenStore.get();
+    const requestVersion = apiContextVersion;
+    const requestBase = getApiBase();
     let response: Response;
     try {
-      response = await fetch(getApiBase() + path, {
+      response = await fetch(requestBase + path, {
         credentials: requestCredentials(),
         headers: accessToken ? { Authorization: 'Bearer ' + accessToken } : {}
       });
     } catch (error) {
       throw createApiError(0, error instanceof Error ? error.message : String(error));
+    }
+    if (apiContextVersion !== requestVersion) {
+      throw createApiError(409, 'API origin changed while the download was in progress.');
     }
     if (response.status === 401 && allowRefresh) {
       const newToken = await refreshTokenOnly();
@@ -240,9 +290,11 @@ export async function downloadAuthenticatedFile(path: string, filename: string) 
 async function doRequest<T>(path: string, options: ApiOptions, allowRefresh: boolean): Promise<T> {
   const { token, headers, ...rest } = options;
   const accessToken = token ?? tokenStore.get();
+  const requestVersion = apiContextVersion;
+  const requestBase = getApiBase();
   let res: Response;
   try {
-    res = await fetch(getApiBase() + path, {
+    res = await fetch(requestBase + path, {
       ...rest,
       cache: rest.cache ?? 'no-store',
       credentials: rest.credentials ?? requestCredentials(),
@@ -254,6 +306,10 @@ async function doRequest<T>(path: string, options: ApiOptions, allowRefresh: boo
     });
   } catch (error) {
     throw createApiError(0, error instanceof Error ? error.message : String(error));
+  }
+
+  if (apiContextVersion !== requestVersion) {
+    throw createApiError(409, 'API origin changed while the request was in progress.');
   }
 
   let body: any = null;
@@ -279,13 +335,20 @@ async function doRequest<T>(path: string, options: ApiOptions, allowRefresh: boo
   return body as T;
 }
 
-let _refreshing: Promise<string | null> | null = null;
+interface RefreshFlight {
+  version: number;
+  promise: Promise<string | null>;
+}
+
+let _refreshing: RefreshFlight | null = null;
 async function refreshTokenOnly(): Promise<string | null> {
-  if (_refreshing) return _refreshing;
-  _refreshing = (async () => {
+  const refreshVersion = apiContextVersion;
+  if (_refreshing?.version === refreshVersion) return _refreshing.promise;
+  const refreshBase = getApiBase();
+  const promise = (async () => {
     let response: Response;
     try {
-      response = await fetch(getApiBase() + '/auth/refresh', {
+      response = await fetch(refreshBase + '/auth/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: requestCredentials(),
@@ -295,6 +358,7 @@ async function refreshTokenOnly(): Promise<string | null> {
       throw createApiError(0, error instanceof Error ? error.message : String(error));
     }
     const body = await response.json().catch(() => null);
+    if (apiContextVersion !== refreshVersion) return null;
     if (!response.ok) {
       if (response.status === 401) tokenStore.clear();
       throw createApiError(response.status, normalizeApiBodyMessage(body), body);
@@ -303,8 +367,12 @@ async function refreshTokenOnly(): Promise<string | null> {
     if (!token) throw createApiError(502, 'Refresh response did not include an access token.', body);
     tokenStore.set(token);
     return token;
-  })().finally(() => {
-    _refreshing = null;
-  });
-  return _refreshing;
+  })();
+  const flight: RefreshFlight = { version: refreshVersion, promise };
+  _refreshing = flight;
+  const clearFlight = () => {
+    if (_refreshing === flight) _refreshing = null;
+  };
+  void promise.then(clearFlight, clearFlight);
+  return promise;
 }

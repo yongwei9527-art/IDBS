@@ -25,7 +25,7 @@ refresh tokens in a URL.
 
 - `POST /api/v5/auth/login` - sign in with phone and password.
 - `POST /api/v5/auth/register` - create an ordinary user; a valid registration approval code activates the account immediately, otherwise it remains pending administrator approval.
-- `POST /api/v5/auth/login` - sign in using the bootstrap administrator password.
+- `POST /api/v5/auth/password-reset/request` - submit identity details for an administrator-assisted password reset. The public response never reveals whether the account exists. Limits are three requests per account per hour, ten per source IP per hour, and three per IP/account pair per hour. A pending request expires after seven days.
 - `GET /api/v5/auth/wechat/challenge` - obtain a WeChat binding challenge.
 - `GET /api/v5/auth/wechat/status` - poll a WeChat binding challenge; requires `code`.
 - `POST /api/v5/auth/wechat/bind` - bind the confirmed WeChat identity.
@@ -121,6 +121,8 @@ by the server. Do not infer authorization only from a visible menu item.
 - `GET /api/v5/admin/devices/:id` - read managed device detail.
 - `PATCH /api/v5/admin/devices/:id/availability` - change availability.
 - `GET /api/v5/admin/users` - list users.
+- `GET /api/v5/admin/password-reset-requests` - super-administrator-only password-reset request queue, including submitted and account identity fields for manual comparison. Expired requests are excluded from the default pending view; processed identity records are retained for at most 90 days when this queue is maintained.
+- `PATCH /api/v5/admin/password-reset-requests/:id/review` - super-administrator-only approval or rejection. Approval revokes refresh sessions and returns a temporary password once in this non-cacheable response; it expires after 24 hours and must be changed at the next login. Database super-administrators and administrator-role assignments with wildcard permission cannot be reset through this workflow.
 - `GET /api/v5/admin/users/registration-approval-code` - read the current registration approval code, expiry, and configured validity; requires `user.approve`.
 - `POST /api/v5/admin/users/registration-approval-code/refresh` - manually rotate the registration approval code and immediately invalidate the old code; requires `user.approve`.
 - `PUT /api/v5/admin/users/registration-approval-code/settings` - set the validity with `{ "ttl_minutes": <integer> }`; requires `user.approve`, defaults to 1 minute, and accepts 1–1440 minutes.
@@ -164,6 +166,9 @@ The registration approval code rotates automatically at the configured interval.
 - `POST /api/v5/admin/export-jobs` - create an export job.
 - `GET /api/v5/admin/export-jobs` - list export jobs.
 - `POST /api/v5/admin/export-jobs/run-next` - run the next queued export job.
+- `POST /api/v5/admin/legacy-import/preview` - super-administrator-only multipart preview of a legacy document; does not write business data.
+- `POST /api/v5/admin/legacy-import/execute` - super-administrator-only multipart execution. Requires `confirmation=IMPORT`; task state, business writes, and the success audit commit atomically.
+- `GET /api/v5/admin/legacy-import/template` - download the UTF-8 JSON migration template.
 - `GET /api/v5/admin/maintenance/overview` - maintenance plan, work-order and active-window summary, including overdue window/work-order counts and the latest `maintenance-window-lifecycle` scheduler result.
 - `GET /api/v5/admin/maintenance/plans` - list preventive maintenance plans.
 - `POST /api/v5/admin/maintenance/plans` - create a preventive maintenance plan.
@@ -173,6 +178,8 @@ The registration approval code rotates automatically at the configured interval.
 - `PATCH /api/v5/admin/maintenance/work-orders/:id` - update work-order progress, completion notes and optional device recovery; terminal updates return `recovery` (`requested`, `recovered`, `blocked`, `blockers`). Blocker codes are `active_maintenance_window`, `open_fault_report`, and `open_maintenance_work_order`.
 
 Maintenance lifecycle behavior: scheduled windows block new overlapping reservations immediately. The runtime scheduler activates due windows, disables reservations for the device, and sends one overdue in-app reminder for an open window. It never auto-completes work orders or automatically restores a device.
+
+Legacy import accepts one in-memory `file` plus `dataset` (`auto`, `users`, `devices`, `reservations`, `usage`, `faults`, or `user_activity`), `conflict_policy` (`skip` or `update`), `allow_partial`, and `create_missing_devices`. Files are limited to 10 MB, 10,000 total rows, and 200 user rows; supported formats are UTF-8 JSON, CSV, HTML, and this system's HTML-table `.xls` export, not binary `.xls`/`.xlsx`. Timezone-less timestamps are interpreted as `Asia/Shanghai`. Uploaded password hashes are never trusted, and existing account passwords are never overwritten by an import. Plaintext passwords for new accounts are re-hashed with current scrypt settings, while new users without passwords receive a seven-day temporary password returned only in the non-cacheable execution response. Import idempotency uses a canonical document SHA-256, and execution-time conflicts roll back all business rows unless `allow_partial=true`.
 - `GET /api/v5/admin/system/runtime` - super-administrator runtime diagnosis; exposes readiness, PostgreSQL round-trip latency, and component status without credentials or connection details.
 - `GET /api/v5/admin/system/security-config` - read security configuration.
 - `PUT /api/v5/admin/system/security-config` - update security configuration.
@@ -183,7 +190,7 @@ Maintenance lifecycle behavior: scheduled windows block new overlapping reservat
 - `PUT /api/v5/admin/system/roles` - update role assignments.
 - `DELETE /api/v5/admin/system/roles/:userId` - remove a role assignment.
 - `GET /api/v5/admin/audit/operation-logs` - query operation audit logs.
-- `POST /api/v5/admin/users/:id/password-reset` - super-administrator-only reset for an ordinary user or ordinary administrator; returns a one-time temporary password and revokes refresh sessions.
+- `POST /api/v5/admin/users/:id/password-reset` - super-administrator-only reset for an ordinary user or ordinary administrator; returns a 24-hour temporary password once in a non-cacheable response, revokes refresh sessions, and cancels pending recovery requests for that user.
 - `GET /api/v5/admin/material-requests` - list material checklist requests; requires user.manage.
 - `PATCH /api/v5/admin/material-requests/:id/review` - approve, reject, or mark an approved material request fulfilled; requires user.manage.
 - `GET /api/v5/admin/system/operations-overview` - super-administrator-only registration, profile, and device-use aggregate with bounded pagination.

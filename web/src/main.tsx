@@ -12,6 +12,13 @@ import { routes } from './routes';
 
 const queryClient = new QueryClient(queryClientConfig);
 
+if (typeof window !== 'undefined') {
+  window.addEventListener('laboratory-management-system:api-origin-changed', () => {
+    void queryClient.cancelQueries();
+    queryClient.clear();
+  });
+}
+
 // 部署子路径 /v5/：从当前 URL 推导出 router basepath，让 router 内部仍按
 // /login、/admin/dashboard 等内部路径匹配。
 // index.html 始终位于 /v5/index.html，故 location.pathname 必以 /v5 开头。

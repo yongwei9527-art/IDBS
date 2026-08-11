@@ -24,10 +24,12 @@ function createHarness(options = {}) {
     async query(sql, params = []) {
       const normalized = String(sql).replace(/\s+/g, ' ').trim().toLowerCase();
       statements.push({ sql: normalized, params });
+      if (normalized.startsWith('select id from password_reset_requests')) return { rowCount: 0, rows: [] };
       if (normalized.startsWith('update users')) return { rowCount: 1, rows: [] };
       if (normalized.startsWith('update refresh_token_sessions')) {
         return { rowCount: options.revokedSessions ?? 2, rows: [] };
       }
+      if (normalized.startsWith('update password_reset_requests')) return { rowCount: 0, rows: [] };
       throw new Error(`Unexpected SQL in password reset test: ${normalized}`);
     }
   };
@@ -101,17 +103,21 @@ test('highest-privilege administrator gets a random 12-digit temporary password 
     salt: 'ab'.repeat(16)
   }]);
 
-  assert.equal(harness.statements.length, 2);
-  assert.match(harness.statements[0].sql, /set password_hash = \$1, password_salt = \$2/);
-  assert.match(harness.statements[0].sql, /password_reset_required = true/);
-  assert.match(harness.statements[0].sql, /temporary_password_expires_at = \$3/);
-  assert.match(harness.statements[0].sql, /role <> 'super_admin'/);
-  assert.match(harness.statements[0].sql, /not exists/);
-  assert.match(harness.statements[0].sql, /permissions \? '\*'/);
-  assert.deepEqual(harness.statements[0].params, ['hashed-value', 'ab'.repeat(16), FIXED_EXPIRY, FIXED_NOW, 'user-1']);
-  assert.match(harness.statements[1].sql, /update refresh_token_sessions/);
-  assert.match(harness.statements[1].sql, /where subject = \$2 and revoked_at is null/);
-  assert.deepEqual(harness.statements[1].params, [FIXED_NOW, 'user-1']);
+  assert.equal(harness.statements.length, 4);
+  assert.match(harness.statements[0].sql, /select id from password_reset_requests/);
+  assert.match(harness.statements[0].sql, /for update/);
+  assert.match(harness.statements[1].sql, /set password_hash = \$1, password_salt = \$2/);
+  assert.match(harness.statements[1].sql, /password_reset_required = true/);
+  assert.match(harness.statements[1].sql, /temporary_password_expires_at = \$3/);
+  assert.match(harness.statements[1].sql, /role <> 'super_admin'/);
+  assert.match(harness.statements[1].sql, /not exists/);
+  assert.match(harness.statements[1].sql, /permissions \? '\*'/);
+  assert.deepEqual(harness.statements[1].params, ['hashed-value', 'ab'.repeat(16), FIXED_EXPIRY, FIXED_NOW, 'user-1']);
+  assert.match(harness.statements[2].sql, /update refresh_token_sessions/);
+  assert.match(harness.statements[2].sql, /where subject = \$2 and revoked_at is null/);
+  assert.deepEqual(harness.statements[2].params, [FIXED_NOW, 'user-1']);
+  assert.match(harness.statements[3].sql, /update password_reset_requests/);
+  assert.match(harness.statements[3].sql, /status = 'cancelled'/);
 
   assert.equal(harness.auditCalls.length, 1);
   const [action, detail, operator, deviceId, recordId, txQuery] = harness.auditCalls[0];

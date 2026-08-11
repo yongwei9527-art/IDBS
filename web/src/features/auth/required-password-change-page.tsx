@@ -35,7 +35,7 @@ export function RequiredPasswordChangePage() {
     event.preventDefault();
     setError(null);
     if (!currentPassword) {
-      setError('请输入管理员提供的一次性临时密码。');
+      setError('请输入管理员提供的临时密码。');
       return;
     }
     if (newPassword.length < 12 || newPassword.length > 128) {
@@ -47,7 +47,7 @@ export function RequiredPasswordChangePage() {
       return;
     }
     if (newPassword === currentPassword) {
-      setError('新密码不能与一次性临时密码相同。');
+      setError('新密码不能与临时密码相同。');
       return;
     }
 
@@ -81,11 +81,11 @@ export function RequiredPasswordChangePage() {
         </div>
         <div className="login-divider" />
         <p className="login-field-hint">
-          请先验证一次性临时密码，再设置 12–128 位新密码。完成前不能进入任何业务页面；成功后请使用新密码重新登录。
+          请先验证管理员提供的临时密码，再设置 12–128 位新密码。完成前不能进入任何业务页面；成功后请使用新密码重新登录。
         </p>
         <form onSubmit={onSubmit} className="login-form mt-4" noValidate>
           <label className="login-field" htmlFor="temporary-password">
-            <span>一次性临时密码</span>
+            <span>临时密码</span>
             <Input
               id="temporary-password"
               type="password"

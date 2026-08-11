@@ -1,4 +1,4 @@
-name: 实验室管理系统 5.0 Quality Gate
+name: Laboratory Management System 5.0 Quality Gate
 
 on:
   push:
@@ -6,12 +6,22 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -31,9 +41,47 @@ jobs:
       - name: Syntax, unit, type and production build checks
         run: npm run v5:quality
 
+  android-without-firebase:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build Android without Firebase credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e web/android/app/google-services.json
+          npm --prefix web ci
+          npm --prefix web run build:android
+          cd web
+          npx cap sync android
+          cd android
+          ./gradlew --no-daemon testDebugUnitTest assembleDebug lintDebug
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          test ! -e app/google-services.json
+          echo 'Android core app built successfully; FCM background push is disabled because no Firebase configuration was supplied.'
+
   integration:
     needs: quality
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     services:
       postgres:
         image: postgres:16
@@ -61,6 +109,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -88,8 +138,10 @@ jobs:
           npm run doctor
           npm run v5:build
 
-      - name: Start 实验室管理系统
+      - name: Start application
+        shell: bash
         run: |
+          set -euo pipefail
           npm start > server-ci.log 2>&1 &
           for attempt in $(seq 1 30); do
             if curl --fail --silent http://127.0.0.1:3000/ready > /dev/null; then exit 0; fi
@@ -117,4 +169,5 @@ jobs:
           path: |
             server-ci.log
             test-results/
-            .codex/*-report.json
+            backups/reports/*.json
+          if-no-files-found: ignore

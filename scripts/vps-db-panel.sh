@@ -23,6 +23,66 @@ generate_password() {
   printf 'IDBS!%s' "$(openssl rand -hex 8)"
 }
 
+validate_install_addresses() {
+  local app_server_address="$1" web_access_url="$2"
+  [[ "$app_server_address" =~ ^https?://[^/[:space:]?#]+$ ]] \
+    && [[ "$app_server_address" != *'@'* ]] \
+    || { echo "App server address must be an HTTP(S) origin without a path or credentials." >&2; return 1; }
+  [ "$web_access_url" = "${app_server_address%/}/v5/" ] \
+    || { echo "Web access URL must equal the App server address followed by /v5/." >&2; return 1; }
+}
+
+record_addresses_from_stdin() {
+  local app_server_address web_access_url phone name temporary_password password_state tmp
+  IFS= read -r app_server_address
+  IFS= read -r web_access_url
+  validate_install_addresses "$app_server_address" "$web_access_url"
+
+  if [ ! -f "$INFO_FILE" ]; then
+    mkdir -p "$(dirname "$INFO_FILE")"
+    chown root:root "$(dirname "$INFO_FILE")"
+    chmod 700 "$(dirname "$INFO_FILE")"
+    tmp="$(mktemp "$(dirname "$INFO_FILE")/.install-info.XXXXXX")"
+    {
+      printf 'APP_SERVER_ADDRESS=%s\n' "$app_server_address"
+      printf 'WEB_ACCESS_URL=%s\n' "$web_access_url"
+      printf 'SUPER_ADMIN_PHONE=\n'
+      printf 'SUPER_ADMIN_NAME=\n'
+      printf 'SUPER_ADMIN_TEMP_PASSWORD=\n'
+      printf 'PASSWORD_STATE=credentials_not_recorded\n'
+      printf 'UPDATED_AT=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    } > "$tmp"
+    chown root:root "$tmp"
+    chmod 600 "$tmp"
+    mv -f "$tmp" "$INFO_FILE"
+    echo 'Legacy installation detected: addresses were recorded, but prior administrator credentials are unavailable. Use menu item 2 to reset them if needed.' >&2
+    return 0
+  fi
+
+  phone="$(read_info_value SUPER_ADMIN_PHONE)"
+  name="$(read_info_value SUPER_ADMIN_NAME)"
+  temporary_password="$(read_info_value SUPER_ADMIN_TEMP_PASSWORD)"
+  password_state="$(read_info_value PASSWORD_STATE)"
+  [ -n "$password_state" ] || password_state='temporary_must_change'
+  if [ "$password_state" != 'credentials_not_recorded' ]; then
+    validate_credentials "$phone" "$name" "$temporary_password"
+  fi
+
+  tmp="$(mktemp "$(dirname "$INFO_FILE")/.install-info.XXXXXX")"
+  {
+    printf 'APP_SERVER_ADDRESS=%s\n' "$app_server_address"
+    printf 'WEB_ACCESS_URL=%s\n' "$web_access_url"
+    printf 'SUPER_ADMIN_PHONE=%s\n' "$phone"
+    printf 'SUPER_ADMIN_NAME=%s\n' "$name"
+    printf 'SUPER_ADMIN_TEMP_PASSWORD=%s\n' "$temporary_password"
+    printf 'PASSWORD_STATE=%s\n' "$password_state"
+    printf 'UPDATED_AT=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } > "$tmp"
+  chown root:root "$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$INFO_FILE"
+}
+
 validate_credentials() {
   local phone="$1" name="$2" password="$3"
   [[ "$phone" =~ ^\+?[0-9-]{6,20}$ ]] || { echo "登录账号必须为 6–20 位数字，可包含开头的 + 或连字符。" >&2; return 1; }
@@ -170,6 +230,7 @@ main() {
   require_root
   case "${1:-}" in
     --record) record_from_stdin ;;
+    --record-addresses) record_addresses_from_stdin ;;
     --show) show_install_info ;;
     --help|-h)
       echo "用法：sudo db"

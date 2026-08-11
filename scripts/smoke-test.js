@@ -72,6 +72,56 @@ async function checkAdminEndpoints() {
   await checkChatEvents(token);
 }
 
+async function checkAppPairing() {
+  await check('app download page', '/download', [200]);
+  const appConfig = await check('app public config', '/api/v5/app-config', [200]);
+  if (appConfig.ok && /password|database_url|pairing_secret|token_secret/i.test(JSON.stringify(appConfig.json?.data || {}))) {
+    console.log('FAIL app public config -> sensitive field name detected');
+    process.exitCode = 1;
+  }
+
+  const pairing = await check('app pairing availability', '/api/v5/app-pairing', [200, 503]);
+  if (pairing.response.status === 503) {
+    console.log('SKIP app pairing exchange -> HTTPS hostname pairing is not configured');
+    return;
+  }
+  const pairingUri = pairing.json?.data?.pairing_uri;
+  let parsed;
+  try {
+    parsed = new URL(pairingUri);
+  } catch (_) {
+    console.log('FAIL app pairing URI -> invalid URI');
+    process.exitCode = 1;
+    return;
+  }
+  const payload = {
+    v: parsed.searchParams.get('v'),
+    server: parsed.searchParams.get('server'),
+    token: parsed.searchParams.get('token')
+  };
+  await check('app pairing exchange', '/api/v5/app-pairing/exchange', [200], {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const token = String(payload.token || '');
+  const tamperIndex = Math.floor(token.length / 2);
+  const tamperedToken = `${token.slice(0, tamperIndex)}${token[tamperIndex] === 'A' ? 'B' : 'A'}${token.slice(tamperIndex + 1)}`;
+  await check('app pairing rejects tampering', '/api/v5/app-pairing/exchange', [400], {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...payload, token: tamperedToken })
+  });
+
+  const qr = await request('/api/v5/app-pairing/qr.svg');
+  const qrOk = qr.response.status === 200
+    && /image\/svg\+xml/i.test(qr.response.headers.get('content-type') || '')
+    && /no-store/i.test(qr.response.headers.get('cache-control') || '')
+    && /<svg/i.test(qr.body);
+  console.log(`${qrOk ? 'PASS' : 'FAIL'} app pairing QR -> ${qr.response.status}`);
+  if (!qrOk) process.exitCode = 1;
+}
+
 async function checkChatEvents(token) {
   const ctrl = new AbortController();
   let timer = null;
@@ -107,6 +157,7 @@ async function main() {
   console.log(`Smoke testing ${baseUrl}`);
   await check('health', '/health', [200]);
   await check('ready', '/ready', [200, 503]);
+  await checkAppPairing();
   await check('device list', '/api/v5/devices', [200]);
   await check('notifications require auth', '/api/v5/notifications', [401]);
   await check('reservation precheck requires auth', '/api/v5/reservation-batches/precheck', [401], {

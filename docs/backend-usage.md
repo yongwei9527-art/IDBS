@@ -61,5 +61,5 @@ npm run v5:permission-audit
 npm run v5:click-audit
 ```
 
-Use `npm run e2e:isolated` with `E2E_DATABASE_URL` pointing to a database named, for example, `laboratory_management_system_e2e`. The runner rejects non-E2E database names and starts its own temporary server. Verify `/health`
+Use `npm run e2e:isolated` with `E2E_DATABASE_URL` pointing to a disposable database named, for example, `laboratory_management_system_e2e`. The runner rejects non-E2E database names, resets that isolated database to the current baseline, applies forward migrations, seeds deterministic demo data, and starts its own temporary server. It never falls back to `DATABASE_URL`. Verify `/health`
 and `/ready` separately because they intentionally have different semantics.

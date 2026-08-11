@@ -6,12 +6,12 @@ function parseBoolean(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || 'false').toLowerCase());
 }
 
-function resolveUploadDir(value, rootDir) {
+function resolveStorageDir(value, rootDir, fallbackName) {
   const configured = String(value || '').trim();
-  if (!configured) return path.join(rootDir, 'uploads');
+  if (!configured) return path.join(rootDir, fallbackName);
   // Local Windows preview falls back from a Linux deployment path.
-  if (process.platform === 'win32' && /^\/var\//i.test(configured.replace(/\\/g, '/'))) {
-    return path.join(rootDir, 'uploads');
+  if (process.platform === 'win32' && /^\/(?:opt|var)\//i.test(configured.replace(/\\/g, '/'))) {
+    return path.join(rootDir, fallbackName);
   }
   return path.resolve(rootDir, configured);
 }
@@ -60,10 +60,15 @@ function decodeFirebaseServiceAccount(env) {
 function loadConfig(env = process.env) {
   const rootDir = path.resolve(__dirname, '..', '..');
   const firebaseServiceAccount = decodeFirebaseServiceAccount(env);
+  const uploadDir = resolveStorageDir(env.UPLOAD_DIR, rootDir, 'uploads');
+  const exportDir = String(env.EXPORT_DIR || '').trim()
+    ? resolveStorageDir(env.EXPORT_DIR, rootDir, 'exports')
+    : path.join(uploadDir, 'exports');
   return {
     nodeEnv: env.NODE_ENV || 'development',
     rootDir,
     publicDir: path.join(rootDir, 'public'),
+    host: String(env.HOST || '127.0.0.1').trim(),
     port: Number(env.PORT || 3000),
     adminPassword: env.ADMIN_PASSWORD || '',
     tokenSecret: env.TOKEN_SECRET || 'change-me-please',
@@ -80,7 +85,9 @@ function loadConfig(env = process.env) {
     // Never log or commit either value.
     fcmServiceAccountJson: firebaseServiceAccount.value,
     fcmServiceAccountError: firebaseServiceAccount.error,
-    uploadDir: resolveUploadDir(env.UPLOAD_DIR, rootDir),
+    uploadDir,
+    exportDir,
+    exportRetentionDays: Number(env.EXPORT_RETENTION_DAYS || 30),
     databaseUrl: env.DATABASE_URL || '',
     pgssl: parseBoolean(env.PGSSL),
     pgsslRejectUnauthorized: String(env.PGSSL_REJECT_UNAUTHORIZED ?? 'true').toLowerCase() !== 'false',
@@ -103,7 +110,11 @@ function corsOriginList(config) {
 }
 
 function isPlaceholderSecret(value) {
-  return /^(change-me-please|your-long-random-secret|generated-by-installer)$/i.test(String(value || ''));
+  const secret = String(value || '');
+  return !secret
+    || secret.trim() !== secret
+    || /^(change-me-please|your-long-random-secret|generated-by-installer)$/i.test(secret)
+    || /^(.)\1+$/.test(secret);
 }
 
 function isWeakAdminPassword(value) {
@@ -120,6 +131,15 @@ function isValidHttpOrigin(value) {
       && !url.username && !url.password
       && (url.pathname === '/' || url.pathname === '')
       && !url.search && !url.hash;
+  } catch (_) {
+    return false;
+  }
+}
+
+function isValidHttpUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password;
   } catch (_) {
     return false;
   }
@@ -146,6 +166,16 @@ function buildRuntimeStatus(config) {
   else if (isWeakAdminPassword(config.adminPassword)) push('ADMIN_PASSWORD is weak or still a placeholder.', true);
   if (!config.tokenSecret || isPlaceholderSecret(config.tokenSecret)) push('TOKEN_SECRET is missing or still a placeholder.', true);
   else if (String(config.tokenSecret).length < 32) push('TOKEN_SECRET must be at least 32 characters.', true);
+  if (config.appPublicUrl && !isValidHttpOrigin(config.appPublicUrl)) {
+    push('APP_PUBLIC_URL must be an absolute HTTP(S) origin without paths or credentials.', true);
+  }
+  if (config.apkDownloadUrl && !isValidHttpUrl(config.apkDownloadUrl)) {
+    push('APK_DOWNLOAD_URL must be an absolute HTTP(S) URL without credentials.', true);
+  }
+  const appPairingTtlMinutes = Number(config.appPairingTtlMinutes ?? 10);
+  if (!Number.isInteger(appPairingTtlMinutes) || appPairingTtlMinutes < 1 || appPairingTtlMinutes > 60) {
+    push('APP_PAIRING_TTL_MINUTES must be an integer from 1 to 60.', true);
+  }
   if (isSecureAppPairingOrigin(config.appPublicUrl)
     && (!config.appPairingSecret || isPlaceholderSecret(config.appPairingSecret) || String(config.appPairingSecret).length < 32)) {
     push('APP_PAIRING_SECRET must be a non-placeholder secret of at least 32 characters when HTTPS app pairing is enabled.', true);
@@ -157,11 +187,21 @@ function buildRuntimeStatus(config) {
       push('CORS_ORIGIN must be one or more absolute HTTP(S) origins without paths or credentials.', true);
     }
   }
+  if (Object.prototype.hasOwnProperty.call(config, 'host')) {
+    if (!config.host) push('HOST must not be empty.', true);
+    else if (['0.0.0.0', '::', '[::]'].includes(config.host)) {
+      push('HOST exposes the Node service directly; use 127.0.0.1 behind Nginx.', true);
+    }
+  }
   if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65535) push('PORT must be an integer from 1 to 65535.', true);
   if (!Number.isFinite(config.authRateLimitMax) || config.authRateLimitMax < 1) push('AUTH_RATE_LIMIT_MAX must be positive.', true);
   if (!Number.isFinite(config.authRateLimitWindowMs) || config.authRateLimitWindowMs < 1000) push('AUTH_RATE_LIMIT_WINDOW_MS must be at least 1000.', true);
   if (!Number.isFinite(config.apiRateLimitMax) || config.apiRateLimitMax < 1) push('API_RATE_LIMIT_MAX must be positive.', true);
   if (!Number.isFinite(config.apiRateLimitWindowMs) || config.apiRateLimitWindowMs < 1000) push('API_RATE_LIMIT_WINDOW_MS must be at least 1000.', true);
+  const exportRetentionDays = Number(config.exportRetentionDays ?? 30);
+  if (!Number.isInteger(exportRetentionDays) || exportRetentionDays < 1 || exportRetentionDays > 3650) {
+    push('EXPORT_RETENTION_DAYS must be an integer from 1 to 3650.', true);
+  }
   if (config.trustProxy && !isProduction) warnings.push('TRUST_PROXY is enabled outside production; enable it only behind a trusted proxy.');
   if ((config.wechatAppId && !config.wechatAppSecret) || (!config.wechatAppId && config.wechatAppSecret)) warnings.push('WECHAT_APP_ID and WECHAT_APP_SECRET must be configured together.');
   if (config.fcmServiceAccountError) push(config.fcmServiceAccountError, true);
@@ -171,4 +211,4 @@ function buildRuntimeStatus(config) {
   return { ready: errors.length === 0 && warnings.length === 0, mode: config.databaseUrl ? 'postgres' : 'standalone', warnings, errors };
 }
 
-module.exports = { buildRuntimeStatus, corsOriginList, isPlaceholderSecret, isSecureAppPairingOrigin, isValidHttpOrigin, isWeakAdminPassword, loadConfig };
+module.exports = { buildRuntimeStatus, corsOriginList, isPlaceholderSecret, isSecureAppPairingOrigin, isValidHttpOrigin, isValidHttpUrl, isWeakAdminPassword, loadConfig };

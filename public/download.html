@@ -17,6 +17,7 @@
     .secondary { color: #174c9c; background: #eaf2ff; }
     .pairing { display: grid; grid-template-columns: minmax(150px, 256px) 1fr; gap: 24px; align-items: center; padding: 24px; border: 1px solid #d8e4f6; border-radius: 14px; background: #f8fbff; }
     .pairing img { width: 100%; max-width: 256px; aspect-ratio: 1; background: #fff; border: 10px solid #fff; border-radius: 10px; box-sizing: border-box; }
+    .pairing-link { margin-top: 4px; text-align: center; }
     h2 { color: #203b6a; font-size: 1.25rem; margin: 0 0 8px; }
     .notice { margin-top: 24px; padding: 14px 16px; border-left: 4px solid #e6a600; background: #fff9e8; color: #765b0b; border-radius: 5px; }
     code { word-break: break-all; }
@@ -27,17 +28,19 @@
 <body>
   <main>
     <h1>&#23454;&#39564;&#23460;&#31649;&#29702;&#31995;&#32479;</h1>
-    <p>&#36890;&#36807;&#32593;&#39029;&#20351;&#29992;&#31995;&#32479;&#65292;&#25110;&#19979;&#36733; Android App&#12290;App &#39318;&#27425;&#25171;&#24320;&#21518;&#25195;&#25551;&#19979;&#26041;&#20108;&#32500;&#30721;&#65292;&#21363;&#21487;&#23433;&#20840;&#20445;&#23384;&#24403;&#21069;&#26381;&#21153;&#22120;&#22320;&#22336;&#12290;</p>
+    <p>可直接使用网页版，或下载 Android App。在另一台屏幕打开本页后，可用手机系统相机扫描下方二维码并选择唤起 App，安全保存当前服务器地址。</p>
     <div class="actions">
       <a class="primary" href="/v5/">&#36827;&#20837;&#32593;&#39029;&#29256;</a>
-      <a class="secondary" href="/download/app.apk" download>Android App (APK)</a>
+      <a id="apk-download" class="secondary" href="/download/app.apk">Android App (APK)</a>
     </div>
     <section id="pairing" class="pairing" aria-labelledby="pairing-title" hidden>
       <img id="pairing-qr" alt="App &#26381;&#21153;&#22120;&#37197;&#23545;&#20108;&#32500;&#30721;" />
       <div>
         <h2 id="pairing-title">App &#26381;&#21153;&#22120;&#37197;&#23545;</h2>
-        <p>&#25171;&#24320; App &#30340;&#8220;&#25195;&#30721;&#37197;&#23545;&#8221;&#65292;&#25195;&#25551;&#27492;&#20108;&#32500;&#30721;&#12290;&#37197;&#23545;&#21482;&#20445;&#23384;&#26381;&#21153;&#22120;&#22320;&#22336;&#65292;&#19981;&#20250;&#30331;&#24405;&#25110;&#20256;&#36755;&#31649;&#29702;&#21592;&#23494;&#30721;&#12290;</p>
-        <p>&#20108;&#32500;&#30721;&#20026;&#30701;&#26399;&#26377;&#25928;&#65307;&#33509;&#25195;&#30721;&#22833;&#36133;&#25110;&#36807;&#26399;&#65292;&#21047;&#26032;&#26412;&#39029;&#33719;&#21462;&#26032;&#30721;&#12290;</p>
+        <p>请使用手机系统相机扫描二维码并选择打开 App。当前版本没有内置相机扫描器；如果系统相机无法识别，可改用下方配对链接。</p>
+        <a class="secondary pairing-link" href="/api/v5/app-pairing" target="_blank" rel="noopener">获取配对链接（复制 data.pairing_uri）</a>
+        <p>将新页面中的 <code>data.pairing_uri</code> 完整复制到 App 登录页的“粘贴 App 服务器配对链接”输入框。配对链接为短期有效，失败或过期时请刷新本页后重试。</p>
+        <p><strong>二维码和配对链接只配置服务器地址，不会自动登录，也不包含任何用户或管理员账号密码。</strong></p>
       </div>
     </section>
     <p id="pairing-unavailable" class="notice" role="status" aria-live="polite" hidden></p>

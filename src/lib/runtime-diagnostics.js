@@ -1,4 +1,5 @@
 const { buildRuntimeStatus } = require('../config/env');
+const { version: productVersion } = require('../../package.json');
 
 function roundMilliseconds(value) {
   return Math.max(0, Math.round(Number(value) || 0));
@@ -49,7 +50,7 @@ async function getReadinessStatus(config, db) {
 async function getRuntimeDiagnostics(config, db, options = {}) {
   const readiness = await getReadinessStatus(config, db);
   return {
-    product_version: '5.0.0',
+    product_version: productVersion,
     process: {
       uptime_seconds: Math.floor(process.uptime()),
       node_version: process.version,

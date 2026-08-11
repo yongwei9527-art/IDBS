@@ -75,7 +75,12 @@ async function apiLogin(page, endpoint, body) {
         };
       }
       const data = json?.data || json;
+      // The checked-in developer build may contain a phone/LAN fallback origin.
+      // Bind this local audit explicitly to the origin it is exercising, exactly
+      // as the production token store does after a successful login.
+      localStorage.setItem('laboratory-management-system.api_origin', window.location.origin);
       localStorage.setItem('laboratory-management-system.access_token', data.access_token);
+      localStorage.setItem('laboratory-management-system.access_token_origin', window.location.origin);
       if (data.refresh_token) localStorage.setItem('laboratory-management-system.refresh_token', data.refresh_token);
       return { ok: true, role: data.role, permissions: data.permissions || [] };
     }, { endpoint, body });

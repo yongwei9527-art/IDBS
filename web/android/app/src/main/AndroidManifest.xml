@@ -18,7 +18,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -52,6 +54,20 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="labapp" android:host="pair" />
+            </intent-filter>
+
+            <!--
+              Per-server HTTPS App Links are opt-in at build time. autoVerify must only be
+              enabled after the matching release-certificate assetlinks.json is deployed.
+            -->
+            <intent-filter android:autoVerify="${labAppLinkAutoVerify}">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="${labAppLinkHost}"
+                    android:path="/api/v5/app-pairing/link" />
             </intent-filter>
 
         </activity>

@@ -1,6 +1,30 @@
 const {
   express, z, validate, wrapV5, requireAuth, optionalAuth, requirePerm, requireRole, verifyJwt, AppError, unwrap, serviceAuth
 } = require('./helpers');
+const multer = require('multer');
+const { version: productVersion } = require('../../../package.json');
+
+const legacyImportUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1, fields: 6, parts: 7, fieldSize: 1024 },
+  fileFilter: (_req, file, callback) => {
+    const allowed = /\.(?:json|csv|xls|html?)$/i.test(String(file.originalname || ''));
+    callback(allowed ? null : new AppError('仅支持 JSON、CSV、HTML 或旧版 Excel（.xls）文档。', { status: 400, code: 5001 }), allowed);
+  }
+});
+
+function receiveLegacyImport(req, res, next) {
+  legacyImportUpload.single('file')(req, res, (error) => {
+    if (!error) return next();
+    if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
+      return next(new AppError('旧文档不能超过 10 MB。', { status: 413, code: 5001 }));
+    }
+    if (error instanceof multer.MulterError) {
+      return next(new AppError('旧文档上传字段或数量不符合要求。', { status: 400, code: 5001 }));
+    }
+    return next(error);
+  });
+}
 
 function createV5AdminRouter(service, { runtimeDiagnostics } = {}) {
   const router = express.Router();
@@ -54,6 +78,19 @@ function createV5AdminRouter(service, { runtimeDiagnostics } = {}) {
   }), wrapV5(async (req) => unwrap(await service.adminDeleteUser({
     user_id: req.validated.params.id
   }, serviceAuth(req)))));
+  router.get('/admin/password-reset-requests', requireRole('super_admin'), wrapV5(async (req, res) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Pragma', 'no-cache');
+    return unwrap(await service.adminListPasswordResetRequests(req.query || {}, serviceAuth(req)));
+  }));
+  router.patch('/admin/password-reset-requests/:id/review', requireRole('super_admin'), validate({
+    params: z.object({ id: z.string().min(1).max(60) }).strict(),
+    body: z.object({ approved: z.boolean(), review_note: z.string().max(500).optional().default('') }).strict()
+  }), wrapV5(async (req, res) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Pragma', 'no-cache');
+    return unwrap(await service.adminReviewPasswordResetRequest({ ...req.validated.body, request_id: req.validated.params.id }, serviceAuth(req)));
+  }));
   // devices list/detail/update (admin)
   router.get('/admin/devices', requirePerm('device.view', 'device.manage'), wrapV5(async (req) => unwrap(await service.adminListDevices(req.query || {}, serviceAuth(req)))));
   router.get('/admin/devices/:id', requirePerm('device.view', 'device.manage'), wrapV5(async (req) => unwrap(await service.adminGetDeviceDetail({ ...req.query, id: req.params.id }, serviceAuth(req)))));
@@ -89,20 +126,60 @@ function createV5AdminRouter(service, { runtimeDiagnostics } = {}) {
   // export jobs
   router.get('/admin/exports/:type', requirePerm('stats.export'), wrapV5(async (req) => unwrap(await service.adminExportData({ ...req.query, type: req.params.type }, serviceAuth(req)))));
   router.get('/admin/export-jobs/:id/download', requirePerm('stats.export'), validate({ params: z.object({ id: z.string() }) }), async (req, res, next) => {
+    let download = null;
     try {
-      const download = unwrap(await service.adminGetExportJobDownload({ id: req.validated.params.id }, serviceAuth(req)));
+      download = unwrap(await service.adminGetExportJobDownload({ id: req.validated.params.id }, serviceAuth(req)));
+      const fileHandle = download.file_handle;
+      let fileClosed = false;
+      const closeFile = () => {
+        if (fileClosed) return;
+        fileClosed = true;
+        void fileHandle.close().catch(() => {});
+      };
+      const stream = fileHandle.createReadStream({ autoClose: false });
       res.setHeader('Cache-Control', 'private, no-store');
       res.setHeader('X-Content-Type-Options', 'nosniff');
-      return res.download(download.absolutePath, download.download_name, (error) => { if (error) next(error); });
-    } catch (error) { return next(error); }
+      res.attachment(download.download_name);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      if (Number.isSafeInteger(download.content_length) && download.content_length >= 0) {
+        res.setHeader('Content-Length', String(download.content_length));
+      }
+      res.once('finish', closeFile);
+      res.once('close', () => { stream.destroy(); closeFile(); });
+      stream.once('error', (error) => {
+        closeFile();
+        if (res.headersSent) res.destroy(error);
+        else next(error);
+      });
+      return stream.pipe(res);
+    } catch (error) {
+      if (download?.file_handle) await download.file_handle.close().catch(() => {});
+      return next(error);
+    }
   });
   router.post('/admin/export-jobs', requirePerm('stats.export'), wrapV5(async (req) => unwrap(await service.adminCreateExportJob(req.body || {}, serviceAuth(req)))));
   router.get('/admin/export-jobs', requirePerm('stats.export'), wrapV5(async (req) => unwrap(await service.adminListExportJobs(req.query || {}, serviceAuth(req)))));
   router.post('/admin/export-jobs/run-next', requirePerm('stats.export'), wrapV5(async (req) => unwrap(await service.adminRunNextExportJob(req.body || {}, serviceAuth(req)))));
+  router.post('/admin/legacy-import/preview', requireRole('super_admin'), receiveLegacyImport, wrapV5(async (req, res) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    return unwrap(await service.adminPreviewLegacyImport({ ...req.body, file: req.file }, serviceAuth(req)));
+  }));
+  router.post('/admin/legacy-import/execute', requireRole('super_admin'), receiveLegacyImport, wrapV5(async (req, res) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    return unwrap(await service.adminExecuteLegacyImport({ ...req.body, file: req.file }, serviceAuth(req)));
+  }));
+  router.get('/admin/legacy-import/template', requireRole('super_admin'), async (_req, res, next) => {
+    try {
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="legacy-import-template.json"');
+      return res.send(`\uFEFF${JSON.stringify(service.legacyImportTemplate(), null, 2)}`);
+    } catch (error) { return next(error); }
+  });
   // system config
   router.get('/admin/system/runtime', requireRole('super_admin'), wrapV5(async () => {
     if (typeof runtimeDiagnostics !== 'function') {
-      return { product_version: '5.0.0', status: 'unavailable' };
+      return { product_version: productVersion, status: 'unavailable' };
     }
     return runtimeDiagnostics();
   }));

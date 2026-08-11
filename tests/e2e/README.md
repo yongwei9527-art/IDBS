@@ -40,7 +40,7 @@ Safety rules enforced by the runner:
 - The test server has temporary, test-only rate-limit values; production limits are not changed.
 - Test uploads are kept in `.laboratory-management-system-runtime/e2e-uploads`.
 
-Set `E2E_PREPARE=false` only when the isolated database has already been initialized and seeded. Set `E2E_BUILD=false` only when the built React assets are known to be current.
+By default the runner drops and recreates only the `public` schema of the explicitly named E2E database, applies the current baseline and forward migrations, then seeds deterministic demo data. It never falls back to `DATABASE_URL`. `reset-schema.js` still rejects non-local databases unless its separate production-reset guard is explicitly supplied. Set `E2E_PREPARE=false` only when the isolated database has already been initialized and seeded. Set `E2E_BUILD=false` only when the built React assets are known to be current.
 
 ## Existing-server mode
 

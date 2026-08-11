@@ -28,13 +28,18 @@ function createRefreshSessionService(context = {}) {
     const nextValue = normalizedSession(next);
     return withTransaction(async (client) => {
       const result = await client.query(`
-        select jti, token_hash, expires_at, revoked_at
+        select jti, subject, token_hash, expires_at, revoked_at
         from refresh_token_sessions
         where jti = $1
         for update
       `, [currentValue.jti]);
       const row = result.rows?.[0];
-      if (!row || row.revoked_at || new Date(row.expires_at).getTime() <= Date.now() || row.token_hash !== currentValue.tokenHash) return false;
+      if (!row
+        || row.revoked_at
+        || new Date(row.expires_at).getTime() <= Date.now()
+        || row.token_hash !== currentValue.tokenHash
+        || String(row.subject) !== currentValue.subject
+        || nextValue.subject !== currentValue.subject) return false;
       await client.query('update refresh_token_sessions set revoked_at = now(), replaced_by = $2 where jti = $1', [currentValue.jti, nextValue.jti]);
       await client.query(`
         insert into refresh_token_sessions (jti, subject, token_hash, expires_at, user_agent, ip_address, created_at)

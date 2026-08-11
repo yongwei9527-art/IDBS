@@ -1,11 +1,59 @@
 const express = require('express');
 const { createV5Router } = require('../src/routes/v5');
 const { issueJwt } = require('../src/lib/auth');
+const { AppError } = require('../src/lib/app-error');
 
 let lastAdminFaultParams;
+const selftestPrincipals = new Map();
+const loginPermissions = ['r.v', 'stats.view', 'stats.export', 'user.manage', 'reservation.view', 'reservation.approve', 'device.view', 'device.manage'];
+
+function registerSelftestPrincipal({ sub, role = 'user', permissions = [], name = '' }) {
+  const principal = {
+    sub,
+    user_id: sub,
+    id: sub,
+    scope: role === 'user' ? 'user' : 'admin',
+    role,
+    admin_role_key: role === 'admin' ? 'admin' : (role === 'super_admin' ? 'super_admin' : undefined),
+    perms: [...permissions],
+    permissions: [...permissions],
+    password_reset_required: false,
+    authz_version: 1,
+    name
+  };
+  selftestPrincipals.set(sub, principal);
+  return principal;
+}
+
+function selftestAccessToken(input) {
+  const principal = registerSelftestPrincipal(input);
+  return issueJwt({
+    sub: principal.sub,
+    scope: principal.scope,
+    role: principal.role,
+    perms: principal.permissions,
+    authz_version: principal.authz_version,
+    name: principal.name
+  }, { type: 'access' });
+}
+
+registerSelftestPrincipal({ sub: 'u1', role: 'user', permissions: loginPermissions, name: 'a' });
+
 const s = {
-  loginUser: async () => ({ ok: true, data: { user: { id: 'u1', name: 'a' }, role: 'user', permissions: ['r.v', 'stats.view', 'stats.export', 'user.manage', 'reservation.view', 'reservation.approve', 'device.view', 'device.manage'] } }),
-  getProfile: async () => ({ ok: true, data: { id: 'u1', name: 'a', role: 'user', permissions: ['r.v', 'stats.view', 'stats.export', 'user.manage', 'reservation.view', 'reservation.approve', 'device.view', 'device.manage'] } }),
+  loginUser: async () => ({ ok: true, data: { user: { id: 'u1', name: 'a', authz_version: 1 }, role: 'user', permissions: loginPermissions } }),
+  getProfile: async () => ({ ok: true, data: { id: 'u1', name: 'a', role: 'user', permissions: loginPermissions, authz_version: 1 } }),
+  resolveCurrentAuthPrincipal: async (auth = {}) => {
+    const principal = selftestPrincipals.get(String(auth.sub || auth.user_id || auth.id || ''));
+    if (!principal) throw new AppError('Unauthorized', { status: 401, code: 1001 });
+    return principal;
+  },
+  validateAccessTokenAuth: async (auth = {}) => {
+    const principal = selftestPrincipals.get(String(auth.sub || auth.user_id || auth.id || ''));
+    if (!principal || Number(auth.authz_version) !== principal.authz_version) {
+      throw new AppError('Unauthorized', { status: 401, code: 1001 });
+    }
+    return principal;
+  },
   isPasswordResetRequired: async () => false,
   getSystemNotice: async () => ({ ok: true, data: { notice: { enabled: true, title: '使用注意事项', content: '请按预约时间使用设备。', version: 'test' } } }),
   getStaffContacts: async () => ({ ok: true, data: { contacts: [{ name: '管理员', phone: '13800000000', enabled: true }] } }),
@@ -165,17 +213,17 @@ const srv = require('http').createServer(app).listen(0, async () => {
     throw new Error('refresh token rotation did not return a renewed HttpOnly cookie');
   }
   const tok = j3.access_token;
-  const noApprovalTok = issueJwt({ sub: 'admin-no-approval', scope: 'admin', role: 'admin', perms: ['reservation.view', 'stats.view', 'device.view'], name: 'no approval admin' }, { type: 'access' });
-  const noExportTok = issueJwt({ sub: 'admin-no-export', scope: 'admin', role: 'admin', perms: ['stats.view', 'device.view'], name: 'no export admin' }, { type: 'access' });
-  const faultExportTok = issueJwt({ sub: 'admin-fault-export', scope: 'admin', role: 'admin', perms: ['stats.export', 'fault.manage'], name: 'fault export admin' }, { type: 'access' });
-  const auditExportTok = issueJwt({ sub: 'admin-audit-export', scope: 'admin', role: 'admin', perms: ['audit.view', 'stats.export'], name: 'audit export admin' }, { type: 'access' });
-  const statsOnlyTok = issueJwt({ sub: 'admin-stats-only', scope: 'admin', role: 'admin', perms: ['stats.view'], name: 'stats only admin' }, { type: 'access' });
-  const requestReadonlyTok = issueJwt({ sub: 'admin-request-readonly', scope: 'admin', role: 'admin', perms: ['reservation.view', 'stats.view'], name: 'request readonly admin' }, { type: 'access' });
-  const auditTok = issueJwt({ sub: 'admin-audit', scope: 'admin', role: 'admin', perms: ['audit.view'], name: 'audit admin' }, { type: 'access' });
-  const userApproveTok = issueJwt({ sub: 'admin-user-approve', scope: 'admin', role: 'admin', perms: ['user.approve'], name: 'user approval admin' }, { type: 'access' });
-  const changePlanTok = issueJwt({ sub: 'admin-change-plan', scope: 'admin', role: 'admin', perms: ['reservation.view', 'reservation.change_plan'], name: 'change plan admin' }, { type: 'access' });
-  const reservationApproveTok = issueJwt({ sub: 'admin-reservation-approve', scope: 'admin', role: 'admin', perms: ['reservation.approve'], name: 'reservation approval admin' }, { type: 'access' });
-  const returnConfirmTok = issueJwt({ sub: 'admin-return-confirm', scope: 'admin', role: 'admin', perms: ['return.confirm'], name: 'return confirmation admin' }, { type: 'access' });
+  const noApprovalTok = selftestAccessToken({ sub: 'admin-no-approval', role: 'admin', permissions: ['reservation.view', 'stats.view', 'device.view'], name: 'no approval admin' });
+  const noExportTok = selftestAccessToken({ sub: 'admin-no-export', role: 'admin', permissions: ['stats.view', 'device.view'], name: 'no export admin' });
+  const faultExportTok = selftestAccessToken({ sub: 'admin-fault-export', role: 'admin', permissions: ['stats.export', 'fault.manage'], name: 'fault export admin' });
+  const auditExportTok = selftestAccessToken({ sub: 'admin-audit-export', role: 'admin', permissions: ['audit.view', 'stats.export'], name: 'audit export admin' });
+  const statsOnlyTok = selftestAccessToken({ sub: 'admin-stats-only', role: 'admin', permissions: ['stats.view'], name: 'stats only admin' });
+  const requestReadonlyTok = selftestAccessToken({ sub: 'admin-request-readonly', role: 'admin', permissions: ['reservation.view', 'stats.view'], name: 'request readonly admin' });
+  const auditTok = selftestAccessToken({ sub: 'admin-audit', role: 'admin', permissions: ['audit.view'], name: 'audit admin' });
+  const userApproveTok = selftestAccessToken({ sub: 'admin-user-approve', role: 'admin', permissions: ['user.approve'], name: 'user approval admin' });
+  const changePlanTok = selftestAccessToken({ sub: 'admin-change-plan', role: 'admin', permissions: ['reservation.view', 'reservation.change_plan'], name: 'change plan admin' });
+  const reservationApproveTok = selftestAccessToken({ sub: 'admin-reservation-approve', role: 'admin', permissions: ['reservation.approve'], name: 'reservation approval admin' });
+  const returnConfirmTok = selftestAccessToken({ sub: 'admin-return-confirm', role: 'admin', permissions: ['return.confirm'], name: 'return confirmation admin' });
   const r4 = await fetch(u + '/api/v5/me', { headers: { Authorization: 'Bearer ' + tok } });
   console.log('/me', r4.status, await r4.text());
   const r5 = await fetch(u + '/api/v5/me', { headers: { Authorization: 'Bearer bad', Accept: 'application/problem+json' } });

@@ -148,7 +148,7 @@ function createAuthService(context = {}) {
   async function loginUser(payload, context = {}) {
     const phone = assertPhone(payload.phone);
     const password = assertPassword(payload.password);
-    const user = await queryOne('select * from users where phone = $1 limit 1', [phone]);
+    let user = await queryOne('select * from users where phone = $1 and deleted_at is null limit 1', [phone]);
     if (!user || !(await verifyPassword(password, user.password_salt, user.password_hash))) {
       if (typeof recordUserEvent === 'function') {
         await recordUserEvent({
@@ -200,6 +200,12 @@ function createAuthService(context = {}) {
     }
     if (needsPasswordRehash(user.password_hash)) {
       await upgradeStoredPassword('users', 'id', user.id, password, user.password_salt);
+      // Password rehashing is a security-sensitive write and bumps
+      // authz_version. Reload so the just-issued login tokens are not stale.
+      user = await queryOne('select * from users where id = $1 and deleted_at is null limit 1', [user.id]);
+      if (!user || user.status !== 'active' || user.is_banned) {
+        return fail(userAccessMessage(user), 403, 1003);
+      }
     }
     return finalizeUserLogin(user, { ...context, remark: 'password_login' });
   }

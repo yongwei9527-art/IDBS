@@ -28,6 +28,7 @@ function ensureDirectory(dir) {
 }
 
 ensureDirectory(config.uploadDir);
+ensureDirectory(config.exportDir);
 
 const db = createDb({
   connectionString: config.databaseUrl,
@@ -54,6 +55,8 @@ const service = createRentalService({
   adminPassword: config.adminPassword,
   tokenSecret: config.tokenSecret,
   uploadDir: config.uploadDir,
+  exportDir: config.exportDir,
+  exportRetentionDays: config.exportRetentionDays,
   wechatToken: config.wechatToken,
   wechatAppId: config.wechatAppId,
   wechatAppSecret: config.wechatAppSecret,
@@ -100,8 +103,8 @@ db.createRealtimeBus((message) => {
   console.warn('Distributed realtime bus unavailable:', error.message || error);
 });
 
-const server = httpServer.listen(config.port, () => {
-  console.log(`VPS server running at http://0.0.0.0:${config.port}`);
+const server = httpServer.listen(config.port, config.host, () => {
+  console.log(`VPS server running at http://${config.host}:${config.port}`);
   console.log(`Mode: ${config.databaseUrl ? 'PostgreSQL pool' : 'Standalone HTTP API'}`);
   if (startupRuntime.warnings.length) {
     console.warn(`Runtime warnings: ${startupRuntime.warnings.join(' | ')}`);
@@ -173,5 +176,4 @@ process.on('unhandledRejection', (error) => {
 process.on('uncaughtException', (error) => {
   console.error('Uncaught exception:', error);
 });
-
 

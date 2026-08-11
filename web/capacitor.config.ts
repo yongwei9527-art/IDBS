@@ -3,7 +3,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 const config: CapacitorConfig = {
   appId: 'com.laboratory.managementsystem',
   appName: 'Laboratory Management System',
-  webDir: '../public/v5',
+  webDir: 'dist-android',
   server: {
     androidScheme: 'https',
     cleartext: true

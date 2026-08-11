@@ -22,8 +22,9 @@ function response(status, body = {}) {
   });
 }
 
-function loadApi(fetchImpl) {
-  const values = new Map();
+function loadApi(fetchImpl, options = {}) {
+  const values = options.values || new Map();
+  const dispatchedEvents = [];
   const localStorage = {
     getItem: (key) => values.get(key) ?? null,
     setItem: (key, value) => values.set(key, String(value)),
@@ -37,12 +38,22 @@ function loadApi(fetchImpl) {
     Response,
     URL,
     localStorage,
-    window: { dispatchEvent() {}, location: { origin: 'http://127.0.0.1:5173' } },
+    window: {
+      dispatchEvent(event) {
+        dispatchedEvents.push(event);
+        return true;
+      },
+      location: { origin: options.locationOrigin || 'http://127.0.0.1:5173' }
+    },
     Event,
     CustomEvent: globalThis.CustomEvent || class CustomEvent extends Event {}
   };
   context.exports = context.module.exports;
   vm.runInNewContext(bundledApi, context, { filename: apiEntry });
+  Object.defineProperties(context.module.exports, {
+    __storage: { value: values },
+    __events: { value: dispatchedEvents }
+  });
   return context.module.exports;
 }
 
@@ -93,6 +104,62 @@ test('AuthProvider attempts cookie refresh when local access storage is empty', 
   const source = fs.readFileSync(path.resolve(__dirname, '../../web/src/features/auth/use-auth.tsx'), 'utf8');
   assert.match(source, /if \(!token\) token = await authApi\.refreshToken\(\)/);
 });
+test('switching API servers clears origin-bound tokens before the next request', async () => {
+  const calls = [];
+  const api = loadApi(async (url, options) => {
+    calls.push({ url: String(url), options });
+    return response(200, { data: { ok: true } });
+  }, { locationOrigin: 'https://app-shell.example' });
+
+  api.saveApiOrigin('https://server-a.example');
+  api.tokenStore.set('server-a-access-token');
+  assert.equal(api.tokenStore.get(), 'server-a-access-token');
+
+  api.saveApiOrigin('https://server-b.example');
+  assert.equal(api.tokenStore.get(), null);
+  await api.request('/me');
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'https://server-b.example/api/v5/me');
+  assert.equal(calls[0].options.headers.Authorization, undefined);
+  assert.equal(api.__storage.has('laboratory-management-system.refresh_token'), false);
+});
+
+test('a refresh response from the previous API server cannot restore its token after a switch', async () => {
+  let releaseRefresh;
+  let markRefreshStarted;
+  const refreshStarted = new Promise((resolve) => { markRefreshStarted = resolve; });
+  let calls = 0;
+  const api = loadApi(async (url) => {
+    calls += 1;
+    if (calls === 1) return response(401, { code: 1001 });
+    assert.equal(String(url), 'https://server-a.example/api/v5/auth/refresh');
+    markRefreshStarted();
+    return new Promise((resolve) => { releaseRefresh = resolve; });
+  }, { locationOrigin: 'https://app-shell.example' });
+
+  api.saveApiOrigin('https://server-a.example');
+  api.tokenStore.set('expired-server-a-token');
+  const pending = api.request('/private');
+  await refreshStarted;
+
+  api.saveApiOrigin('https://server-b.example');
+  releaseRefresh(response(200, { data: { access_token: 'late-server-a-token' } }));
+
+  await assert.rejects(pending);
+  assert.equal(api.getApiOrigin(), 'https://server-b.example');
+  assert.equal(api.tokenStore.get(), null);
+  assert.equal(api.__storage.has('laboratory-management-system.access_token'), false);
+});
+
+test('server switches clear AuthProvider state and React Query caches', () => {
+  const authSource = fs.readFileSync(path.resolve(__dirname, '../../web/src/features/auth/use-auth.tsx'), 'utf8');
+  const mainSource = fs.readFileSync(path.resolve(__dirname, '../../web/src/main.tsx'), 'utf8');
+  assert.match(authSource, /api-origin-changed[\s\S]*?setMe\(null\)[\s\S]*?setIsReady\(true\)/);
+  assert.doesNotMatch(authSource, /tokenStore\.get\(\) \|\| token/);
+  assert.match(mainSource, /api-origin-changed[\s\S]*?queryClient\.cancelQueries\(\)[\s\S]*?queryClient\.clear\(\)/);
+});
+
 test('USB Vite development always uses the same-origin API proxy', () => {
   const api = loadApi(async () => response(200, { data: {} }));
   api.saveApiOrigin('http://127.0.0.1:3000');
@@ -140,12 +207,37 @@ test('debug APK overlay preserves native HTTP and safe-area settings', () => {
   assert.equal(overlay.plugins.SystemBars.insetsHandling, 'disable');
 });
 
-test('Android build uses root-absolute assets so a hard-navigated nested route cannot resolve /admin/assets', () => {
+test('Android build uses root-absolute assets and a dedicated output directory', () => {
   const packageJson = JSON.parse(
     fs.readFileSync(path.resolve(__dirname, '../../web/package.json'), 'utf8')
   );
-  assert.match(packageJson.scripts['build:android'], /vite build --base=\//);
+  assert.match(packageJson.scripts.build, /vite build --mode web/);
+  assert.match(packageJson.scripts['build:android'], /vite build --mode android --base=\//);
+  assert.match(packageJson.scripts['build:android'], /--outDir=dist-android/);
   assert.doesNotMatch(packageJson.scripts['build:android'], /--base=\.\//);
+
+  const capacitorConfig = fs.readFileSync(
+    path.resolve(__dirname, '../../web/capacitor.config.ts'),
+    'utf8'
+  );
+  assert.match(capacitorConfig, /webDir:\s*'dist-android'/);
+  assert.doesNotMatch(capacitorConfig, /webDir:\s*'\.\.\/public\/v5'/);
+
+  const viteConfig = fs.readFileSync(
+    path.resolve(__dirname, '../../web/vite.config.ts'),
+    'utf8'
+  );
+  assert.match(viteConfig, /mode === 'web'/);
+  assert.match(viteConfig, /import\.meta\.env\.VITE_API_ORIGIN/);
+  assert.match(viteConfig, /JSON\.stringify\(''\)/);
+
+  const debugOverlay = JSON.parse(
+    fs.readFileSync(
+      path.resolve(__dirname, '../../web/android/app/src/debug/assets/capacitor.config.json'),
+      'utf8'
+    )
+  );
+  assert.equal(debugOverlay.webDir, 'dist-android');
 });
 test('registration approval code is masked by default and only revealed temporarily', () => {
   const source = fs.readFileSync(

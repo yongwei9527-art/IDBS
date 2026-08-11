@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Root-owned VPS command for adding or rotating the Firebase Admin credential.
 set -euo pipefail
+umask 077
 
-APP_NAME="${APP_NAME:-laboratory_management_system}"
+SERVICE_NAME="${SERVICE_NAME:-laboratory-management-system}"
+LEGACY_SERVICE_NAME="${LEGACY_SERVICE_NAME:-laboratory_management_system}"
 APP_BASE="${APP_BASE:-/var/www/laboratory-management-system}"
 ENV_FILE="${ENV_FILE:-$APP_BASE/shared/.env}"
 TRUSTED_COMMAND="${TRUSTED_COMMAND:-/usr/local/sbin/laboratory-management-system-configure-firebase}"
@@ -18,6 +20,21 @@ require_debian() {
   # shellcheck disable=SC1091
   . /etc/os-release
   case "${ID:-}" in ubuntu|debian) ;; *) die "Unsupported operating system: ${ID:-unknown}." ;; esac
+}
+
+validate_service_names() {
+  [[ "$SERVICE_NAME" =~ ^[A-Za-z0-9_.@-]+$ ]] || die 'Canonical service name is invalid.'
+  [[ "$LEGACY_SERVICE_NAME" =~ ^[A-Za-z0-9_.@-]+$ ]] || die 'Legacy service name is invalid.'
+}
+
+restart_application_service() {
+  local service
+  for service in "$SERVICE_NAME" "$LEGACY_SERVICE_NAME"; do
+    if systemctl cat "${service}.service" >/dev/null 2>&1; then
+      systemctl restart "$service" && return 0
+    fi
+  done
+  return 1
 }
 
 require_trusted_install() {
@@ -41,17 +58,47 @@ ask_value() {
 }
 
 encode_firebase_service_account() {
-  local source_file="$1"
-  [ -f "$source_file" ] || die "Firebase service-account file not found: $source_file"
-  node - "$source_file" <<'NODE'
+  local source_file="${1:-}" input_mode
+  if [ -n "$source_file" ]; then
+    [ -f "$source_file" ] || die "Firebase service-account file not found: $source_file"
+    input_mode=file
+  elif [ -n "${FCM_SERVICE_ACCOUNT_JSON_BASE64:-}" ]; then
+    input_mode=base64
+  elif [ -n "${FCM_SERVICE_ACCOUNT_JSON:-}" ]; then
+    input_mode=json
+  else
+    die 'No Firebase service-account credential was supplied.'
+  fi
+  FIREBASE_INPUT_MODE="$input_mode" FIREBASE_INPUT_FILE="$source_file" node <<'NODE'
 const fs = require('node:fs');
 const crypto = require('node:crypto');
-const source = process.argv[2];
+const mode = process.env.FIREBASE_INPUT_MODE;
+let raw;
+if (mode === 'file') {
+  raw = fs.readFileSync(process.env.FIREBASE_INPUT_FILE, 'utf8');
+} else if (mode === 'base64') {
+  const encoded = String(process.env.FCM_SERVICE_ACCOUNT_JSON_BASE64 || '').trim();
+  if (!encoded || encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+    process.stderr.write('Firebase service-account Base64 is malformed.\n');
+    process.exit(1);
+  }
+  const bytes = Buffer.from(encoded, 'base64');
+  if (bytes.toString('base64') !== encoded) {
+    process.stderr.write('Firebase service-account Base64 is not canonical.\n');
+    process.exit(1);
+  }
+  raw = bytes.toString('utf8');
+} else if (mode === 'json') {
+  raw = String(process.env.FCM_SERVICE_ACCOUNT_JSON || '');
+} else {
+  process.stderr.write('Firebase service-account input mode is invalid.\n');
+  process.exit(1);
+}
 let account;
 try {
-  account = JSON.parse(fs.readFileSync(source, 'utf8'));
+  account = JSON.parse(raw);
 } catch (_) {
-  process.stderr.write('Firebase service-account file is not valid JSON.\n');
+  process.stderr.write('Firebase service-account credential is not valid JSON.\n');
   process.exit(1);
 }
 if (account?.type !== 'service_account'
@@ -102,8 +149,8 @@ read_env_value() {
 }
 
 wait_for_ready() {
-  local port="$1" attempt
-  for attempt in $(seq 1 30); do
+  local port="$1" _attempt
+  for _attempt in $(seq 1 30); do
     if curl -fsS --max-time 3 "http://127.0.0.1:$port/ready" >/dev/null; then return 0; fi
     sleep 1
   done
@@ -113,12 +160,25 @@ wait_for_ready() {
 main() {
   require_root
   require_debian
+  validate_service_names
   require_trusted_install
   [ -f "$ENV_FILE" ] || die "No installed environment found at $ENV_FILE. Run scripts/install.sh first."
 
-  local source_file="${1:-}"
-  if [ -z "$source_file" ]; then source_file="$(ask_value 'Absolute path to the Firebase service-account JSON file')"; fi
-  [[ "$source_file" == /* ]] || die 'Firebase service-account path must be an absolute Linux path.'
+  [ "$#" -le 1 ] || die 'Usage: configure-firebase.sh [absolute-service-account-json-path]'
+  local source_file="${1:-}" supplied_secret_count=0
+  [ -n "${FCM_SERVICE_ACCOUNT_JSON_BASE64:-}" ] && supplied_secret_count=$((supplied_secret_count + 1))
+  [ -n "${FCM_SERVICE_ACCOUNT_JSON:-}" ] && supplied_secret_count=$((supplied_secret_count + 1))
+  [ "$supplied_secret_count" -le 1 ] \
+    || die 'Configure only one of FCM_SERVICE_ACCOUNT_JSON_BASE64 or FCM_SERVICE_ACCOUNT_JSON.'
+  if [ -n "$source_file" ] && [ "$supplied_secret_count" -ne 0 ]; then
+    die 'Provide either a service-account file path or an environment secret, not both.'
+  fi
+  if [ -z "$source_file" ] && [ "$supplied_secret_count" -eq 0 ]; then
+    source_file="$(ask_value 'Absolute path to the Firebase service-account JSON file')"
+  fi
+  if [ -n "$source_file" ]; then
+    [[ "$source_file" == /* ]] || die 'Firebase service-account path must be an absolute Linux path.'
+  fi
 
   local encoded backup rollback_needed=0 port
   encoded="$(encode_firebase_service_account "$source_file")"
@@ -131,7 +191,7 @@ main() {
     trap - EXIT
     if [ "$rollback_needed" -eq 1 ]; then
       install -o root -g root -m 600 "$backup" "$ENV_FILE" || true
-      systemctl restart "$APP_NAME" || true
+      restart_application_service || true
     fi
     rm -f "$backup"
     exit "$status"
@@ -141,7 +201,9 @@ main() {
 
   set_env_value FCM_SERVICE_ACCOUNT_JSON_BASE64 "$encoded" || die 'Could not update the Firebase deployment secret.'
   set_env_value FCM_SERVICE_ACCOUNT_JSON '' || die 'Could not clear the legacy Firebase deployment secret.'
-  systemctl restart "$APP_NAME" || die 'Service restart failed; the previous Firebase configuration was restored.'
+  unset encoded FCM_SERVICE_ACCOUNT_JSON_BASE64 FCM_SERVICE_ACCOUNT_JSON
+  restart_application_service \
+    || die 'Service restart failed; the previous Firebase configuration was restored.'
 
   port="$(read_env_value PORT || true)"
   port="${port:-3000}"

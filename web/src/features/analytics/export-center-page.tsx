@@ -1,8 +1,25 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Download, FileSpreadsheet, FileText, Play } from 'lucide-react';
+import { AlertTriangle, Download, FileJson, FileSpreadsheet, FileText, KeyRound, Play, Upload } from 'lucide-react';
 import { toast } from 'sonner';
-import { downloadExportJob, fetchAdminExportRows, useAdminExportJobs, useCreateExportJob, useRunNextExportJob, type ExportJob } from '@/features/platform/operations-api';
+import {
+  downloadExportJob,
+  downloadLegacyImportTemplate,
+  executeLegacyImport,
+  fetchAdminExportRows,
+  previewLegacyImport,
+  useAdminExportJobs,
+  useCreateExportJob,
+  useRunNextExportJob,
+  type ExportJob,
+  type LegacyImportConflictPolicy,
+  type LegacyImportCredential,
+  type LegacyImportDataset,
+  type LegacyImportIssue,
+  type LegacyImportOptions,
+  type LegacyImportResult,
+  type LegacyImportSectionSummary
+} from '@/features/platform/operations-api';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -341,7 +358,8 @@ function normalizeExportRows(type: string, rows: Array<Record<string, unknown>>)
 }
 
 function csvCell(value: unknown) {
-  const text = String(value ?? '');
+  let text = String(value ?? '');
+  if (/^[\t\r ]*[=+\-@]/.test(text)) text = `'${text}`;
   return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
@@ -440,6 +458,333 @@ function ExportJobRow({ job }: { job: ExportJob }) {
         <p className="rounded-lg border border-destructive/20 bg-destructive/5 p-2 text-xs text-destructive lg:col-span-5">{toAdminError(job.error_message)}</p>
       )}
     </div>
+  );
+}
+
+const LEGACY_DATASET_LABELS: Record<LegacyImportDataset, string> = {
+  auto: '自动识别',
+  users: '用户账号与个人信息',
+  devices: '设备资料',
+  reservations: '预约记录',
+  usage: '使用与归还记录',
+  faults: '故障与异常记录',
+  user_activity: '用户活动记录'
+};
+
+const LEGACY_SECTION_LABELS: Record<string, string> = {
+  users: '用户',
+  devices: '设备',
+  reservations: '预约',
+  usage: '使用记录',
+  usage_records: '使用记录',
+  faults: '故障与异常',
+  user_activity: '用户活动'
+};
+
+const LEGACY_SUMMARY_LABELS: Record<string, string> = {
+  total: '总数',
+  create: '新增',
+  imported: '已导入',
+  update: '更新',
+  skip: '跳过',
+  invalid: '无效'
+};
+
+function legacySummaryEntries(summary?: LegacyImportResult['summary']) {
+  if (!summary) return [];
+  return Object.entries(summary).filter((entry): entry is [string, LegacyImportSectionSummary] => {
+    const value = entry[1];
+    return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+  });
+}
+
+function legacyIssueText(issue: LegacyImportIssue) {
+  const location = [
+    issue.section ? LEGACY_SECTION_LABELS[issue.section] || issue.section : '',
+    issue.row !== undefined && issue.row !== null && issue.row !== '' ? `第 ${issue.row} 行` : ''
+  ].filter(Boolean).join(' · ');
+  const message = issue.message || issue.code || '数据校验未通过';
+  return location ? `${location}：${message}` : message;
+}
+
+function credentialAccount(credential: LegacyImportCredential) {
+  return String(credential.phone || credential.account || '—');
+}
+
+function credentialPassword(credential: LegacyImportCredential) {
+  return String(credential.temporary_password || credential.password || '—');
+}
+
+function downloadTemporaryCredentials(credentials: LegacyImportCredential[]) {
+  const rows = credentials.map((credential) => ({
+    姓名: credential.name || '',
+    登录账号: credentialAccount(credential),
+    临时密码: credentialPassword(credential),
+    有效期至: credential.temporary_password_expires_at || '',
+    登录要求: '首次登录后强制修改密码'
+  }));
+  const headers = ['姓名', '登录账号', '临时密码', '有效期至', '登录要求'];
+  const csv = [headers.map(csvCell).join(','), ...rows.map((row) => headers.map((header) => csvCell(row[header as keyof typeof row])).join(','))].join('\n');
+  downloadBlob(`旧文档导入_临时密码_${new Date().toISOString().slice(0, 10)}.csv`, new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8;' }));
+}
+
+function LegacyImportPanel() {
+  const [file, setFile] = useState<File | null>(null);
+  const [dataset, setDataset] = useState<LegacyImportDataset>('auto');
+  const [conflictPolicy, setConflictPolicy] = useState<LegacyImportConflictPolicy>('skip');
+  const [allowPartial, setAllowPartial] = useState(false);
+  const [createMissingDevices, setCreateMissingDevices] = useState(false);
+  const [confirmation, setConfirmation] = useState('');
+  const [templateDownloading, setTemplateDownloading] = useState(false);
+  const preview = useMutation({ mutationFn: previewLegacyImport });
+  const execute = useMutation({ mutationFn: executeLegacyImport });
+
+  const resetResults = () => {
+    preview.reset();
+    execute.reset();
+    setConfirmation('');
+  };
+
+  const options = (selectedFile: File): LegacyImportOptions => ({
+    file: selectedFile,
+    dataset,
+    conflict_policy: conflictPolicy,
+    allow_partial: allowPartial,
+    create_missing_devices: createMissingDevices
+  });
+
+  const previewIssues = preview.data?.issues ?? [];
+  const previewSummaries = legacySummaryEntries(preview.data?.summary);
+  const credentials = execute.data?.one_time_credentials ?? execute.data?.temporary_credentials ?? [];
+  const canExecute = Boolean(file && preview.data && confirmation.trim() === 'IMPORT' && !execute.isPending);
+
+  const handlePreview = () => {
+    if (!file) {
+      toast.error('请先选择要导入的旧文档。');
+      return;
+    }
+    execute.reset();
+    setConfirmation('');
+    preview.mutate(options(file), {
+      onSuccess: (result) => toast.success(`预检完成，共发现 ${result.issues?.length ?? 0} 个问题。`),
+      onError: (error) => toast.error(`预检失败：${toAdminError(error)}`)
+    });
+  };
+
+  const handleExecute = () => {
+    if (!file || !preview.data || confirmation.trim() !== 'IMPORT') return;
+    execute.mutate({ ...options(file), confirmation: 'IMPORT' }, {
+      onSuccess: (result) => {
+        const count = result.one_time_credentials?.length ?? result.temporary_credentials?.length ?? 0;
+        toast.success(count ? `导入完成，已生成 ${count} 个临时密码。` : (result.message || '旧文档导入完成。'));
+      },
+      onError: (error) => toast.error(`导入失败：${toAdminError(error)}`)
+    });
+  };
+
+  const handleTemplateDownload = async () => {
+    setTemplateDownloading(true);
+    try {
+      await downloadLegacyImportTemplate();
+      toast.success('导入模板已开始下载。');
+    } catch (error) {
+      toast.error(`模板下载失败：${toAdminError(error)}`);
+    } finally {
+      setTemplateDownloading(false);
+    }
+  };
+
+  return (
+    <Card className="ops-card border-warning/40">
+      <CardContent className="space-y-4 p-4">
+        <OpsDataToolbar
+          title="旧文档导入"
+          meta={<span className="text-warning">仅最高权限管理员可操作</span>}
+          actions={(
+            <Button type="button" variant="outline" size="sm" disabled={templateDownloading} onClick={handleTemplateDownload}>
+              <FileJson className="h-4 w-4" /> 下载 JSON 模板
+            </Button>
+          )}
+        />
+
+        <div className="rounded-md border border-warning/30 bg-warning/5 p-3 text-sm text-muted-foreground">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+            <p>用于系统升级后迁移用户账号、个人信息、设备、预约及使用记录。请先预检再导入；文档中的明文密码只用于迁移，服务端应立即加密保存。</p>
+          </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <label className="text-sm md:col-span-2">
+            <span className="text-muted-foreground">旧文档</span>
+            <Input
+              type="file"
+              accept=".json,.csv,.xls,.html,.htm,application/json,text/csv,application/vnd.ms-excel,text/html"
+              onChange={(event) => {
+                setFile(event.target.files?.[0] ?? null);
+                resetResults();
+              }}
+            />
+            <span className="mt-1 block text-xs text-muted-foreground">支持 JSON、CSV 及系统导出的旧版 Excel（.xls）文档。</span>
+          </label>
+          <label className="text-sm">
+            <span className="text-muted-foreground">文档数据类型</span>
+            <select
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              value={dataset}
+              onChange={(event) => {
+                setDataset(event.target.value as LegacyImportDataset);
+                resetResults();
+              }}
+            >
+              {(Object.keys(LEGACY_DATASET_LABELS) as LegacyImportDataset[]).map((key) => <option key={key} value={key}>{LEGACY_DATASET_LABELS[key]}</option>)}
+            </select>
+          </label>
+          <label className="text-sm">
+            <span className="text-muted-foreground">重复数据处理</span>
+            <select
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              value={conflictPolicy}
+              onChange={(event) => {
+                setConflictPolicy(event.target.value as LegacyImportConflictPolicy);
+                resetResults();
+              }}
+            >
+              <option value="skip">跳过现有数据（推荐）</option>
+              <option value="update">用旧文档更新现有数据</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={createMissingDevices}
+              onChange={(event) => {
+                setCreateMissingDevices(event.target.checked);
+                resetResults();
+              }}
+            />
+            使用/预约记录引用设备不存在时自动创建
+          </label>
+          <label className="flex items-center gap-2 text-warning">
+            <input
+              type="checkbox"
+              checked={allowPartial}
+              onChange={(event) => {
+                setAllowPartial(event.target.checked);
+                resetResults();
+              }}
+            />
+            允许跳过错误行并部分导入
+          </label>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" disabled={!file || preview.isPending || execute.isPending} onClick={handlePreview}>
+            <Upload className="h-4 w-4" /> {preview.isPending ? '正在预检…' : '预检文档'}
+          </Button>
+          {file && <span className="text-xs text-muted-foreground">已选择：{file.name}（{Math.max(1, Math.ceil(file.size / 1024))} KB）</span>}
+        </div>
+
+        {preview.data && (
+          <div className="space-y-3 rounded-md border bg-background p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold">预检结果</h3>
+              <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                {preview.data.detected_sections?.length ? <span>识别：{preview.data.detected_sections.map((section) => LEGACY_SECTION_LABELS[section] || section).join('、')}</span> : null}
+                {preview.data.source_hash ? <span>文件摘要：{preview.data.source_hash.slice(0, 12)}…</span> : null}
+              </div>
+            </div>
+
+            {previewSummaries.length > 0 ? (
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                {previewSummaries.map(([section, values]) => (
+                  <div key={section} className="rounded-md border p-3">
+                    <p className="text-sm font-semibold">{LEGACY_SECTION_LABELS[section] || section}</p>
+                    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                      {Object.entries(values).filter(([, value]) => typeof value === 'number').map(([key, value]) => (
+                        <span key={key}>{LEGACY_SUMMARY_LABELS[key] || key}：<strong className="text-foreground">{String(value)}</strong></span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="text-sm text-muted-foreground">预检已完成，服务端未返回分项统计。</p>}
+
+            <div>
+              <p className="text-sm font-semibold">校验问题（{previewIssues.length}）</p>
+              {previewIssues.length ? (
+                <div className="mt-2 max-h-56 space-y-1 overflow-auto rounded-md border border-destructive/20 bg-destructive/5 p-2">
+                  {previewIssues.map((issue, index) => <p key={`${issue.section || 'issue'}-${issue.row || index}-${index}`} className="text-xs text-destructive">{legacyIssueText(issue)}</p>)}
+                </div>
+              ) : <p className="mt-1 text-xs text-success">未发现校验问题，可以继续导入。</p>}
+            </div>
+
+            <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
+              <label className="text-sm font-semibold text-destructive">
+                确认执行导入
+                <Input
+                  className="mt-1 bg-background font-mono"
+                  value={confirmation}
+                  onChange={(event) => setConfirmation(event.target.value)}
+                  placeholder="请输入 IMPORT"
+                  autoComplete="off"
+                />
+              </label>
+              <p className="mt-1 text-xs text-muted-foreground">导入将写入数据库。确认预检结果无误后，输入大写 IMPORT。</p>
+              <Button type="button" variant="destructive" className="mt-3" disabled={!canExecute} onClick={handleExecute}>
+                {execute.isPending ? '正在导入…' : '确认导入旧文档'}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {execute.data && (
+          <div className="space-y-3 rounded-md border border-success/30 bg-success/5 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-semibold text-success">旧文档导入已完成</h3>
+                <p className="text-xs text-muted-foreground">{execute.data.message || '数据已写入系统。'}</p>
+              </div>
+              {credentials.length > 0 && (
+                <div className="flex gap-2">
+                  <Button type="button" size="sm" variant="outline" onClick={() => { downloadTemporaryCredentials(credentials); execute.reset(); }}>
+                    <Download className="h-4 w-4" /> 下载并清除
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => execute.reset()}>清除显示</Button>
+                </div>
+              )}
+            </div>
+
+            {credentials.length > 0 ? (
+              <div className="space-y-2">
+                <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/5 p-2 text-xs text-warning">
+                  <KeyRound className="mt-0.5 h-4 w-4 shrink-0" />
+                  <p>以下密码只在本次导入结果中展示。请立即下载并通过安全方式交给用户；用户首次登录后应强制修改密码。</p>
+                </div>
+                <div className="max-h-64 overflow-auto rounded-md border bg-background">
+                  <table className="w-full text-left text-sm">
+                    <thead className="sticky top-0 bg-muted"><tr><th className="px-3 py-2">姓名</th><th className="px-3 py-2">登录账号</th><th className="px-3 py-2">临时密码</th><th className="px-3 py-2">有效期</th></tr></thead>
+                    <tbody>
+                      {credentials.map((credential, index) => (
+                        <tr key={`${credentialAccount(credential)}-${index}`} className="border-t">
+                          <td className="px-3 py-2">{credential.name || '—'}</td>
+                          <td className="px-3 py-2 font-mono">{credentialAccount(credential)}</td>
+                          <td className="px-3 py-2 font-mono font-semibold">{credentialPassword(credential)}</td>
+                          <td className="px-3 py-2">{credential.temporary_password_expires_at ? briefDateTime(credential.temporary_password_expires_at) : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : <p className="text-xs text-muted-foreground">本次导入未生成临时密码。</p>}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -569,6 +914,8 @@ export function AdminExportPage() {
           </div>
         </CardContent>
       </Card>
+
+      {capability.role === 'super_admin' && <LegacyImportPanel />}
 
       <Card className="ops-card">
         <CardContent className="space-y-3 p-4">

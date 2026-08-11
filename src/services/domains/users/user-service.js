@@ -22,6 +22,7 @@ function createUserService(context = {}) {
     requireUser,
     safeUser,
     updateRegistrationApprovalCodeTtl,
+    uuid,
     verifyPassword,
     withTransaction
   } = context;
@@ -214,12 +215,19 @@ function createUserService(context = {}) {
     const temporaryPasswordExpiresAt = new Date(new Date(changedAt).getTime() + 24 * 60 * 60_000).toISOString();
     let revokedRefreshSessions = 0;
     await withTransaction(async (client) => {
+      await client.query(`
+        select id
+        from password_reset_requests
+        where user_id = $1 and status = 'pending'
+        for update
+      `, [userId]);
       const updated = await client.query(`
         update users
         set password_hash = $1,
             password_salt = $2,
             password_reset_required = true,
             temporary_password_expires_at = $3,
+            authz_version = authz_version + 1,
             updated_at = $4
         where id = $5
           and role <> 'super_admin'
@@ -242,6 +250,12 @@ function createUserService(context = {}) {
         where subject = $2 and revoked_at is null
       `, [changedAt, userId]);
       revokedRefreshSessions = Number(revoked.rowCount || 0);
+      await client.query(`
+        update password_reset_requests
+        set status = 'cancelled', reviewed_by = $1, reviewed_at = $2,
+            review_note = $3, updated_at = $2
+        where user_id = $4 and status = 'pending'
+      `, [admin.user_id || admin.id, changedAt, '管理员已通过用户管理直接重置密码。', userId]);
       const txQuery = (sql, params = []) => client.query(sql, params);
       await log('reset_user_password', {
         message: user.role === 'admin' || assignedAdminRole
@@ -259,6 +273,188 @@ function createUserService(context = {}) {
       refresh_sessions_revoked: revokedRefreshSessions,
       access_token_max_minutes: 15,
       password_reset_required: true
+    });
+  }
+
+  async function submitPasswordResetRequest(payload = {}, context = {}) {
+    const startedAt = Date.now();
+    const phone = assertText(payload.phone, 'phone', 20);
+    const submittedName = assertText(payload.name, 'name', 50);
+    const submittedStudentNo = assertText(payload.student_no, 'student_no', 50);
+    const submittedMentorName = assertText(payload.mentor_name, 'mentor_name', 80);
+    const submittedMajor = String(payload.major || '').trim().slice(0, 80);
+    const reason = String(payload.reason || '').trim().slice(0, 500);
+    const timestamp = nowIso();
+    const expiresAt = new Date(new Date(timestamp).getTime() + 7 * 24 * 60 * 60_000).toISOString();
+    try {
+      await query(`
+        insert into password_reset_requests (
+          id,user_id,submitted_phone,submitted_name,submitted_student_no,submitted_major,submitted_mentor_name,reason,status,expires_at,created_at,updated_at
+        )
+        select $1,u.id,$2,$3,$4,$5,$6,$7,'pending',$9,$8,$8
+        from users u
+        left join admin_roles ar on ar.user_id = u.id
+        where u.phone = $2 and u.deleted_at is null
+          and u.role <> 'super_admin'
+          and coalesce(ar.role_key, '') <> 'super_admin'
+          and not (coalesce(ar.permissions, '[]'::jsonb) ? '*')
+        limit 1
+        on conflict (user_id) where status='pending' and user_id is not null
+        do update set submitted_phone=excluded.submitted_phone, submitted_name=excluded.submitted_name,
+          submitted_student_no=excluded.submitted_student_no, submitted_major=excluded.submitted_major,
+          submitted_mentor_name=excluded.submitted_mentor_name, reason=excluded.reason,
+          request_count=password_reset_requests.request_count+1, expires_at=excluded.expires_at, updated_at=excluded.updated_at
+      `, [uuid(), phone, submittedName, submittedStudentNo, submittedMajor || null, submittedMentorName, reason || null, timestamp, expiresAt]);
+    } catch (error) {
+      const safeCode = String(error?.code || error?.name || 'unknown').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
+      const requestId = String(context.requestId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80);
+      console.error(`[password-reset-request] persistence failed (${safeCode || 'unknown'})${requestId ? ` request=${requestId}` : ''}`);
+    }
+    const jitterMs = Number(randomBytes(1)?.[0] || 0) % 51;
+    const waitMs = Math.max(0, 250 + jitterMs - (Date.now() - startedAt));
+    if (waitMs) await new Promise((resolve) => setTimeout(resolve, waitMs));
+    return ok({ message: '申请已提交。如果账号信息有效，最高管理员将在核验后处理，请通过线下安全方式领取临时密码。' });
+  }
+
+  async function adminListPasswordResetRequests(params = {}, token) {
+    const { admin, role } = await requireAdminRole(token, ['super_admin'], ['*']);
+    if (!isHighestAdminOperator(admin, role)) return fail('只有最高权限管理员可以查看密码找回申请。', 403, 1003);
+    const listedAt = nowIso();
+    await query(`update password_reset_requests set status='expired',updated_at=$1 where status='pending' and expires_at <= $1`, [listedAt]);
+    await query(`delete from password_reset_requests where status <> 'pending' and updated_at < $1`, [new Date(new Date(listedAt).getTime() - 90 * 24 * 60 * 60_000).toISOString()]);
+    const requestedStatus = String(params.status || 'pending').trim();
+    const allowedStatuses = ['pending', 'approved', 'rejected', 'cancelled', 'expired', 'all'];
+    const status = allowedStatuses.includes(requestedStatus) ? requestedStatus : 'pending';
+    const values = [];
+    const where = status === 'all' ? '' : `where r.status=$${values.push(status)}`;
+    const rows = await query(`
+      select r.*, u.name as account_name, u.phone as account_phone, u.student_no as account_student_no,
+        u.major as account_major, u.mentor_name as account_mentor_name, u.role as account_role,
+        reviewer.name as reviewer_name
+      from password_reset_requests r
+      left join users u on u.id=r.user_id
+      left join users reviewer on reviewer.id=r.reviewed_by
+      ${where}
+      order by case when r.status='pending' then 0 else 1 end, r.updated_at desc
+      limit 200
+    `, values);
+    return ok({ requests: rows || [] });
+  }
+
+  async function adminReviewPasswordResetRequest(payload = {}, token) {
+    const { admin, role } = await requireAdminRole(token, ['super_admin'], ['*']);
+    if (!isHighestAdminOperator(admin, role)) return fail('只有最高权限管理员可以处理密码找回申请。', 403, 1003);
+    const requestId = assertText(payload.request_id || payload.id, 'request_id', 60);
+    const approved = payload.approved === true;
+    const reviewNote = String(payload.review_note || '').trim().slice(0, 500);
+    const password = approved ? generateTemporaryPassword() : '';
+    const salt = approved ? randomBytes(16).toString('hex') : '';
+    const passwordHash = approved ? await hashPassword(password, salt) : '';
+    const timestamp = nowIso();
+    const expiresAt = approved ? new Date(new Date(timestamp).getTime() + 24 * 60 * 60_000).toISOString() : null;
+    let revokedRefreshSessions = 0;
+    const reviewed = await withTransaction(async (client) => {
+      const requestResult = await client.query('select * from password_reset_requests where id=$1 for update', [requestId]);
+      const request = requestResult.rows?.[0];
+      if (!request) return { error: fail('密码找回申请不存在。', 404, 3004) };
+      if (request.status !== 'pending') return { error: fail('该申请已经处理，请刷新后重试。', 409, 3001) };
+      if (request.expires_at && new Date(request.expires_at).getTime() <= new Date(timestamp).getTime()) {
+        await client.query(`update password_reset_requests set status='expired',updated_at=$1 where id=$2`, [timestamp, requestId]);
+        return { result: {
+          message: '该密码找回申请已过期，未执行密码重置。',
+          request_id: requestId,
+          status: 'expired',
+          password_reset_required: false,
+          refresh_sessions_revoked: 0
+        } };
+      }
+      const userResult = await client.query(`
+        select u.*, ar.role_key as assigned_role_key, ar.permissions as assigned_permissions
+        from users u
+        left join admin_roles ar on ar.user_id = u.id
+        where u.id = $1 and u.deleted_at is null
+        for update of u
+      `, [request.user_id]);
+      const user = userResult.rows?.[0];
+      const targetRole = user ? { role_key: user.assigned_role_key, permissions: user.assigned_permissions } : null;
+      if (!user || isHighestAdminOperator(user, targetRole || {}) || isSelfTarget(admin, user)) {
+        await client.query(`update password_reset_requests set status='rejected',reviewed_by=$1,reviewed_at=$2,
+          review_note=$3,updated_at=$2 where id=$4`, [admin.user_id || admin.id, timestamp, '目标账号不存在或不允许通过该流程重置。', requestId]);
+        const txQuery = (sql, params = []) => client.query(sql, params);
+        await log('reject_password_reset_request', {
+          request_id: requestId,
+          target_user_id: user?.id || request.user_id || null,
+          reason: 'ineligible_target'
+        }, admin, null, user?.id || request.user_id || null, txQuery);
+        return { result: {
+          message: '目标账号不存在或不允许通过该流程重置，申请已自动拒绝。',
+          request_id: requestId,
+          status: 'rejected',
+          password_reset_required: false,
+          refresh_sessions_revoked: 0
+        } };
+      }
+      if (approved) {
+        const updated = await client.query(`
+          update users
+          set password_hash=$1,password_salt=$2,password_reset_required=true,
+            temporary_password_expires_at=$3,authz_version=authz_version+1,updated_at=$4
+          where id=$5
+            and role <> 'super_admin'
+            and not exists (
+              select 1 from admin_roles
+              where user_id=$5 and (role_key='super_admin' or permissions ? '*')
+            )
+        `, [passwordHash, salt, expiresAt, timestamp, user.id]);
+        if (updated.rowCount !== 1) {
+          await client.query(`update password_reset_requests set status='rejected',reviewed_by=$1,reviewed_at=$2,
+            review_note=$3,updated_at=$2 where id=$4`, [admin.user_id || admin.id, timestamp, '目标账号权限状态已变化，未执行密码重置。', requestId]);
+          const txQuery = (sql, params = []) => client.query(sql, params);
+          await log('reject_password_reset_request', {
+            request_id: requestId,
+            target_user_id: user.id,
+            reason: 'target_privilege_changed'
+          }, admin, null, user.id, txQuery);
+          return { result: {
+            message: '目标账号权限状态已变化，未执行密码重置，申请已自动拒绝。',
+            request_id: requestId,
+            status: 'rejected',
+            password_reset_required: false,
+            refresh_sessions_revoked: 0
+          } };
+        }
+        const revoked = await client.query('update refresh_token_sessions set revoked_at=$1 where subject=$2 and revoked_at is null', [timestamp, user.id]);
+        revokedRefreshSessions = Number(revoked.rowCount || 0);
+      }
+      await client.query(`update password_reset_requests set status=$1,reviewed_by=$2,reviewed_at=$3,
+        review_note=$4,updated_at=$3 where id=$5`, [approved ? 'approved' : 'rejected', admin.user_id || admin.id, timestamp, reviewNote || null, requestId]);
+      const txQuery = (sql, params = []) => client.query(sql, params);
+      await createUserNotification({
+        user_id: user.id,
+        type: 'security',
+        title: approved ? '密码找回申请已通过' : '密码找回申请未通过',
+        content: approved ? '最高管理员已生成 24 小时临时密码，请通过约定的线下安全方式领取，并在登录后立即修改。' : `密码找回申请未通过${reviewNote ? `：${reviewNote}` : '，请联系最高管理员核验身份。'}`,
+        related_type: 'password_reset_request',
+        related_id: requestId
+      }, txQuery);
+      await log(approved ? 'approve_password_reset_request' : 'reject_password_reset_request', {
+        request_id: requestId,
+        target_user_id: user.id,
+        refresh_sessions_revoked: revokedRefreshSessions,
+        temporary_password_expires_at: expiresAt
+      }, admin, null, user.id, txQuery);
+      return { request, user };
+    });
+    if (reviewed.error) return reviewed.error;
+    if (reviewed.result) return ok(reviewed.result);
+    return ok({
+      message: approved ? '申请已通过，已生成 24 小时临时密码。' : '申请已拒绝。',
+      request_id: requestId,
+      status: approved ? 'approved' : 'rejected',
+      temporary_password: approved ? password : undefined,
+      temporary_password_expires_at: expiresAt,
+      password_reset_required: approved,
+      refresh_sessions_revoked: revokedRefreshSessions
     });
   }
 
@@ -325,6 +521,7 @@ function createUserService(context = {}) {
             password_salt = $2,
             password_reset_required = false,
             temporary_password_expires_at = null,
+            authz_version = authz_version + 1,
             updated_at = $3
         where id = $4 and password_reset_required = true
       `, [passwordHash, salt, changedAt, user.id]);
@@ -417,6 +614,11 @@ function createUserService(context = {}) {
 
         await client.query('delete from admin_roles where user_id = $1', [userId]);
         await client.query('delete from user_roles where user_id = $1', [userId]);
+        await client.query(`
+          update refresh_token_sessions
+          set revoked_at = coalesce(revoked_at, now())
+          where subject = $1 and revoked_at is null
+        `, [userId]);
         if (linkedCount > 0) {
           await client.query(`
             update users
@@ -426,6 +628,8 @@ function createUserService(context = {}) {
                 wechat_nickname = null,
                 password_hash = '',
                 password_salt = '',
+                deleted_at = $2,
+                authz_version = authz_version + 1,
                 updated_at = $2
             where id = $3
           `, ['disabled', nowIso(), userId]);
@@ -489,7 +693,7 @@ function createUserService(context = {}) {
       const txQuery = (sql, params = []) => client.query(sql, params);
       const changedAt = nowIso();
       if (status === 'active') {
-        await client.query('update users set status = $1, disabled_reason = null, approved_by = $2, approved_at = $3, updated_at = $3 where id = $4', [
+        await client.query('update users set status = $1, disabled_reason = null, approved_by = $2, approved_at = $3, authz_version = authz_version + 1, updated_at = $3 where id = $4', [
           status, admin.user_id || admin.id || null, changedAt, userId
         ]);
         await addUserToManagementGroup(userId, txQuery);
@@ -503,7 +707,7 @@ function createUserService(context = {}) {
         }
       } else {
         const disabledReason = status === 'pending' ? null : (reason || null);
-        await client.query('update users set status = $1, disabled_reason = $2, approved_by = null, approved_at = null, updated_at = $3 where id = $4', [
+        await client.query('update users set status = $1, disabled_reason = $2, approved_by = null, approved_at = null, authz_version = authz_version + 1, updated_at = $3 where id = $4', [
           status, disabledReason, changedAt, userId
         ]);
         await removeUserFromManagementGroup(userId, txQuery);
@@ -516,6 +720,11 @@ function createUserService(context = {}) {
           }, txQuery);
         }
       }
+      await client.query(`
+        update refresh_token_sessions
+        set revoked_at = coalesce(revoked_at, $1)
+        where subject = $2 and revoked_at is null
+      `, [changedAt, userId]);
       await log('set_user_status', { message: `用户状态已更新为 ${status}`, status, reason: reason || null }, admin, null, userId, txQuery);
     });
     return ok({ message: '用户状态已更新。' });
@@ -529,7 +738,15 @@ function createUserService(context = {}) {
     if (!user) return fail('用户不存在。', 404, 3004);
     const denied = ensureCanModifyUser(admin, user);
     if (denied) return denied;
-    await query('update users set is_banned = $1, updated_at = $2 where id = $3', [banned, nowIso(), userId]);
+    await withTransaction(async (client) => {
+      const changedAt = nowIso();
+      await client.query('update users set is_banned = $1, authz_version = authz_version + 1, updated_at = $2 where id = $3', [banned, changedAt, userId]);
+      await client.query(`
+        update refresh_token_sessions
+        set revoked_at = coalesce(revoked_at, $1)
+        where subject = $2 and revoked_at is null
+      `, [changedAt, userId]);
+    });
     await log('set_user_ban', banned ? 'Banned user account' : 'Unbanned user account', admin, null, userId);
     return ok({ message: banned ? '用户已禁用。' : '用户已解除禁用。' });
   }
@@ -558,10 +775,13 @@ function createUserService(context = {}) {
     adminSetUserStatus,
     adminUnbindWechat,
     adminResetUserPassword,
+    adminListPasswordResetRequests,
+    adminReviewPasswordResetRequest,
     completeRequiredPasswordReset,
     getProfile,
     listMyNotifications,
-    markMyNotificationsRead
+    markMyNotificationsRead,
+    submitPasswordResetRequest
   };
 }
 

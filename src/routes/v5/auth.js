@@ -57,19 +57,40 @@ function createV5AuthRouter(service, { refreshSessions } = {}) {
     password: z.string().min(12, '\u5bc6\u7801\u81f3\u5c11\u9700\u8981 12 \u4f4d\u3002').max(128),
     approval_code: z.string().max(32).optional().default('')
   });
+  const passwordResetRequestSchema = z.object({
+    phone: z.string().trim().min(6, '\u8bf7\u8f93\u5165\u6b63\u786e\u7684\u767b\u5f55\u624b\u673a\u53f7\u3002').max(20),
+    name: z.string().trim().min(1, '\u8bf7\u8f93\u5165\u59d3\u540d\u3002').max(50),
+    student_no: z.string().trim().min(1, '\u8bf7\u8f93\u5165\u5b66\u53f7\u6216\u5b66\u5de5\u53f7\u3002').max(50),
+    major: z.string().trim().max(80).optional().default(''),
+    mentor_name: z.string().trim().min(1, '\u8bf7\u8f93\u5165\u5bfc\u5e08\u59d3\u540d\u3002').max(80),
+    reason: z.string().trim().max(500).optional().default('')
+  }).strict();
 
   /**
    * 把 2.x 登录返回的 user/role/permissions 转成 v5 JWT payload + 双 token。
    */
-  async function toAuthBundle(userRole, perms, user, req, res) {
-    const accessPayload = {
-      sub: user?.id || 'admin',
-      scope: userRole === 'super_admin' ? 'admin' : (userRole === 'admin' ? 'admin' : 'user'),
-      role: userRole,
-      perms: perms || [],
-      password_reset_required: Boolean(user?.password_reset_required),
-      name: user?.name || 'admin'
+  function accessClaims(principal) {
+    return {
+      sub: principal.sub,
+      scope: principal.scope,
+      role: principal.role,
+      admin_role_key: principal.admin_role_key,
+      perms: Array.isArray(principal.permissions) ? principal.permissions : [],
+      password_reset_required: Boolean(principal.password_reset_required),
+      authz_version: principal.authz_version,
+      name: principal.name || ''
     };
+  }
+
+  async function toAuthBundle(_userRole, _perms, user, req, res) {
+    if (!user?.id) throw new AppError('\u767b\u5f55\u4e3b\u4f53\u4e0d\u5b58\u5728\u3002', { status: 401, code: 1001 });
+    // Login responses are only an identity hint. Reload role, permissions and the
+    // authorization version from PostgreSQL before issuing either credential.
+    const principal = await service.resolveCurrentAuthPrincipal(
+      { sub: String(user.id) },
+      { allowPasswordReset: true }
+    );
+    const accessPayload = accessClaims(principal);
     const access = issueJwt(accessPayload, { type: 'access' });
     const refresh = issueJwt({ ...accessPayload, type: 'refresh' }, { type: 'refresh' });
     const refreshPayload = verifyJwt(refresh, { type: 'refresh' });
@@ -82,7 +103,19 @@ function createV5AuthRouter(service, { refreshSessions } = {}) {
       token: refresh
     });
     setRefreshCookie(req, res, refresh, Math.max(0, refreshPayload.exp - Math.floor(Date.now() / 1000)));
-    return { access_token: access, token_type: 'Bearer', expires_in: 900, role: userRole, permissions: perms || [], user };
+    return {
+      access_token: access,
+      token_type: 'Bearer',
+      expires_in: 900,
+      role: principal.role,
+      permissions: accessPayload.perms,
+      user: {
+        ...user,
+        role: principal.role,
+        admin_role_key: principal.admin_role_key,
+        authz_version: principal.authz_version
+      }
+    };
   }
 
   function contextFromReq(req, fallbackDeviceType = '') {
@@ -91,7 +124,8 @@ function createV5AuthRouter(service, { refreshSessions } = {}) {
       ip: req.ip,
       host: req.headers.host,
       userAgent: req.headers['user-agent'],
-      clientKey: req.headers['x-device-fingerprint'] || req.ip
+      clientKey: req.headers['x-device-fingerprint'] || req.ip,
+      requestId: req.requestId || ''
     };
   }
 
@@ -103,6 +137,13 @@ function createV5AuthRouter(service, { refreshSessions } = {}) {
     const role = data.role || data.user?.role || 'user';
     return toAuthBundle(role, perms, data.user, req, res);
   }
+
+  router.post('/auth/password-reset/request', validate({ body: passwordResetRequestSchema }), wrapV5(async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const result = await service.submitPasswordResetRequest(req.validated.body, contextFromReq(req));
+    if (!result || result.ok === false) throw new AppError(result?.message || '\u7533\u8bf7\u63d0\u4ea4\u5931\u8d25\u3002', { status: result?.status || 400, code: result?.code || 2001 });
+    return result.data || result;
+  }));
 
   // 普通用户登录
   router.post('/auth/login', validate({ body: phoneSchema }), wrapV5(async (req, res) => {
@@ -160,15 +201,16 @@ function createV5AuthRouter(service, { refreshSessions } = {}) {
     const currentToken = cookieValue(req, refreshCookieName) || String(req.body?.refresh_token || '').trim();
     const payload = verifyJwt(currentToken, { type: 'refresh' });
     if (!payload) throw new AppError('刷新登录凭证无效或已过期', { status: 401, code: 1001 });
-    const passwordResetRequired = await service.isPasswordResetRequired(payload);
-    const accessPayload = {
-      sub: payload.sub,
-      scope: payload.scope,
-      role: payload.role,
-      perms: payload.perms || [],
-      password_reset_required: passwordResetRequired,
-      name: payload.name
-    };
+    let principal;
+    try {
+      // Never copy authority out of a refresh JWT. The account may have been
+      // banned, deleted, demoted or had its password changed since issuance.
+      principal = await service.validateAccessTokenAuth(payload, { allowPasswordReset: true });
+    } catch (error) {
+      setRefreshCookie(req, res, '', 0);
+      throw error;
+    }
+    const accessPayload = accessClaims(principal);
     const access = issueJwt(accessPayload, { type: 'access' });
     const nextRefresh = issueJwt({ ...accessPayload, type: 'refresh' }, { type: 'refresh' });
     const nextPayload = verifyJwt(nextRefresh, { type: 'refresh' });
@@ -212,10 +254,8 @@ function createV5AuthRouter(service, { refreshSessions } = {}) {
   // 当前用户资料（需 access JWT）
   router.get('/me', requireAuth, wrapV5(async (req, res) => {
     res.setHeader('Cache-Control', 'private, no-store');
-    if (req.auth.sub === 'admin') {
-      return { id: 'admin', name: 'admin', role: 'super_admin', permissions: ['*'] };
-    }
-    const result = await service.getProfile(req.auth);
+    const principal = await service.validateAccessTokenAuth(req.auth, { allowPasswordReset: true });
+    const result = await service.getProfile(principal);
     if (!result || result.ok === false) {
       const r = result;
       throw new AppError(r && r.message ? r.message : '未登录', { status: (r && r.status) || 401, code: (r && r.code) || 1001 });
@@ -223,10 +263,34 @@ function createV5AuthRouter(service, { refreshSessions } = {}) {
     const profile = result.data?.user || result.user || result.data || result;
     return {
       ...profile,
-      role: req.auth.role || profile.role || 'user',
-      permissions: Array.isArray(req.auth.perms) ? req.auth.perms : (profile.permissions || [])
+      role: principal.role || profile.role || 'user',
+      admin_role_key: principal.admin_role_key,
+      authz_version: principal.authz_version,
+      permissions: Array.isArray(principal.permissions) ? principal.permissions : []
     };
   }));
+
+  // This router is mounted before every other v5 router. Normalize any access
+  // JWT to a freshly loaded database principal before downstream requirePerm /
+  // requireRole middleware sees it. This prevents those generic middleware
+  // helpers from authorizing a stale role or permission copied from the JWT.
+  router.use(async (req, _res, next) => {
+    if (typeof service.validateAccessTokenAuth !== 'function') return next();
+    const bearer = String(req.headers.authorization || '');
+    if (!bearer.startsWith('Bearer ')) return next();
+    const payload = verifyJwt(bearer.slice(7).trim(), { type: 'access' });
+    if (!payload) return next();
+    try {
+      const principal = await service.validateAccessTokenAuth(payload, { allowPasswordReset: true });
+      const normalizedToken = issueJwt(accessClaims(principal), { type: 'access' });
+      req.headers.authorization = `Bearer ${normalizedToken}`;
+      req.auth = principal;
+      req.authToken = normalizedToken;
+      return next();
+    } catch (error) {
+      return next(error);
+    }
+  });
 
   return router;
 }

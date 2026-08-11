@@ -40,13 +40,19 @@ const { createFcmPushService } = require('./domains/notifications/fcm-push-servi
 const { createChatService } = require('./domains/chat/chat-service');
 const { createAdminSystemService } = require('./domains/admin/system-service');
 const { createAuthService } = require('./domains/auth/auth-service');
+const {
+  createAuthPrincipalService,
+  getValidatedPrincipalUser,
+  isValidatedAuthPrincipal
+} = require('./domains/auth/auth-principal-service');
 const { createRegistrationApprovalCodeService } = require('./domains/auth/registration-approval-code');
 const { createDeviceAdminService } = require('./domains/devices/device-admin-service');
 const { createDeviceReadService } = require('./domains/devices/device-read-service');
 const { createFaultRequestService } = require('./domains/faults/fault-request-service');
 const { createMaintenanceService } = require('./domains/maintenance/maintenance-service');
 const { createMaterialRequestService } = require('./domains/materials/material-request-service');
-const { createExportService } = require('./domains/reports/export-service');
+const { createLegacyImportService } = require('./domains/imports/legacy-import-service');
+const { createExportService, hasExportPermission, isSupportedExportType } = require('./domains/reports/export-service');
 const { createBorrowReturnService } = require('./domains/reservations/borrow-return-service');
 const { createReservationActionService } = require('./domains/reservations/reservation-action-service');
 const { createReservationReadService } = require('./domains/reservations/reservation-read-service');
@@ -69,6 +75,8 @@ function createRentalService(options) {
     fcmServiceAccountJson = '',
     realtimePublisher = async () => 0,
     uploadDir = path.join(process.cwd(), 'uploads'),
+    exportDir = path.join(uploadDir, 'exports'),
+    exportRetentionDays = 30,
     activeReservationStatus = ['pending', 'approved', 'in_use']
   } = options;
 
@@ -789,41 +797,39 @@ function createRentalService(options) {
     ]);
   }
 
+  const authPrincipalService = createAuthPrincipalService({ effectiveRolePermissions, queryOne });
+
   function resolveServiceAuth(auth) {
-    if (auth && typeof auth === 'object' && typeof auth.sub === 'string') {
-      const role = String(auth.role || 'user');
-      return {
-        scope: auth.scope || (role === 'user' ? 'user' : 'admin'),
-        role,
-        user_id: auth.sub,
-        id: auth.sub,
-        admin_role_key: role === 'super_admin' ? 'super_admin' : undefined,
-        permissions: Array.isArray(auth.perms) ? auth.perms : [],
-        password_reset_required: auth.password_reset_required === true || auth.pwd_reset === true,
-        name: auth.name || ''
-      };
-    }
-    const v5Auth = typeof auth === 'string' ? verifyJwt(auth, { type: 'access' }) : null;
-    return v5Auth ? resolveServiceAuth(v5Auth) : null;
+    if (isValidatedAuthPrincipal(auth)) return auth;
+    const source = typeof auth === 'string' ? verifyJwt(auth, { type: 'access' }) : auth;
+    if (!source || typeof source !== 'object' || typeof source.sub !== 'string') return null;
+    return {
+      sub: source.sub,
+      user_id: source.sub,
+      id: source.sub,
+      authz_version: source.authz_version
+    };
+  }
+
+  async function resolveCurrentAuthPrincipal(auth, options = {}) {
+    const identity = resolveServiceAuth(auth);
+    if (!identity) throw new AppError('\u672a\u767b\u5f55\u6216\u767b\u5f55\u5df2\u8fc7\u671f\u3002', { status: 401, code: 1001 });
+    return authPrincipalService.resolveCurrentAuthPrincipal(identity, options);
+  }
+
+  async function validateAccessTokenAuth(auth, options = {}) {
+    const identity = resolveServiceAuth(auth);
+    if (!identity) throw new AppError('\u672a\u767b\u5f55\u6216\u767b\u5f55\u5df2\u8fc7\u671f\u3002', { status: 401, code: 1001 });
+    return authPrincipalService.validateAccessTokenAuth(identity, options);
   }
 
   async function requireAdmin(token) {
-    const payload = resolveServiceAuth(token);
-    if (!payload) throw new AppError('未登录或登录已过期。', { status: 401, code: 1001 });
+    const payload = await validateAccessTokenAuth(token);
     if (payload.scope !== 'admin') {
-      throw new AppError('没有访问权限。', { status: 403, code: 1003 });
+      throw new AppError('\u6ca1\u6709\u8bbf\u95ee\u6743\u9650\u3002', { status: 403, code: 1003 });
     }
     if (!['admin', 'super_admin'].includes(payload.role) && !payload.admin_role_key) {
-      throw new AppError('没有访问权限。', { status: 403, code: 1003 });
-    }
-    if (payload.user_id && payload.user_id !== 'admin') {
-      const user = await getById('users', payload.user_id);
-      if (!user || user.status !== 'active' || user.is_banned) {
-        throw new AppError(userAccessMessage(user), { status: 403, code: 1003 });
-      }
-      if (payload.password_reset_required || user.password_reset_required) {
-        throw new AppError('密码已由管理员重置，请先设置新密码。', { status: 403, code: 1005 });
-      }
+      throw new AppError('\u6ca1\u6709\u8bbf\u95ee\u6743\u9650\u3002', { status: 403, code: 1003 });
     }
     return payload;
   }
@@ -834,12 +840,14 @@ function createRentalService(options) {
   }
 
   async function canSubscribeReservationAdminChannel(auth = {}) {
-    const roleKey = auth.role || auth.admin_role_key;
-    if (roleKey === 'super_admin' || (Array.isArray(auth.perms) && auth.perms.includes('*'))) return true;
-    const userId = String(auth.sub || auth.user_id || auth.id || '').trim();
-    if (!userId || roleKey !== 'admin') return false;
-    const role = await getAdminRoleForUser(userId);
-    return Boolean(role && hasAnyPermission(role, ['reservation.view', 'reservation.approve', 'reservation.change_plan']));
+    try {
+      const principal = await validateAccessTokenAuth(auth);
+      if (principal.role === 'super_admin' || principal.permissions.includes('*')) return true;
+      return principal.role === 'admin'
+        && ['reservation.view', 'reservation.approve', 'reservation.change_plan'].some((permission) => principal.permissions.includes(permission));
+    } catch (_) {
+      return false;
+    }
   }
 
   async function requireAdminRole(token, allowedRoleKeys = [], allowedPermissions = []) {
@@ -847,10 +855,10 @@ function createRentalService(options) {
     if (admin.role === 'super_admin' || admin.admin_role_key === 'super_admin') {
       return { admin, role: { role_key: 'super_admin', permissions: ['*'] } };
     }
-    const role = (admin.user_id || admin.id)
-      ? await getAdminRoleForUser(admin.user_id || admin.id)
-      : { role_key: admin.admin_role_key || admin.role, permissions: admin.permissions || [] };
-    if (!role) throw new AppError('没有访问权限。', { status: 403, code: 1003 });
+    const role = {
+      role_key: admin.admin_role_key || admin.role,
+      permissions: admin.permissions || []
+    };
     const permissionAllowed = hasAnyPermission(role, allowedPermissions);
     if ((allowedRoleKeys.length || allowedPermissions.length) && !permissionAllowed) {
       throw new AppError('没有访问权限。', { status: 403, code: 1003 });
@@ -869,27 +877,15 @@ function createRentalService(options) {
   }
 
   async function requireUser(token, options = {}) {
-    const payload = resolveServiceAuth(token);
-    if (!payload || !payload.user_id) {
-      throw new AppError('未登录或登录已过期。', { status: 401, code: 1001 });
-    }
-
-    const user = await getById('users', payload.user_id);
-    if (!user || user.status !== 'active' || user.is_banned) {
-      throw new AppError(userAccessMessage(user), { status: 403, code: 1003 });
-    }
-    if (!options.allowPasswordReset && (payload.password_reset_required || user.password_reset_required)) {
-      throw new AppError('密码已由管理员重置，请先设置新密码。', { status: 403, code: 1005 });
-    }
+    const payload = await validateAccessTokenAuth(token, options);
+    const user = getValidatedPrincipalUser(payload);
+    if (!user) throw new AppError('\u672a\u767b\u5f55\u6216\u767b\u5f55\u5df2\u8fc7\u671f\u3002', { status: 401, code: 1001 });
     return user;
   }
 
   async function isPasswordResetRequired(token) {
-    const payload = resolveServiceAuth(token);
-    if (!payload?.user_id || payload.user_id === 'admin') return false;
-    if (payload.password_reset_required) return true;
-    const row = await queryOne('select password_reset_required from users where id = $1 limit 1', [payload.user_id]);
-    return Boolean(row?.password_reset_required);
+    const payload = await validateAccessTokenAuth(token, { allowPasswordReset: true });
+    return Boolean(payload.password_reset_required);
   }
 
   async function checkConflictWithQuery(runQuery, deviceId, startTime, endTime, excludeReservationId = null) {
@@ -1037,6 +1033,7 @@ function createRentalService(options) {
       admin_role_key: adminRoleKey || undefined,
       permissions: adminRole ? effectiveRolePermissions(adminRole) : undefined,
       password_reset_required: Boolean(user.password_reset_required),
+      authz_version: user.authz_version,
       name: user.name
     }, 7);
     await recordUserEvent({
@@ -1055,6 +1052,7 @@ function createRentalService(options) {
       role: tokenRole,
       admin_role_key: adminRoleKey,
       permissions: adminRole ? effectiveRolePermissions(adminRole) : [],
+      authz_version: user.authz_version,
       device_type: context.deviceType || null,
       user: { ...safeUser({ ...user, role: tokenRole, last_login_at: nowIso() }), admin_role_key: adminRoleKey }
     });
@@ -1097,23 +1095,10 @@ function createRentalService(options) {
   async function adminExportData(payload = {}, token) {
     const { admin, role } = await requireAdminRole(token, ['super_admin'], ['stats.export']);
     const type = String(payload.type || 'usage').trim();
-    const exportPermissionRules = {
-      usage: { all: ['stats.export'] },
-      successful_usage: { all: ['stats.export'], any: ['return.export', 'return.view', 'return.confirm', 'return.image_review'] },
-      returns: { all: ['stats.export'], any: ['return.export', 'return.view', 'return.confirm', 'return.image_review'] },
-      reservations: { all: ['stats.export'], any: ['reservation.view', 'reservation.approve', 'reservation.change_plan'] },
-      faults: { all: ['stats.export'], any: ['device.view', 'fault.manage', 'return.view', 'return.confirm', 'return.image_review'] },
-      user_activity: { all: ['stats.export', 'user.manage'] },
-      device_summary: { all: ['stats.export'], any: ['device.view', 'device.manage'] },
-      audit_logs: { all: ['stats.export', 'audit.view'] }
-    };
-    const exportRule = exportPermissionRules[type];
-    if (!exportRule) return fail('不支持的导出类型。', 400, 2001);
-    const permissions = effectiveRolePermissions(role || {});
-    const hasExportAccess = admin.role === 'super_admin' || permissions.includes('*')
-      || ((exportRule.all || []).every((permission) => permissions.includes(permission))
-        && (!(exportRule.any || []).length || exportRule.any.some((permission) => permissions.includes(permission))));
-    if (!hasExportAccess) return fail('当前账号没有该导出类型所需权限。', 403, 1003);
+    if (!isSupportedExportType(type)) return fail('不支持的导出类型。', 400, 2001);
+    if (!hasExportPermission(type, admin, role, effectiveRolePermissions)) {
+      return fail('当前账号没有该导出类型所需权限。', 403, 1003);
+    }
     const { user_id: userId, device_id: deviceId, start_date: startDate, end_date: endDate } = payload;
     const params = [];
     const clauses = [];
@@ -1264,8 +1249,11 @@ function createRentalService(options) {
   });
   const { adminCreateDevice, adminDeleteDevice, adminDeleteDevices, adminGetDeviceDetail, adminSetDeviceAvailable, adminUpdateDevice } = deviceAdminService;
 
-  const exportService = createExportService({ adminExportData, effectiveRolePermissions, fail, log, nowIso, ok, query, queryOne, requireAdminRole, safeFilename, uploadDir, uuid, withTransaction });
+  const exportService = createExportService({ adminExportData, effectiveRolePermissions, exportDir, exportRetentionDays, fail, log, nowIso, ok, query, queryOne, requireAdminRole, safeFilename, uuid, withTransaction });
   const { adminCreateExportJob, adminGetExportJobDownload, adminListExportJobs, adminRunNextExportJob, archiveDailySuccessfulUsage } = exportService;
+
+  const legacyImportService = createLegacyImportService({ crypto, fail, hashPassword, log, nowIso, ok, query, requireAdminRole, uuid, withTransaction });
+  const { adminExecuteLegacyImport, adminPreviewLegacyImport, legacyImportTemplate } = legacyImportService;
 
   const dashboardService = createDashboardService({ currentReservationDateCondition, ok, query, queryOne, requireAdminRole });
   const { adminDashboard } = dashboardService;
@@ -1358,7 +1346,11 @@ function createRentalService(options) {
     resolveServiceAuth,
     withTransaction
   });
-  const { addChatParticipants, addUserToManagementGroup, bootstrapSystem, canSubscribeChatChannel, cleanupExpiredTemporaryGroups, createChatConversation, dissolveChatConversation, leaveChatConversation, listChatAnnouncements, listChatConversations, listChatMessages, listChatUsers, markChatConversationRead, publishChatAnnouncement, removeChatParticipant, removeUserFromManagementGroup, resolveRealtimePrincipal, sendChatMessage, streamChatEvents } = chatService;
+  const { addChatParticipants, addUserToManagementGroup, bootstrapSystem, canSubscribeChatChannel, cleanupExpiredTemporaryGroups, createChatConversation, dissolveChatConversation, leaveChatConversation, listChatAnnouncements, listChatConversations, listChatMessages, listChatUsers, markChatConversationRead, publishChatAnnouncement, removeChatParticipant, removeUserFromManagementGroup, sendChatMessage, streamChatEvents } = chatService;
+
+  async function resolveRealtimePrincipal(auth) {
+    return validateAccessTokenAuth(auth);
+  }
 
   const wechatService = createWechatService({
     assertPhone,
@@ -1424,10 +1416,11 @@ function createRentalService(options) {
     requireUser,
     safeUser,
     updateRegistrationApprovalCodeTtl,
+    uuid,
     verifyPassword,
     withTransaction
   });
-  const { adminDeleteUser, adminDeleteUsers, adminGetRegistrationApprovalCode, adminRefreshRegistrationApprovalCode, adminUpdateRegistrationApprovalCodeTtl, adminGetUserDetail, adminListUsers, adminSetUserBan, adminSetUserStatus, adminUnbindWechat, completeRequiredPasswordReset, getProfile, listMyNotifications, markMyNotificationsRead } = userService;
+  const { adminDeleteUser, adminDeleteUsers, adminGetRegistrationApprovalCode, adminRefreshRegistrationApprovalCode, adminUpdateRegistrationApprovalCodeTtl, adminGetUserDetail, adminListPasswordResetRequests, adminListUsers, adminReviewPasswordResetRequest, adminSetUserBan, adminSetUserStatus, adminUnbindWechat, completeRequiredPasswordReset, getProfile, listMyNotifications, markMyNotificationsRead, submitPasswordResetRequest } = userService;
   const adminResetUserPassword = userService.adminResetUserPassword;
 
   const faultRequestService = createFaultRequestService({
@@ -1545,7 +1538,7 @@ function createRentalService(options) {
   // auth: { sub, scope, role, perms, name }
 
 
-  return { getMyPushStatus, registerPushDevice, unregisterPushDevice, runReservationReminderLifecycle, archiveDailySuccessfulUsage, adminAnalyticsDeviceUsage, adminGetRegistrationApprovalCode, adminRefreshRegistrationApprovalCode, adminUpdateRegistrationApprovalCodeTtl, adminGetReturnPhotoDownload, adminListReturnTasks, adminReviewReturn, adminCreateMaintenancePlan, adminCreateMaintenanceWorkOrder, adminListMaintenancePlans, adminListMaintenanceWorkOrders, adminMaintenanceOverview, adminUpdateMaintenancePlan, adminUpdateMaintenanceWorkOrder, adminAnalyticsFaults, adminAnalyticsIntelligence, adminAnalyticsOverview, adminAnalyticsTimeHeatmap, adminListIntelligenceActionLogs, adminUpdateIntelligenceAction, adminApproveReservation, adminApproveReservationBatch, adminBulkApproveReservations, adminChangeReservationPlan, adminMarkReservationNoShow, adminReviewReservationCancellation, adminCreateDevice, adminDeleteDevice, adminDeleteDevices, adminCreateExportJob, adminGetExportJobDownload, adminDashboard, adminDeleteUser, adminDeleteUsers, adminExportData, adminGetActivitySummary, adminGetDeviceDetail, adminGetOperationsOverview, adminGetReservationBatch, adminGetSecurityConfig, adminGetUserDetail, adminListDevices, adminListExportJobs, adminListReservationBatches, adminListReservations, adminListRoles, adminListUsers, adminLogin, adminOperationLogs, adminOptions, adminPermissions, adminPreviewDailyUsageReport, adminResetUserPassword, adminRunNextExportJob, adminSendDailyUsageReport, adminRevokeRole, adminSetDeviceAvailable, adminSetUserBan, adminSetUserStatus, adminUnbindWechat, adminUpdateDevice, adminUpdateSecurityConfig, adminUpsertRole, adminUserRoles, adminListFaultReports, adminNotifyAffectedFaultUsers, adminResolveFaultReport, adminListUserRequests, adminReviewUserRequest, adminListMaterialRequests, adminReviewMaterialRequest, addChatParticipants, authTokenFromReq, bindWechatAccount, bootstrapSystem, buildWechatReply, canSubscribeChatChannel, canSubscribeReservationAdminChannel, cleanupExpiredReturnPhotos, cleanupExpiredTemporaryGroups, completeRequiredPasswordReset, cancelReservation, cancelReservationItem, cancelUserRequest, cancelMaterialRequest, createChatConversation, createLoginChallenge, createReservation, createUserRequest, createMaterialRequest, dissolveChatConversation, isPasswordResetRequired, leaveChatConversation, getCalendarDay, getCalendarEvents, getReportConfig, getDeviceDetail, getDeviceTimeSlots, getLoginChallengeStatus, getProfile, getReservationBatch, getReservationSlotOptions, getSystemNotice, getStaffContacts, handleWechatMessage, listChatAnnouncements, listChatConversations, listChatMessages, listChatUsers, listDevices, listMyNotifications, listMyFaultReports, listMyUserRequests, listMyMaterialRequests, listReservationBatches, loginUser, markChatConversationRead, markMyNotificationsRead, myRecords, precheckBorrowExtension, precheckReservation, publishChatAnnouncement, registerUser, removeChatParticipant, reportDeviceFault, requestUserRequestChange, resolveRealtimePrincipal, safeFilename, sendChatMessage, sendWechatCustomMessage, shouldBlockIpAccess, autoStartDueReservations, extendBorrow, startReservationBatch, startUse, streamChatEvents, submitReturn, supplementReturnMaterials, pushDailyUsageReport, runMaintenanceWindowLifecycle, updateUserRequest, usageStats, verifyWechatHandshake };
+  return { resolveCurrentAuthPrincipal, validateAccessTokenAuth, adminExecuteLegacyImport, adminPreviewLegacyImport, legacyImportTemplate, getMyPushStatus, registerPushDevice, unregisterPushDevice, runReservationReminderLifecycle, archiveDailySuccessfulUsage, adminAnalyticsDeviceUsage, adminGetRegistrationApprovalCode, adminRefreshRegistrationApprovalCode, adminUpdateRegistrationApprovalCodeTtl, adminGetReturnPhotoDownload, adminListReturnTasks, adminReviewReturn, adminCreateMaintenancePlan, adminCreateMaintenanceWorkOrder, adminListMaintenancePlans, adminListMaintenanceWorkOrders, adminMaintenanceOverview, adminUpdateMaintenancePlan, adminUpdateMaintenanceWorkOrder, adminAnalyticsFaults, adminAnalyticsIntelligence, adminAnalyticsOverview, adminAnalyticsTimeHeatmap, adminListIntelligenceActionLogs, adminUpdateIntelligenceAction, adminApproveReservation, adminApproveReservationBatch, adminBulkApproveReservations, adminChangeReservationPlan, adminMarkReservationNoShow, adminReviewReservationCancellation, adminCreateDevice, adminDeleteDevice, adminDeleteDevices, adminCreateExportJob, adminGetExportJobDownload, adminDashboard, adminDeleteUser, adminDeleteUsers, adminExportData, adminGetActivitySummary, adminGetDeviceDetail, adminGetOperationsOverview, adminGetReservationBatch, adminGetSecurityConfig, adminGetUserDetail, adminListPasswordResetRequests, adminReviewPasswordResetRequest, submitPasswordResetRequest, adminListDevices, adminListExportJobs, adminListReservationBatches, adminListReservations, adminListRoles, adminListUsers, adminLogin, adminOperationLogs, adminOptions, adminPermissions, adminPreviewDailyUsageReport, adminResetUserPassword, adminRunNextExportJob, adminSendDailyUsageReport, adminRevokeRole, adminSetDeviceAvailable, adminSetUserBan, adminSetUserStatus, adminUnbindWechat, adminUpdateDevice, adminUpdateSecurityConfig, adminUpsertRole, adminUserRoles, adminListFaultReports, adminNotifyAffectedFaultUsers, adminResolveFaultReport, adminListUserRequests, adminReviewUserRequest, adminListMaterialRequests, adminReviewMaterialRequest, addChatParticipants, authTokenFromReq, bindWechatAccount, bootstrapSystem, buildWechatReply, canSubscribeChatChannel, canSubscribeReservationAdminChannel, cleanupExpiredReturnPhotos, cleanupExpiredTemporaryGroups, completeRequiredPasswordReset, cancelReservation, cancelReservationItem, cancelUserRequest, cancelMaterialRequest, createChatConversation, createLoginChallenge, createReservation, createUserRequest, createMaterialRequest, dissolveChatConversation, isPasswordResetRequired, leaveChatConversation, getCalendarDay, getCalendarEvents, getReportConfig, getDeviceDetail, getDeviceTimeSlots, getLoginChallengeStatus, getProfile, getReservationBatch, getReservationSlotOptions, getSystemNotice, getStaffContacts, handleWechatMessage, listChatAnnouncements, listChatConversations, listChatMessages, listChatUsers, listDevices, listMyNotifications, listMyFaultReports, listMyUserRequests, listMyMaterialRequests, listReservationBatches, loginUser, markChatConversationRead, markMyNotificationsRead, myRecords, precheckBorrowExtension, precheckReservation, publishChatAnnouncement, registerUser, removeChatParticipant, reportDeviceFault, requestUserRequestChange, resolveRealtimePrincipal, safeFilename, sendChatMessage, sendWechatCustomMessage, shouldBlockIpAccess, autoStartDueReservations, extendBorrow, startReservationBatch, startUse, streamChatEvents, submitReturn, supplementReturnMaterials, pushDailyUsageReport, runMaintenanceWindowLifecycle, updateUserRequest, usageStats, verifyWechatHandshake };
 }
 
 module.exports = { createRentalService };

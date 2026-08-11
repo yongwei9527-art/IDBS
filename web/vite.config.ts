@@ -6,10 +6,16 @@ import path from 'node:path';
 const V5_BASE = '/v5/';
 const API_PROXY_TARGET = process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:3000';
 
-export default defineConfig({
+export default defineConfig(({ command, mode }) => ({
   plugins: [
     react()
   ],
+  // The server-hosted Web build must always call its own origin. A developer's
+  // ignored .env.local may contain a LAN address for Android, but that address
+  // must never be embedded into public/v5. Android keeps the configured origin.
+  define: command === 'build' && mode === 'web'
+    ? { 'import.meta.env.VITE_API_ORIGIN': JSON.stringify('') }
+    : undefined,
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src')
@@ -56,4 +62,4 @@ export default defineConfig({
       }
     }
   }
-});
+}));

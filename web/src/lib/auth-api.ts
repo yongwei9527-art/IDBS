@@ -44,6 +44,15 @@ export interface RegisterPendingResult {
   status: 'pending';
 }
 
+export interface PasswordResetRequestPayload {
+  phone: string;
+  name: string;
+  student_no: string;
+  major?: string;
+  mentor_name: string;
+  reason?: string;
+}
+
 async function registerUser(payload: RegisterPayload): Promise<AuthBundle | RegisterPendingResult> {
   const data = await request<AuthBundle | RegisterPendingResult>('/auth/register', {
     method: 'POST',
@@ -56,6 +65,13 @@ async function completeRequiredPasswordReset(currentPassword: string, newPasswor
   return request<{ message: string }>('/auth/password-reset/complete', {
     method: 'POST',
     body: JSON.stringify({ current_password: currentPassword, new_password: newPassword })
+  });
+}
+
+async function requestPasswordReset(payload: PasswordResetRequestPayload): Promise<{ message: string }> {
+  return request<{ message: string }>('/auth/password-reset/request', {
+    method: 'POST',
+    body: JSON.stringify(payload)
   });
 }
 
@@ -135,6 +151,7 @@ async function getMe(): Promise<Me> {
 export const authApi = {
   loginUser,
   registerUser,
+  requestPasswordReset,
   completeRequiredPasswordReset,
   createWechatChallenge,
   getWechatStatus,

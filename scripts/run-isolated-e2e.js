@@ -125,8 +125,17 @@ async function main() {
 
   if (BUILD) await run(NODE, [path.join('web', 'node_modules', 'vite', 'bin', 'vite.js'), 'build'], { env: sharedEnv });
   if (PREPARE) {
-    await run(NODE, [path.join('scripts', 'prepare-demo-db.js')], { env: sharedEnv });
-    await run(NODE, [path.join('scripts', 'seed-demo-data.js')], { env: sharedEnv });
+    const prepareEnv = {
+      ...sharedEnv,
+      // The database name has already passed assertIsolatedDatabase(). Keep the
+      // destructive reset guard local to the child process instead of weakening
+      // reset-schema.js for normal operators.
+      RESET_LABORATORY_MANAGEMENT_SYSTEM_SCHEMA: '1'
+    };
+    await run(NODE, [path.join('scripts', 'reset-schema.js')], { env: prepareEnv });
+    await run(NODE, [path.join('scripts', 'migrate-db.js')], { env: prepareEnv });
+    await run(NODE, [path.join('scripts', 'prepare-demo-db.js')], { env: prepareEnv });
+    await run(NODE, [path.join('scripts', 'seed-demo-data.js')], { env: prepareEnv });
   }
 
   let server;

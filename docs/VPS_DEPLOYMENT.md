@@ -9,7 +9,13 @@
 从 GitHub 主分支执行安装器：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install.sh | sudo bash
+(
+  set -e
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' EXIT
+  curl -fL --retry 3 -o "$tmp" 'https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install.sh'
+  sudo bash "$tmp"
+)
 ```
 
 也可以先克隆仓库后执行：
@@ -22,24 +28,35 @@ sudo bash scripts/install.sh
 
 安装器会安装或准备 Node.js、Nginx、PostgreSQL、应用依赖和服务，并拉取指定分支的源码。它会交互询问：
 
+项目的唯一正式安装入口是 `scripts/install.sh`；`scripts/install-vps.sh` 只是向后兼容包装器。Linux 服务统一命名为 `laboratory-management-system`，旧服务名 `laboratory_management_system` 会作为兼容别名保留。PostgreSQL 数据库 `laboratory_management_system` 和用户 `laboratory_management_system_user` 仍使用下划线。
+
 1. **访问域名**：可留空，留空时自动检测服务器公网 IP；输入域名时可选择自动申请 Let's Encrypt HTTPS 证书。
 2. **最高管理员账号**：默认 `13900000000`，可改为管理员手机号/登录账号。
 3. **最高管理员密码**：可自行输入 12–128 位密码；留空时生成强随机密码，并仅在安装完成的终端输出中显示。首次登录后应立即修改。
-4. **数据目录**：导出、上传、备份和数据库运维目录均可自定义，必须是绝对路径。
+4. **数据目录**：导出、上传、备份和数据库运维目录均可自定义，必须是专用的绝对路径。四个目录不得相同或互相嵌套，也不得指向系统根目录、`current`/`previous`、`releases`、自托管 APK、源码或共享密钥目录；路径仅允许常规 Linux 文件名字符，不接受空格、换行或 shell 元字符。
 5. **Firebase 推送（可选）**：可输入 VPS 上 Firebase Admin SDK 服务账号 JSON 的绝对路径。安装器验证文件后仅把压缩 JSON 的 Base64 写入权限为 `600` 的共享 `.env`，不会输出私钥内容。
+
+账号、姓名和密码提示均可直接按 Enter。默认账号为 `13900000000`，默认姓名为 `System Administrator`；密码留空时，安装器会为本次安装生成独立的随机强临时密码，而不是使用所有服务器相同的固定密码。该密码会在安装成功后输出并写入 root-only 的安装信息，首次登录后强制修改。
+
+域名留空不会阻止安装。安装器会优先检测公网 IPv4，无法访问外部检测服务时再选择本机有效 IPv4；无域名模式跳过 Certbot，使用 `http://公网IPv4` 和 Nginx 80 端口。也可在域名提示处直接输入公网 IPv4。若只能检测到内网地址，安装仍可用于局域网但会显示警告；若完全无法取得有效 IPv4，则会停止并要求重新输入公网 IPv4 或域名，避免生成不可用地址。
+
+云厂商安全组或外部防火墙必须允许 TCP 80 入站；使用 HTTPS 域名时还要允许 TCP 443。安装器不会自动放宽服务器已有的防火墙策略。若 UFW 已启用，可根据实际入口执行 `sudo ufw allow 80/tcp`，域名 HTTPS 环境再执行 `sudo ufw allow 443/tcp`。
 
 默认目录如下（可在安装向导中覆盖）：
 
 | 项目 | 默认目录 | 环境变量 |
 | --- | --- | --- |
-| 应用运行目录 | `/var/www/laboratory-management-system/current` | `APP_BASE` 派生 |
+| 当前版本软链接 | `/var/www/laboratory-management-system/current` | `APP_BASE` 派生 |
+| 独立版本目录 | `/var/www/laboratory-management-system/releases/<id>` | `APP_BASE` 派生 |
+| 前一版本软链接 | `/var/www/laboratory-management-system/previous` | `APP_BASE` 派生 |
 | 源码目录 | `/var/www/laboratory-management-system-src` | `SRC_DIR` |
 | 导出文件 | `/var/www/laboratory-management-system/exports` | `EXPORT_DIR` |
 | 上传文件 | `/var/www/laboratory-management-system/uploads` | `UPLOAD_DIR` |
 | 备份文件 | `/var/www/laboratory-management-system/backups` | `BACKUP_DIR` |
+| 自托管 APK | `/var/www/laboratory-management-system/downloads/app.apk` | `APP_BASE` 派生 |
 | 数据库运维目录 | `/var/www/laboratory-management-system/database` | `DATABASE_DIR` |
 
-`DATABASE_DIR` 由安装器创建并保留给数据库运维数据；现有部署仍由系统 PostgreSQL 服务管理实际数据库集群目录，不会在安装时做破坏性数据库目录迁移。
+`DATABASE_DIR` 只是数据库备份、恢复或维护过程中使用的**运维目录**，不是 PostgreSQL 的 `PGDATA`。实际数据库集群目录仍由系统 PostgreSQL 服务和发行版管理（通常位于 `/var/lib/postgresql/...`）；安装器不会把它迁移到 `DATABASE_DIR`，也不会把该目录描述为实际数据库数据目录。
 
 安装结束会显示类似信息：
 
@@ -54,6 +71,8 @@ App 下载页：https://lab.example.com/download
 
 若 HTTPS 证书申请失败，安装不会删除已创建的数据；服务会继续使用 HTTP，并应在 DNS 生效后重新配置证书。再次运行安装器检测到已有安装时，会保留现有最高管理员账号和密码。
 
+若安装在依赖下载、数据库初始化或服务启动阶段中断，直接重新运行同一条 `scripts/install.sh` 命令。安装器会保留数据库和上传文件，并通过 `/var/www/laboratory-management-system/shared/.initial-super-admin-pending`（`root:root 600`）恢复尚未完成的首次管理员初始化；成功后该临时文件会被删除并写入 root-only 的 `install-info`。不要为了重试而删除 `.env`。
+
 ## 2. 安装后的配置与检查
 
 安装器将公开地址、跨域来源、目录和 App 配对配置写入共享 `.env`，其中包括：
@@ -63,20 +82,29 @@ APP_PUBLIC_URL=https://lab.example.com
 CORS_ORIGIN=https://localhost,https://lab.example.com
 UPLOAD_DIR=/var/www/laboratory-management-system/uploads
 EXPORT_DIR=/var/www/laboratory-management-system/exports
+EXPORT_RETENTION_DAYS=30
 BACKUP_DIR=/var/www/laboratory-management-system/backups
+RELEASE_RETENTION_COUNT=5
 DATABASE_DIR=/var/www/laboratory-management-system/database
 APP_PAIRING_TTL_MINUTES=10
 ```
+
+`EXPORT_RETENTION_DAYS` 控制独立导出目录中的任务文件保留时间，默认 `30` 天，允许范围为 `1`–`3650` 天。安装和更新会保留已有的合法值；旧部署缺少该变量时会补写默认值 `30`，不会覆盖管理员已设置的合法保留天数。
+
+`RELEASE_RETENTION_COUNT` 控制服务器保留的代码版本总数，默认 `5`，允许范围为 `2`–`20`。`current` 与 `previous` 指向的版本始终受保护；清理程序只删除 `releases/` 中带部署标记的更旧版本，不处理上传、导出、备份、共享 `.env` 或数据库。
 
 安装器还会生成 `APP_PAIRING_SECRET`。该值仅保存在服务器 `.env`，不得复制到客户端、日志、截图或仓库。
 
 检查服务状态：
 
 ```bash
-sudo systemctl status laboratory_management_system --no-pager
-curl -fsS http://127.0.0.1:3000/health
-curl -fsS http://127.0.0.1:3000/ready
-sudo journalctl -u laboratory_management_system -f
+sudo systemctl status laboratory-management-system --no-pager
+ENV_FILE=/var/www/laboratory-management-system/shared/.env
+PORT="$(sudo sed -n 's/^PORT=//p' "$ENV_FILE" | tail -n 1)"
+PORT="${PORT:-3000}"
+curl -fsS "http://127.0.0.1:${PORT}/health"
+curl -fsS "http://127.0.0.1:${PORT}/ready"
+sudo journalctl -u laboratory-management-system -f
 ```
 
 ### 2.1 配置或轮换 Firebase Android 推送
@@ -103,11 +131,37 @@ sudo /usr/local/sbin/laboratory-management-system-configure-firebase /root/fireb
 在默认源码目录中执行：
 
 ```bash
-cd /var/www/laboratory-management-system-src
-sudo bash scripts/update.sh
+sudo laboratory-management-system-update
 ```
 
-`update.sh` 仅允许在已安装环境中运行，并委托现有安全更新流程：拒绝覆盖有本地修改的源码、执行更新前备份、拉取并部署代码、重启服务以及检查 `/ready` 健康状态。请在升级前确认源码目录没有未提交的人工修改。
+`update.sh` 仅允许在已安装环境中运行，并委托原子更新流程：拒绝覆盖有本地修改的源码、按照 `.env` 中的自定义目录执行更新前备份、拉取代码、在线构建独立候选版本、执行数据库迁移、原子切换代码软链接、重启服务并检查 `/ready`。请在升级前确认源码目录没有未提交的人工修改。
+
+### 3.1 原子发布与失败回退
+
+VPS 代码目录采用以下结构：
+
+```text
+/var/www/laboratory-management-system/
+├── releases/
+│   ├── 20260810T120000Z-a1b2c3d4e5f6/
+│   └── 20260811T083000Z-b2c3d4e5f6a1/
+├── current  -> releases/20260811T083000Z-b2c3d4e5f6a1
+├── previous -> releases/20260810T120000Z-a1b2c3d4e5f6
+└── shared/.env
+```
+
+更新顺序如下：
+
+1. 当前服务继续在线；新源码被复制到新的 `releases/<id>`，依赖安装、Web 构建和 doctor 前置检查均在候选目录完成，不覆盖 `current`。
+2. 更新器创建 PostgreSQL 自定义格式备份，并用校验和及 `pg_restore --list` 验证。部署阶段复用并再次验证同一份备份，不重复创建另一份迁移前备份。
+3. 只有候选构建及备份都成功后才停止服务，并从候选版本执行向前数据库迁移。
+4. `previous` 先指向旧版本，再以同一文件系统内的原子重命名把 `current` 切到候选版本；systemd 始终通过 `current` 启动。
+5. 新服务通过 `/ready` 后发布完成，并按 `RELEASE_RETENTION_COUNT` 清理旧代码目录。
+6. 若重启或健康检查失败，脚本会立即把 `current` 切回旧代码并重新启动旧版本，同时保留失败候选用于诊断。
+
+> **数据库不会自动回滚。** 应用代码回退与数据库恢复是两件不同的操作。迁移可能已提交且旧代码未必兼容新结构；自动执行 `pg_restore` 会覆盖迁移后的新数据，因此脚本只报告已验证备份地址。数据库恢复必须由管理员在维护窗口中审查迁移影响后显式执行。
+
+首次从旧的“实体 `current/` 目录”升级时，部署器会在停机切换阶段把旧目录移入 `releases/legacy-<时间>`，然后建立 `current`/`previous` 软链接；不会删除旧版本或持久数据。
 
 手动创建完整备份：
 
@@ -116,13 +170,50 @@ cd /var/www/laboratory-management-system-src
 sudo bash scripts/backup.sh
 ```
 
-`backup.sh` 使用文件锁避免并发执行，创建并校验 PostgreSQL 备份，同时归档上传目录与独立的导出目录。它会按 `BACKUP_RETENTION_DAYS`（默认 14 天）清理旧备份。仅校验最新数据库备份时使用：
+每日 systemd 定时器与手动命令共用同一个 `backup.sh`：它使用文件锁避免并发执行，创建并校验 PostgreSQL 备份，同时归档上传目录与独立的导出目录。它会按 `BACKUP_RETENTION_DAYS`（默认 14 天，允许 1–3650 天）清理旧备份；安装或升级会补齐并校验该配置。仅校验最新数据库备份时使用：
 
 ```bash
+cd /var/www/laboratory-management-system-src
 sudo bash scripts/backup.sh --verify
 ```
 
 备份文件含业务数据，应限制为管理员和备份系统可读；恢复数据库会覆盖现有数据，必须在维护窗口确认备份时间后再操作。
+
+### 3.2 安全卸载
+
+`sudo bash scripts/uninstall-vps.sh` 会停止新旧服务名、移除 systemd/Nginx 配置和管理命令，但默认保留应用目录、上传、导出与备份数据。确实需要连同应用目录删除时，必须在完成离线备份后显式执行：
+
+```bash
+sudo env REMOVE_APP_DATA=1 \
+  UNINSTALL_CONFIRMATION=DELETE-LABORATORY-MANAGEMENT-SYSTEM \
+  bash scripts/uninstall-vps.sh
+```
+
+删除前脚本会再次校验绝对路径、危险系统目录和符号链接；PostgreSQL 数据库与用户始终不会被卸载脚本自动删除。
+
+远程执行正式卸载器时使用：
+
+```bash
+(
+  set -e
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' EXIT
+  curl -fL --retry 3 -o "$tmp" 'https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/uninstall-vps.sh'
+  sudo bash "$tmp"
+)
+```
+
+完整删除模式还会删除默认源码目录 `/var/www/laboratory-management-system-src`；应用目录外的自定义上传、导出、备份和数据库运维目录始终保留，现有 Let's Encrypt 证书也不会自动删除。
+
+`scripts/prepare-vps.sh` 的彻底重装模式会同时删除受管应用目录和本机 `laboratory_management_system` 数据库，因此也采用双重确认。仅在完成离线备份后执行：
+
+```bash
+sudo env RESET_LABORATORY_MANAGEMENT_SYSTEM_DATA=1 \
+  RESET_CONFIRMATION=DELETE-LABORATORY-MANAGEMENT-SYSTEM-DATA \
+  bash scripts/prepare-vps.sh
+```
+
+不带上述两个变量运行 `scripts/prepare-vps.sh` 时是非破坏性准备：只安装基础依赖并确保受管根目录存在，不停止现有应用、不禁用 systemd 单元、不移除 Nginx 配置，也不删除数据库或文件。
 
 ## 4. 下载页与 APK 发布
 
@@ -132,19 +223,22 @@ sudo bash scripts/backup.sh --verify
 https://<服务器>/download
 ```
 
-下载页提供网页版入口、Android APK 下载入口和当前服务器的配对二维码。服务从活动应用目录下的以下路径提供 APK：
+下载页提供网页版入口、Android APK 下载入口和当前服务器的配对二维码。首次通过正式安装器部署时，`APK_DOWNLOAD_URL` 会自动配置为当前服务版本对应的 GitHub Release APK，因此 `/download` 不依赖仓库中携带二进制安装包。
+
+如果 VPS 不能访问 GitHub，或希望由自己的服务器提供 APK，可将已签名的 Release APK 放到持久目录：
 
 ```text
-public/download/app.apk
+/var/www/laboratory-management-system/downloads/app.apk
 ```
 
-因此将已签名的 Release APK 放到活动部署的 `public/download/app.apk` 后，即可通过：
+然后在 root-only 的 `.env` 中设置：
 
-```text
-https://<服务器>/download/app.apk
+```env
+APK_DOWNLOAD_URL=https://<服务器>/download/app.apk
+APK_DOWNLOAD_URL_MANAGED=self_hosted
 ```
 
-下载。发布新版本时应随部署一同更新该文件；不要把 Android 签名私钥、`key.properties` 或任何生产密钥上传到 GitHub Release。
+每个候选版本的 `public/download` 都是指向该持久目录的软链接。重启服务后，`/download` 和 `GET /api/v5/app-config` 会返回该自托管地址，原子更新和旧版本清理都不会删除 APK。首次从旧目录布局升级时，部署器会把现有的普通 `current/public/download/app.apk` 迁移到该目录；出于安全原因不会迁移符号链接。不要把 Android 签名私钥、`key.properties` 或任何生产密钥上传到 GitHub Release。
 
 ## 5. App 公开配置与二维码配对接口
 

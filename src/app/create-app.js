@@ -71,7 +71,7 @@ function isPublicPageRequest(req) {
 function isPublicApiRequest(req) {
   const pathname = req.path || '';
   return [
-    '/api/v5/auth/register', '/api/v5/login/challenge', '/api/v5/login/status',
+    '/api/v5/auth/login', '/api/v5/auth/register', '/api/v5/auth/password-reset/request', '/api/v5/login/challenge', '/api/v5/login/status',
     '/api/v5/devices', '/api/v5/calendar', '/api/v5/reservation-slots', '/api/v5/device-time-slots',
     '/api/v5/app-config', '/api/v5/app-pairing'
   ].some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
@@ -86,6 +86,8 @@ function createApp({ config, db, service, refreshSessions, runtimeDiagnostics, s
   const createRateLimiter = (options) => db?.consumeRateLimit
     ? createDistributedRateLimiter({ ...options, consume: (key, windowMs) => db.consumeRateLimit(key, windowMs) })
     : createMemoryRateLimiter(options);
+  const privateRateKey = (namespace, value) => `${namespace}:${crypto.createHmac('sha256', config.tokenSecret).update(String(value || '')).digest('hex').slice(0, 32)}`;
+  const requestIp = (req) => String(req.ip || req.socket?.remoteAddress || 'unknown').slice(0, 100);
   const v5PublicDir = path.join(config.publicDir, 'v5');
 
   app.disable('x-powered-by');
@@ -122,6 +124,38 @@ function createApp({ config, db, service, refreshSessions, runtimeDiagnostics, s
       return `${req.ip || req.socket?.remoteAddress || 'unknown'}:${accountKey}`;
     },
     message: '注册尝试过于频繁，请稍后再试。',
+    code: 1004
+  }));
+  app.use('/api/v5/auth/password-reset/request', createRateLimiter({
+    windowMs: 60 * 60_000,
+    max: 10,
+    maxKeys: 20_000,
+    keyGenerator(req) {
+      return privateRateKey('password-reset-ip', requestIp(req));
+    },
+    message: '\u7533\u8bf7\u8fc7\u4e8e\u9891\u7e41\uff0c\u8bf7\u4e00\u5c0f\u65f6\u540e\u518d\u8bd5\u3002',
+    code: 1004
+  }));
+  app.use('/api/v5/auth/password-reset/request', createRateLimiter({
+    windowMs: 60 * 60_000,
+    max: 3,
+    maxKeys: 20_000,
+    keyGenerator(req) {
+      const account = String(req.body?.phone || '').trim().toLowerCase().slice(0, 80);
+      return privateRateKey('password-reset-account', account);
+    },
+    message: '\u7533\u8bf7\u8fc7\u4e8e\u9891\u7e41\uff0c\u8bf7\u4e00\u5c0f\u65f6\u540e\u518d\u8bd5\u3002',
+    code: 1004
+  }));
+  app.use('/api/v5/auth/password-reset/request', createRateLimiter({
+    windowMs: 60 * 60_000,
+    max: 3,
+    maxKeys: 20_000,
+    keyGenerator(req) {
+      const account = String(req.body?.phone || '').trim().toLowerCase().slice(0, 80);
+      return `${privateRateKey('password-reset-pair-ip', requestIp(req))}:${privateRateKey('account', account)}`;
+    },
+    message: '\u7533\u8bf7\u8fc7\u4e8e\u9891\u7e41\uff0c\u8bf7\u4e00\u5c0f\u65f6\u540e\u518d\u8bd5\u3002',
     code: 1004
   }));
   app.use('/uploads/exports', (_req, res) => res.status(404).end());

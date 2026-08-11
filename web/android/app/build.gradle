@@ -1,4 +1,5 @@
 import java.util.Properties
+import java.util.Locale
 
 // Release credentials are intentionally external to the repository. CI values take precedence
 // over the ignored local keystore.properties file.
@@ -29,6 +30,31 @@ def missingReleaseSigningFields = releaseSigning.findAll { key, value -> value =
 def releaseSigningConfigured = missingReleaseSigningFields.isEmpty()
 def releaseStoreFile = releaseSigningConfigured ? rootProject.file(releaseSigning.storeFile) : null
 
+def appLinkValue = { String environmentKey, String propertyKey ->
+    def value = System.getenv(environmentKey)
+    if (value == null || value.trim().isEmpty()) value = project.findProperty(propertyKey)
+    return value == null ? '' : value.toString().trim()
+}
+def appLinkHost = appLinkValue('ANDROID_APP_LINK_HOST', 'LAB_APP_LINK_HOST').toLowerCase(Locale.ROOT)
+def appLinkAutoVerify = appLinkValue('ANDROID_APP_LINK_AUTO_VERIFY', 'LAB_APP_LINK_AUTO_VERIFY') ?: 'false'
+def appLinkLabels = appLinkHost ? appLinkHost.split(/[.]/, -1) : []
+def validAppLinkHost = !appLinkHost || (appLinkHost.length() <= 253 && appLinkLabels.size() >= 2
+    && appLinkLabels.every { label ->
+        label.length() <= 63 && label ==~ /(?i)^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
+    })
+if (!validAppLinkHost) {
+    throw new GradleException(
+        'ANDROID_APP_LINK_HOST / LAB_APP_LINK_HOST must be a DNS hostname without scheme, path or port (received: '
+            + appLinkHost + ').'
+    )
+}
+if (!(appLinkAutoVerify in ['true', 'false'])) {
+    throw new GradleException('ANDROID_APP_LINK_AUTO_VERIFY / LAB_APP_LINK_AUTO_VERIFY must be true or false.')
+}
+if (appLinkAutoVerify == 'true' && !appLinkHost) {
+    throw new GradleException('An App Link host is required when autoVerify is enabled.')
+}
+
 if (releaseSigningConfigured && !releaseStoreFile.isFile()) {
     throw new GradleException('The configured Android release keystore file cannot be found.')
 }
@@ -45,6 +71,10 @@ android {
         versionCode 50007
         versionName "5.0.7"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        manifestPlaceholders = [
+            labAppLinkHost: appLinkHost ?: 'app.invalid',
+            labAppLinkAutoVerify: appLinkAutoVerify
+        ]
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61

@@ -5,15 +5,26 @@ on:
     tags:
       - 'v*'
 
-permissions:
-  contents: write
+permissions: {}
+
+concurrency:
+  group: android-release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  release:
+  build-and-verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      EXPECTED_APPLICATION_ID: com.laboratory.managementsystem
+      EXPECTED_CERT_SHA256: f0eda9a14e2d4aaf6b7c0c9613dd0186f2a9beaf3a5e96c3683f450489d185dc
     steps:
       - name: Checkout tagged source
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -36,47 +47,140 @@ jobs:
           npm --prefix web ci
 
       - name: Verify tag and release metadata
+        id: release_metadata
         shell: bash
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
           node <<'NODE'
           const fs = require('node:fs');
           const expected = process.env.RELEASE_TAG.replace(/^v/, '');
           const root = require('./package.json');
           const web = require('./web/package.json');
           const gradle = fs.readFileSync('web/android/app/build.gradle', 'utf8');
+          const versionParts = expected.split('.').map(Number);
+          if (versionParts.length !== 3 || versionParts.some((part) => !Number.isInteger(part) || part < 0 || part > 99)) {
+            throw new Error(`Unsupported release version: ${expected}`);
+          }
+          const expectedVersionCode = versionParts[0] * 10000 + versionParts[1] * 100 + versionParts[2];
           if (root.version !== expected || web.version !== expected) {
             throw new Error(`Version mismatch: tag=${expected}, root=${root.version}, web=${web.version}`);
           }
-          if (!gradle.includes('versionCode 50007') || !gradle.includes(`versionName "${expected}"`)) {
-            throw new Error('Android release metadata does not match v5.0.7.');
+          if (!gradle.includes(`versionCode ${expectedVersionCode}`) || !gradle.includes(`versionName "${expected}"`)) {
+            throw new Error(`Android release metadata does not match ${expected}.`);
           }
+          if (!gradle.includes(`applicationId "${process.env.EXPECTED_APPLICATION_ID}"`)) {
+            throw new Error('Android applicationId does not match the production application.');
+          }
+          if (!fs.existsSync(`docs/RELEASE-${process.env.RELEASE_TAG}.md`)) {
+            throw new Error('Release notes are missing.');
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version_name=${expected}\nversion_code=${expectedVersionCode}\n`);
           NODE
 
-      - name: Restore and validate Firebase Android configuration
+      - name: Verify application quality before signing
+        run: |
+          npm run v5:quality
+          npx playwright test --list
+
+      - name: Restore optional Firebase Android configuration
+        id: firebase_android
         shell: bash
         env:
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
           ANDROID_GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.ANDROID_GOOGLE_SERVICES_JSON_BASE64 }}
         run: |
-          test -n "$ANDROID_GOOGLE_SERVICES_JSON_BASE64" || { echo 'Required Firebase Android secret is not configured: ANDROID_GOOGLE_SERVICES_JSON_BASE64'; exit 1; }
+          set -euo pipefail
           umask 077
-          printf '%s' "$ANDROID_GOOGLE_SERVICES_JSON_BASE64" | base64 --decode > web/android/app/google-services.json
-          test -s web/android/app/google-services.json || { echo 'Decoded google-services.json is empty.'; exit 1; }
-          node <<'NODE'
-          const config = require('./web/android/app/google-services.json');
-          const expectedPackage = 'com.laboratory.managementsystem';
+          primary="${GOOGLE_SERVICES_JSON_BASE64:-}"
+          legacy="${ANDROID_GOOGLE_SERVICES_JSON_BASE64:-}"
+          if [ -n "$primary" ] && [ -n "$legacy" ] && [ "$primary" != "$legacy" ]; then
+            echo 'Both Firebase Android secrets are configured but differ. Keep only GOOGLE_SERVICES_JSON_BASE64.' >&2
+            exit 1
+          fi
+          encoded="${primary:-$legacy}"
+          if [ -z "$encoded" ]; then
+            echo 'firebase_enabled=false' >> "$GITHUB_OUTPUT"
+            echo '::warning::GOOGLE_SERVICES_JSON_BASE64 is not configured. The signed app will build normally, but Android FCM background push will be disabled.'
+            exit 0
+          fi
+          FIREBASE_ANDROID_CONFIG_BASE64="$encoded" node <<'NODE'
+          const fs = require('node:fs');
+          const value = String(process.env.FIREBASE_ANDROID_CONFIG_BASE64 || '').trim();
+          if (!value || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
+            throw new Error('GOOGLE_SERVICES_JSON_BASE64 is malformed.');
+          }
+          const bytes = Buffer.from(value, 'base64');
+          if (bytes.toString('base64') !== value) {
+            throw new Error('GOOGLE_SERVICES_JSON_BASE64 is not canonical Base64.');
+          }
+          let config;
+          try {
+            config = JSON.parse(bytes.toString('utf8'));
+          } catch (_) {
+            throw new Error('Decoded google-services.json is not valid JSON.');
+          }
+          const expectedPackage = process.env.EXPECTED_APPLICATION_ID;
           const clients = Array.isArray(config.client) ? config.client : [];
           const matchesPackage = clients.some((entry) =>
             entry?.client_info?.android_client_info?.package_name === expectedPackage
           );
-          if (!config?.project_info?.project_id || !matchesPackage) {
-            throw new Error('Firebase Android configuration does not match the release application.');
+          if (typeof config?.project_info?.project_id !== 'string'
+            || !config.project_info.project_id
+            || !matchesPackage) {
+            throw new Error('Firebase Android configuration does not match the production application.');
           }
-          console.log('Firebase Android configuration validated.');
+          fs.writeFileSync('web/android/app/google-services.json', bytes, { mode: 0o600, flag: 'wx' });
+          NODE
+          echo 'firebase_enabled=true' >> "$GITHUB_OUTPUT"
+          echo 'Firebase Android configuration restored and validated without printing its contents.'
+
+      - name: Validate optional matching server FCM credential
+        shell: bash
+        env:
+          FCM_SERVICE_ACCOUNT_JSON_BASE64: ${{ secrets.FCM_SERVICE_ACCOUNT_JSON_BASE64 }}
+          FIREBASE_ANDROID_ENABLED: ${{ steps.firebase_android.outputs.firebase_enabled }}
+        run: |
+          set -euo pipefail
+          if [ -z "${FCM_SERVICE_ACCOUNT_JSON_BASE64:-}" ]; then
+            echo '::notice::FCM_SERVICE_ACCOUNT_JSON_BASE64 is not configured in Actions. Configure it on the VPS with scripts/configure-firebase.sh to enable server-side FCM delivery.'
+            exit 0
+          fi
+          node <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const value = String(process.env.FCM_SERVICE_ACCOUNT_JSON_BASE64 || '').trim();
+          if (!value || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
+            throw new Error('FCM_SERVICE_ACCOUNT_JSON_BASE64 is malformed.');
+          }
+          const bytes = Buffer.from(value, 'base64');
+          if (bytes.toString('base64') !== value) {
+            throw new Error('FCM_SERVICE_ACCOUNT_JSON_BASE64 is not canonical Base64.');
+          }
+          let serviceAccount;
+          try {
+            serviceAccount = JSON.parse(bytes.toString('utf8'));
+          } catch (_) {
+            throw new Error('Decoded server Firebase service account is not valid JSON.');
+          }
+          if (serviceAccount?.type !== 'service_account'
+            || typeof serviceAccount.project_id !== 'string' || !serviceAccount.project_id
+            || typeof serviceAccount.client_email !== 'string' || !serviceAccount.client_email
+            || typeof serviceAccount.private_key !== 'string' || !serviceAccount.private_key) {
+            throw new Error('Server Firebase service-account secret is incomplete.');
+          }
+          crypto.createPrivateKey(serviceAccount.private_key);
+          if (process.env.FIREBASE_ANDROID_ENABLED === 'true') {
+            const android = JSON.parse(fs.readFileSync('web/android/app/google-services.json', 'utf8'));
+            if (serviceAccount.project_id !== android?.project_info?.project_id) {
+              throw new Error('Server FCM and Android Firebase configurations use different projects.');
+            }
+          }
+          console.log('Server FCM credential validated in memory; it was not written to the workspace or artifacts.');
           NODE
 
-      - name: Restore release signing material
+      - name: Restore and validate official release keystore
         shell: bash
         env:
           ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
@@ -84,55 +188,191 @@ jobs:
           ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
           ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
         run: |
+          set -euo pipefail
           for required in ANDROID_RELEASE_KEYSTORE_BASE64 ANDROID_RELEASE_STORE_PASSWORD ANDROID_RELEASE_KEY_ALIAS ANDROID_RELEASE_KEY_PASSWORD; do
-            test -n "${!required}" || { echo "Required Android release signing secret is not configured: $required"; exit 1; }
+            if [ -z "${!required:-}" ]; then
+              echo "Required Android release signing secret is not configured: $required" >&2
+              echo 'No replacement key will be generated and no APK will be published.' >&2
+              exit 1
+            fi
           done
           umask 077
           key_store="$RUNNER_TEMP/laboratory-management-system-release.jks"
-          printf '%s' "$ANDROID_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$key_store"
-          test -s "$key_store" || { echo 'Decoded Android release keystore is empty.'; exit 1; }
-          {
-            echo "ANDROID_RELEASE_STORE_FILE=$key_store"
-            echo "ANDROID_RELEASE_STORE_PASSWORD=$ANDROID_RELEASE_STORE_PASSWORD"
-            echo "ANDROID_RELEASE_KEY_ALIAS=$ANDROID_RELEASE_KEY_ALIAS"
-            echo "ANDROID_RELEASE_KEY_PASSWORD=$ANDROID_RELEASE_KEY_PASSWORD"
-          } >> "$GITHUB_ENV"
+          KEYSTORE_BASE64="$ANDROID_RELEASE_KEYSTORE_BASE64" KEYSTORE_PATH="$key_store" node <<'NODE'
+          const fs = require('node:fs');
+          const value = String(process.env.KEYSTORE_BASE64 || '').trim();
+          if (!value || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
+            throw new Error('ANDROID_RELEASE_KEYSTORE_BASE64 is malformed.');
+          }
+          const bytes = Buffer.from(value, 'base64');
+          if (bytes.length === 0 || bytes.toString('base64') !== value) {
+            throw new Error('ANDROID_RELEASE_KEYSTORE_BASE64 is empty or not canonical Base64.');
+          }
+          fs.writeFileSync(process.env.KEYSTORE_PATH, bytes, { mode: 0o600, flag: 'wx' });
+          NODE
+          cert_der="$RUNNER_TEMP/android-release-cert.der"
+          keytool -exportcert \
+            -keystore "$key_store" \
+            -alias "$ANDROID_RELEASE_KEY_ALIAS" \
+            -storepass:env ANDROID_RELEASE_STORE_PASSWORD \
+            > "$cert_der"
+          actual_cert_sha256="$(sha256sum "$cert_der" | awk '{print tolower($1)}')"
+          rm -f "$cert_der"
+          if [ "$actual_cert_sha256" != "$EXPECTED_CERT_SHA256" ]; then
+            echo 'Release keystore certificate does not match the official production certificate.' >&2
+            exit 1
+          fi
+          echo 'Official release keystore validated; no signing secret was printed.'
 
       - name: Build signed APK and AAB
+        env:
+          ANDROID_RELEASE_STORE_FILE: ${{ runner.temp }}/laboratory-management-system-release.jks
+          ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
+          ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
         run: |
           npm --prefix web run build:android
           cd web
           npx cap sync android
           cd android
-          ./gradlew assembleRelease bundleRelease
+          ./gradlew --no-daemon assembleRelease bundleRelease
 
-      - name: Verify production APK signature
+      - name: Verify release artifact metadata and signatures
         shell: bash
         env:
-          EXPECTED_CERT_SHA256: f0eda9a14e2d4aaf6b7c0c9613dd0186f2a9beaf3a5e96c3683f450489d185dc
+          EXPECTED_VERSION_NAME: ${{ steps.release_metadata.outputs.version_name }}
+          EXPECTED_VERSION_CODE: ${{ steps.release_metadata.outputs.version_code }}
         run: |
+          set -euo pipefail
+          export LC_ALL=C
           apk='web/android/app/build/outputs/apk/release/app-release.apk'
-          apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print | sort -V | tail -n 1)"
-          test -x "$apksigner" || { echo 'Android apksigner was not found.'; exit 1; }
-          "$apksigner" verify --verbose "$apk"
-          cert_output="$("$apksigner" verify --print-certs "$apk")"
-          grep -qiF -- "$EXPECTED_CERT_SHA256" <<<"$cert_output" || { echo 'APK signer certificate does not match the official production certificate.'; exit 1; }
-          echo 'Production APK signature verified.'
+          aab='web/android/app/build/outputs/bundle/release/app-release.aab'
+          test -s "$apk" || { echo 'Release APK was not produced.' >&2; exit 1; }
+          test -s "$aab" || { echo 'Release AAB was not produced.' >&2; exit 1; }
+
+          android_sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          test -n "$android_sdk" || { echo 'Android SDK location is not configured.' >&2; exit 1; }
+          apksigner="$(find "$android_sdk/build-tools" -type f -name apksigner -print | sort -V | tail -n 1)"
+          test -x "$apksigner" || { echo 'Android apksigner was not found.' >&2; exit 1; }
+          apk_report="$RUNNER_TEMP/apksigner-verify.txt"
+          "$apksigner" verify --verbose --print-certs "$apk" > "$apk_report"
+          apk_cert_sha256="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$apk_report" | head -n 1 | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+          test "$apk_cert_sha256" = "$EXPECTED_CERT_SHA256" || { echo 'APK signer certificate does not match the official production certificate.' >&2; exit 1; }
+
+          apkanalyzer="$(find "$android_sdk/cmdline-tools" -type f -name apkanalyzer -print | sort -V | tail -n 1)"
+          test -x "$apkanalyzer" || { echo 'Android apkanalyzer was not found.' >&2; exit 1; }
+          actual_application_id="$("$apkanalyzer" manifest application-id "$apk" | tr -d '\r\n')"
+          actual_version_name="$("$apkanalyzer" manifest version-name "$apk" | tr -d '\r\n')"
+          actual_version_code="$("$apkanalyzer" manifest version-code "$apk" | tr -d '\r\n')"
+          test "$actual_application_id" = "$EXPECTED_APPLICATION_ID" || { echo 'APK applicationId does not match the production application.' >&2; exit 1; }
+          test "$actual_version_name" = "$EXPECTED_VERSION_NAME" || { echo 'APK versionName does not match the release tag.' >&2; exit 1; }
+          test "$actual_version_code" = "$EXPECTED_VERSION_CODE" || { echo 'APK versionCode does not match the release tag.' >&2; exit 1; }
+
+          aab_report="$RUNNER_TEMP/jarsigner-verify.txt"
+          jarsigner -verify -verbose -certs "$aab" > "$aab_report"
+          grep -q 'jar verified\.' "$aab_report" || { echo 'AAB JAR signature verification did not report success.' >&2; exit 1; }
+          aab_cert_pem="$RUNNER_TEMP/aab-signer-certificates.pem"
+          keytool -printcert -rfc -jarfile "$aab" > "$aab_cert_pem"
+          AAB_CERT_PEM="$aab_cert_pem" node <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const certificates = fs.readFileSync(process.env.AAB_CERT_PEM, 'utf8');
+          const begin = '-----BEGIN CERTIFICATE-----';
+          const end = '-----END CERTIFICATE-----';
+          const start = certificates.indexOf(begin);
+          const finish = certificates.indexOf(end, start);
+          if (start < 0 || finish < 0) throw new Error('AAB signer certificate could not be read.');
+          const signer = certificates.slice(start, finish + end.length);
+          const fingerprint = new crypto.X509Certificate(signer).fingerprint256.replaceAll(':', '').toLowerCase();
+          if (fingerprint !== process.env.EXPECTED_CERT_SHA256) {
+            throw new Error('AAB signer certificate does not match the official production certificate.');
+          }
+          NODE
+
+          bundletool_init="$RUNNER_TEMP/bundletool.init.gradle"
+          cat > "$bundletool_init" <<'GRADLE'
+          gradle.projectsEvaluated {
+              rootProject.tasks.register('dumpBundleManifestMetadata', JavaExec) {
+                  classpath = rootProject.buildscript.configurations.classpath
+                  mainClass.set('com.android.tools.build.bundletool.BundleToolMain')
+                  args 'dump', 'manifest', '--bundle=' + System.getenv('AAB_PATH'), '--module=base'
+              }
+          }
+          GRADLE
+          aab_manifest="$RUNNER_TEMP/aab-manifest.xml"
+          (
+            cd web/android
+            AAB_PATH="$GITHUB_WORKSPACE/$aab" ./gradlew --no-daemon -q -I "$bundletool_init" dumpBundleManifestMetadata > "$aab_manifest"
+          )
+          AAB_MANIFEST="$aab_manifest" node <<'NODE'
+          const fs = require('node:fs');
+          const manifest = fs.readFileSync(process.env.AAB_MANIFEST, 'utf8');
+          const expected = {
+            applicationId: process.env.EXPECTED_APPLICATION_ID,
+            versionName: process.env.EXPECTED_VERSION_NAME,
+            versionCode: process.env.EXPECTED_VERSION_CODE,
+          };
+          const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const hasAttribute = (name, value) => new RegExp(`${name}="${escape(value)}"`).test(manifest);
+          if (!hasAttribute('package', expected.applicationId)
+            || !hasAttribute('android:versionName', expected.versionName)
+            || !hasAttribute('android:versionCode', expected.versionCode)) {
+            throw new Error('AAB manifest metadata does not match the release tag and production application.');
+          }
+          NODE
+          rm -f "$apk_report" "$aab_report" "$aab_cert_pem" "$bundletool_init" "$aab_manifest"
+          echo 'APK and AAB metadata, signatures, and production certificate verified.'
 
       - name: Prepare versioned release assets
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p release-dist
           cp web/android/app/build/outputs/apk/release/app-release.apk "release-dist/Laboratory-Management-System-${GITHUB_REF_NAME}.apk"
           cp web/android/app/build/outputs/bundle/release/app-release.aab "release-dist/Laboratory-Management-System-${GITHUB_REF_NAME}.aab"
           cd release-dist
           sha256sum "Laboratory-Management-System-${GITHUB_REF_NAME}.apk" "Laboratory-Management-System-${GITHUB_REF_NAME}.aab" > "SHA256SUMS-${GITHUB_REF_NAME}.txt"
+          sha256sum --check "SHA256SUMS-${GITHUB_REF_NAME}.txt"
 
-      - name: Upload release artifacts
+      - name: Upload verified release artifacts
         uses: actions/upload-artifact@v4
         with:
           name: android-release-${{ github.ref_name }}
           path: release-dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove restored secrets
+        if: always()
+        shell: bash
+        run: |
+          rm -f web/android/app/google-services.json
+          rm -f "$RUNNER_TEMP/laboratory-management-system-release.jks" "$RUNNER_TEMP/android-release-cert.der"
+
+  publish:
+    needs: build-and-verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout tagged release notes
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download verified release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: android-release-${{ github.ref_name }}
+          path: release-dist
+
+      - name: Verify downloaded checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-dist
+          sha256sum --check "SHA256SUMS-${GITHUB_REF_NAME}.txt"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

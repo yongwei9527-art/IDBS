@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { downloadAuthenticatedFile, friendlyApiMessage, request, tokenStore } from '@/lib/api';
+import { downloadAuthenticatedFile, friendlyApiMessage, getApiBase, request, tokenStore } from '@/lib/api';
 import { QUERY_STALE } from '@/lib/query-defaults';
 
 export interface BatchDeleteResult {
@@ -239,6 +239,61 @@ export function useResetUserPassword() {
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ['admin-users'] });
       qc.invalidateQueries({ queryKey: ['admin-user-detail', vars.id] });
+    }
+  });
+}
+
+export interface PasswordResetRequest {
+  id: string;
+  user_id?: string | null;
+  submitted_phone: string;
+  submitted_name: string;
+  submitted_student_no: string;
+  submitted_major?: string | null;
+  submitted_mentor_name: string;
+  reason?: string | null;
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled' | 'expired';
+  request_count?: number;
+  account_name?: string | null;
+  account_phone?: string | null;
+  account_student_no?: string | null;
+  account_major?: string | null;
+  account_mentor_name?: string | null;
+  account_role?: string | null;
+  created_at: string;
+  updated_at: string;
+  expires_at?: string;
+}
+
+export function usePasswordResetRequests(status: PasswordResetRequest['status'] | 'all' = 'pending', enabled = true) {
+  return useQuery({
+    queryKey: ['admin-password-reset-requests', status],
+    enabled,
+    queryFn: () => request<{ requests: PasswordResetRequest[] }>(`/admin/password-reset-requests?status=${encodeURIComponent(status)}`)
+  });
+}
+
+export interface PasswordResetReviewResult {
+  message: string;
+  request_id: string;
+  status: 'approved' | 'rejected' | 'expired';
+  temporary_password?: string;
+  temporary_password_expires_at?: string | null;
+  refresh_sessions_revoked: number;
+  password_reset_required: boolean;
+}
+
+export function useReviewPasswordResetRequest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { id: string; approved: boolean; review_note?: string }) =>
+      request<PasswordResetReviewResult>(`/admin/password-reset-requests/${encodeURIComponent(vars.id)}/review`, {
+        method: 'PATCH',
+        body: JSON.stringify({ approved: vars.approved, review_note: vars.review_note || '' })
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-password-reset-requests'] });
+      qc.invalidateQueries({ queryKey: ['admin-users'] });
     }
   });
 }
@@ -1080,6 +1135,106 @@ export function fetchAdminExportRows(vars: { type: string; user_id?: string; dev
   if (vars.end_date) qs.set('end_date', vars.end_date);
   const query = qs.toString();
   return request<ExportRowsResult>(`/admin/exports/${encodeURIComponent(vars.type)}${query ? `?${query}` : ''}`);
+}
+
+// ---------- Legacy document import ----------
+
+export type LegacyImportDataset = 'auto' | 'users' | 'devices' | 'reservations' | 'usage' | 'faults' | 'user_activity';
+export type LegacyImportConflictPolicy = 'skip' | 'update';
+
+export interface LegacyImportOptions {
+  file: File;
+  dataset: LegacyImportDataset;
+  conflict_policy: LegacyImportConflictPolicy;
+  allow_partial: boolean;
+  create_missing_devices: boolean;
+  confirmation?: 'IMPORT';
+}
+
+export interface LegacyImportSectionSummary {
+  total?: number;
+  create?: number;
+  update?: number;
+  skip?: number;
+  invalid?: number;
+  imported?: number;
+  [key: string]: unknown;
+}
+
+export interface LegacyImportIssue {
+  section?: string;
+  row?: number | string;
+  code?: string;
+  message?: string;
+  [key: string]: unknown;
+}
+
+export interface LegacyImportCredential {
+  name?: string;
+  phone?: string;
+  account?: string;
+  temporary_password?: string;
+  password?: string;
+  temporary_password_expires_at?: string;
+  [key: string]: unknown;
+}
+
+export interface LegacyImportResult {
+  source_name?: string;
+  source_hash?: string;
+  detected_sections?: string[];
+  summary?: Record<string, LegacyImportSectionSummary | number | unknown>;
+  issues?: LegacyImportIssue[];
+  one_time_credentials?: LegacyImportCredential[];
+  temporary_credentials?: LegacyImportCredential[];
+  message?: string;
+  [key: string]: unknown;
+}
+
+function legacyImportFormData(options: LegacyImportOptions) {
+  const form = new FormData();
+  form.append('file', options.file);
+  form.append('dataset', options.dataset);
+  form.append('conflict_policy', options.conflict_policy);
+  form.append('allow_partial', String(options.allow_partial));
+  form.append('create_missing_devices', String(options.create_missing_devices));
+  if (options.confirmation) form.append('confirmation', options.confirmation);
+  return form;
+}
+
+async function submitLegacyImport(path: '/admin/legacy-import/preview' | '/admin/legacy-import/execute', options: LegacyImportOptions) {
+  const token = tokenStore.get();
+  let response: Response;
+  try {
+    response = await fetch(getApiBase() + path, {
+      method: 'POST',
+      credentials: 'include',
+      cache: 'no-store',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: legacyImportFormData(options)
+    });
+  } catch (error) {
+    throw new Error(friendlyApiMessage(0, error instanceof Error ? error.message : String(error)));
+  }
+
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    const raw = String(body?.message || body?.title || body?.error || '');
+    throw new Error(friendlyApiMessage(response.status, raw));
+  }
+  return (body && typeof body === 'object' && 'data' in body ? body.data : body) as LegacyImportResult;
+}
+
+export function previewLegacyImport(options: LegacyImportOptions) {
+  return submitLegacyImport('/admin/legacy-import/preview', options);
+}
+
+export function executeLegacyImport(options: LegacyImportOptions) {
+  return submitLegacyImport('/admin/legacy-import/execute', options);
+}
+
+export function downloadLegacyImportTemplate() {
+  return downloadAuthenticatedFile('/admin/legacy-import/template', 'legacy-import-template.json');
 }
 
 // ---------- System config ----------

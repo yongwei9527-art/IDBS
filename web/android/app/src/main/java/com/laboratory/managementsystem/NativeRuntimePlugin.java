@@ -3,8 +3,6 @@ package com.laboratory.managementsystem;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.net.Uri;
-import android.os.Bundle;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
@@ -17,7 +15,8 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
-import java.net.URI;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
 import java.security.SecureRandom;
@@ -33,21 +32,25 @@ import javax.crypto.spec.GCMParameterSpec;
  *
  * Server pairing is a two-step protocol: this plugin validates and relays a short-lived
  * pairing URI, while the web layer exchanges the token with the selected server over HTTPS.
- * Only the verified canonical server URL is persisted. Pairing tokens, credentials and
- * sessions are never written to native preferences by this plugin.
+ * The complete verified server identity is persisted as one versioned AES-GCM payload.
+ * Pairing tokens, credentials and sessions are never written to native preferences.
  */
 @CapacitorPlugin(name = "NativeRuntime")
 public class NativeRuntimePlugin extends Plugin {
     private static final String PREFERENCES_NAME = "native_runtime_secure_config";
-    private static final String SERVER_URL_CIPHERTEXT = "server_url_ciphertext";
-    private static final String SERVER_URL_IV = "server_url_iv";
-    private static final String KEYSTORE_ALIAS = "laboratory_management_server_config_v1";
-    private static final String PAIRING_SCHEME = "labapp";
-    private static final String PAIRING_HOST = "pair";
+    private static final String INSTALLATION_ID = "installation_id_v1";
+    private static final String CONFIGURATION_CIPHERTEXT = "trusted_server_configuration_v2_ciphertext";
+    private static final String CONFIGURATION_IV = "trusted_server_configuration_v2_iv";
+    private static final String LEGACY_SERVER_URL_CIPHERTEXT = "server_url_ciphertext";
+    private static final String LEGACY_SERVER_URL_IV = "server_url_iv";
+    private static final String KEYSTORE_ALIAS = "laboratory_management_server_config_v2";
+    private static final byte[] CONFIGURATION_AAD = "laboratory-management-system:trusted-server:v2"
+        .getBytes(StandardCharsets.UTF_8);
     private static final int GCM_TAG_LENGTH_BITS = 128;
     private static final int GCM_IV_LENGTH_BYTES = 12;
 
     private final SecureRandom secureRandom = new SecureRandom();
+    private final Object installationIdLock = new Object();
     @Nullable
     private JSObject pendingPairing;
 
@@ -60,81 +63,99 @@ public class NativeRuntimePlugin extends Plugin {
     @Override
     protected void handleOnNewIntent(Intent intent) {
         super.handleOnNewIntent(intent);
+        if (intent != null && getActivity() != null) {
+            getActivity().setIntent(intent);
+        }
         handlePairingIntent(intent);
     }
 
-    /** Existing capability retained for compatibility with the web runtime. */
     @PluginMethod
     public void getConfiguration(PluginCall call) {
         boolean firebasePushConfigured = getContext().getResources().getIdentifier(
             "google_app_id", "string", getContext().getPackageName()
         ) != 0;
-
         JSObject result = new JSObject();
         result.put("firebasePushConfigured", firebasePushConfigured);
-        result.put("serverConfigured", readServerUrl() != null);
+        result.put("serverConfigured", readServerConfiguration() != null);
         call.resolve(result);
     }
 
-    /** Returns only the verified server URL; no pairing token or authentication data is exposed. */
+    @PluginMethod
+    public void getInstallationId(PluginCall call) {
+        synchronized (installationIdLock) {
+            SharedPreferences preferences = getPreferences();
+            String installationId = preferences.getString(INSTALLATION_ID, null);
+            if (!TrustedServerConfiguration.isValidInstallationId(installationId)) {
+                installationId = TrustedServerConfiguration.generateInstallationId();
+                if (!preferences.edit().putString(INSTALLATION_ID, installationId).commit()) {
+                    call.reject("Unable to persist the installation identifier.", "SECURE_STORAGE_ERROR");
+                    return;
+                }
+            }
+            JSObject result = new JSObject();
+            result.put("installationId", installationId);
+            call.resolve(result);
+        }
+    }
+
     @PluginMethod
     public void getServerConfiguration(PluginCall call) {
-        String serverUrl = readServerUrl();
-        JSObject result = new JSObject();
-        result.put("configured", serverUrl != null);
-        if (serverUrl != null) {
-            result.put("serverUrl", serverUrl);
-        }
-        call.resolve(result);
+        call.resolve(toJsObject(readServerConfiguration()));
     }
 
-    /**
-     * Persists a canonical HTTPS server URL after the web layer has exchanged and validated a
-     * one-time pairing token. The value is AES-GCM encrypted with an Android Keystore key.
-     */
     @PluginMethod
     public void saveServerConfiguration(PluginCall call) {
-        String serverUrl = call.getString("serverUrl");
-        String normalizedUrl = normalizeHttpsServerUrl(serverUrl);
-        if (normalizedUrl == null) {
-            call.reject("serverUrl 必须是有效的 HTTPS 服务器地址，且不能包含账号、密码、片段或非 443 端口。", "INVALID_SERVER_URL");
+        final TrustedServerConfiguration candidate;
+        try {
+            candidate = TrustedServerConfiguration.create(
+                call.getString("serverUrl"), call.getString("organizationName"),
+                call.getString("instanceName"), call.getString("instanceId"),
+                call.getString("fingerprint"), call.getString("confirmedAt")
+            );
+        } catch (IllegalArgumentException exception) {
+            call.reject("Invalid trusted server configuration.", "INVALID_SERVER_CONFIGURATION", exception);
+            return;
+        }
+
+        TrustedServerConfiguration existing = readServerConfiguration();
+        boolean allowServerSwitch = Boolean.TRUE.equals(call.getBoolean("allowServerSwitch", false));
+        if (!TrustedServerConfiguration.mayReplaceTrustedIdentity(existing, candidate, allowServerSwitch)) {
+            call.reject(
+                "The trusted server identity changed and requires explicit confirmation.",
+                "SERVER_SWITCH_CONFIRMATION_REQUIRED"
+            );
             return;
         }
 
         try {
-            writeServerUrl(normalizedUrl);
-            JSObject result = new JSObject();
-            result.put("configured", true);
-            result.put("serverUrl", normalizedUrl);
-            call.resolve(result);
-        } catch (GeneralSecurityException exception) {
-            call.reject("无法安全保存服务器配置。", "SECURE_STORAGE_ERROR", exception);
+            writeServerConfiguration(candidate);
+            call.resolve(toJsObject(candidate));
+        } catch (GeneralSecurityException | IOException exception) {
+            call.reject("Unable to securely save the server configuration.", "SECURE_STORAGE_ERROR", exception);
         }
     }
 
     @PluginMethod
     public void clearServerConfiguration(PluginCall call) {
-        clearServerUrl();
+        if (!clearStoredServerConfiguration()) {
+            call.reject("Unable to clear the server configuration.", "SECURE_STORAGE_ERROR");
+            return;
+        }
         call.resolve();
     }
 
-    /**
-     * Accepts the same URI returned by a future camera scanner. It validates the address but
-     * intentionally keeps the one-time token in memory only until the web layer exchanges it.
-     */
     @PluginMethod
     public void ingestServerPairingLink(PluginCall call) {
         String pairingUri = call.getString("uri");
         JSObject pairing = parsePairingUri(pairingUri);
         if (pairing == null) {
-            call.reject("无效的服务器配对二维码。", "INVALID_PAIRING_LINK");
+            call.reject("Invalid server pairing link.", "INVALID_PAIRING_LINK");
             return;
         }
         setPendingPairing(pairing);
         call.resolve(pairing);
     }
 
-    /** Retrieves a pending pairing payload after an app deep link or scanner result. */
     @PluginMethod
     public void getPendingServerPairing(PluginCall call) {
         JSObject result = new JSObject();
@@ -145,7 +166,6 @@ public class NativeRuntimePlugin extends Plugin {
         call.resolve(result);
     }
 
-    /** Call only after the server has accepted or rejected the pairing token. */
     @PluginMethod
     public void acknowledgeServerPairing(PluginCall call) {
         pendingPairing = null;
@@ -156,8 +176,7 @@ public class NativeRuntimePlugin extends Plugin {
         if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction())) {
             return;
         }
-        Uri data = intent.getData();
-        JSObject pairing = parsePairingUri(data == null ? null : data.toString());
+        JSObject pairing = parsePairingUri(intent.getDataString());
         if (pairing != null) {
             setPendingPairing(pairing);
         }
@@ -165,7 +184,6 @@ public class NativeRuntimePlugin extends Plugin {
 
     private void setPendingPairing(JSObject pairing) {
         pendingPairing = pairing;
-        // Retain the event until the Capacitor web runtime attaches its listener.
         notifyListeners("serverPairingLink", pairing, true);
     }
 
@@ -175,19 +193,12 @@ public class NativeRuntimePlugin extends Plugin {
             return null;
         }
         try {
-            Uri uri = Uri.parse(source);
-            if (!PAIRING_SCHEME.equalsIgnoreCase(uri.getScheme()) || !PAIRING_HOST.equalsIgnoreCase(uri.getHost())) {
-                return null;
-            }
-            String normalizedUrl = normalizeHttpsServerUrl(uri.getQueryParameter("server"));
-            String pairingToken = uri.getQueryParameter("token");
-            if (normalizedUrl == null || pairingToken == null || pairingToken.trim().length() < 16 || pairingToken.length() > 2048) {
-                return null;
-            }
+            PairingLinkParser.ParsedPairing pairing = PairingLinkParser.parse(source);
+            if (pairing == null) return null;
             JSObject result = new JSObject();
-            result.put("serverUrl", normalizedUrl);
-            result.put("pairingToken", pairingToken);
-            result.put("version", uri.getQueryParameter("v") == null ? "1" : uri.getQueryParameter("v"));
+            result.put("serverUrl", pairing.getServerUrl());
+            result.put("pairingToken", pairing.getToken());
+            result.put("version", pairing.getVersion());
             return result;
         } catch (RuntimeException exception) {
             return null;
@@ -195,65 +206,73 @@ public class NativeRuntimePlugin extends Plugin {
     }
 
     @Nullable
-    private String normalizeHttpsServerUrl(@Nullable String candidate) {
-        if (candidate == null || candidate.length() > 2048) {
-            return null;
+    static String normalizeHttpsServerUrl(@Nullable String candidate) {
+        return TrustedServerConfiguration.normalizeHttpsServerUrl(candidate);
+    }
+
+    private JSObject toJsObject(@Nullable TrustedServerConfiguration configuration) {
+        JSObject result = new JSObject();
+        result.put("configured", configuration != null);
+        if (configuration != null) {
+            result.put("serverUrl", configuration.getServerUrl());
+            result.put("organizationName", configuration.getOrganizationName());
+            result.put("instanceName", configuration.getInstanceName());
+            result.put("instanceId", configuration.getInstanceId());
+            result.put("fingerprint", configuration.getFingerprint());
+            result.put("confirmedAt", configuration.getConfirmedAt());
         }
-        try {
-            URI uri = new URI(candidate.trim());
-            if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null || uri.getUserInfo() != null || uri.getFragment() != null || uri.getRawQuery() != null) {
-                return null;
-            }
-            if (uri.getPort() != -1 && uri.getPort() != 443) {
-                return null;
-            }
-            String path = uri.getRawPath();
-            if (path == null || path.isEmpty()) {
-                path = "";
-            }
-            String port = uri.getPort() == 443 ? "" : "";
-            return "https://" + uri.getHost().toLowerCase() + port + path;
-        } catch (Exception exception) {
-            return null;
-        }
+        return result;
     }
 
     @Nullable
-    private String readServerUrl() {
+    private TrustedServerConfiguration readServerConfiguration() {
         SharedPreferences preferences = getPreferences();
-        String ciphertext = preferences.getString(SERVER_URL_CIPHERTEXT, null);
-        String iv = preferences.getString(SERVER_URL_IV, null);
-        if (ciphertext == null || iv == null) {
+        String ciphertextValue = preferences.getString(CONFIGURATION_CIPHERTEXT, null);
+        String ivValue = preferences.getString(CONFIGURATION_IV, null);
+        if (ciphertextValue == null || ivValue == null) {
+            clearStoredServerConfiguration();
             return null;
         }
         try {
+            byte[] iv = Base64.decode(ivValue, Base64.NO_WRAP);
+            byte[] ciphertext = Base64.decode(ciphertextValue, Base64.NO_WRAP);
+            if (iv.length != GCM_IV_LENGTH_BYTES || ciphertext.length <= GCM_TAG_LENGTH_BITS / 8) {
+                throw new GeneralSecurityException("Invalid encrypted configuration length.");
+            }
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-            cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), new GCMParameterSpec(GCM_TAG_LENGTH_BITS, Base64.decode(iv, Base64.NO_WRAP)));
-            return normalizeHttpsServerUrl(new String(cipher.doFinal(Base64.decode(ciphertext, Base64.NO_WRAP)), java.nio.charset.StandardCharsets.UTF_8));
+            cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), new GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv));
+            cipher.updateAAD(CONFIGURATION_AAD);
+            return TrustedServerConfiguration.decode(cipher.doFinal(ciphertext));
         } catch (Exception exception) {
-            // Keystore invalidation or a corrupted value must fail closed.
-            clearServerUrl();
+            clearStoredServerConfiguration();
             return null;
         }
     }
 
-    private void writeServerUrl(String serverUrl) throws GeneralSecurityException {
+    private void writeServerConfiguration(TrustedServerConfiguration configuration)
+        throws GeneralSecurityException, IOException {
         byte[] iv = new byte[GCM_IV_LENGTH_BYTES];
         secureRandom.nextBytes(iv);
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey(), new GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv));
-        byte[] encrypted = cipher.doFinal(serverUrl.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        getPreferences().edit()
-            .putString(SERVER_URL_CIPHERTEXT, Base64.encodeToString(encrypted, Base64.NO_WRAP))
-            .putString(SERVER_URL_IV, Base64.encodeToString(iv, Base64.NO_WRAP))
-            .apply();
+        cipher.updateAAD(CONFIGURATION_AAD);
+        byte[] encrypted = cipher.doFinal(configuration.encode());
+        boolean committed = getPreferences().edit()
+            .putString(CONFIGURATION_CIPHERTEXT, Base64.encodeToString(encrypted, Base64.NO_WRAP))
+            .putString(CONFIGURATION_IV, Base64.encodeToString(iv, Base64.NO_WRAP))
+            .remove(LEGACY_SERVER_URL_CIPHERTEXT)
+            .remove(LEGACY_SERVER_URL_IV)
+            .commit();
+        if (!committed) {
+            throw new GeneralSecurityException("Unable to commit the trusted server configuration.");
+        }
     }
 
     private SecretKey getOrCreateKey() throws GeneralSecurityException {
         KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
         try {
             keyStore.load(null);
-        } catch (java.io.IOException exception) {
+        } catch (IOException exception) {
             throw new GeneralSecurityException("Unable to load Android Keystore.", exception);
         }
         KeyStore.Entry entry = keyStore.getEntry(KEYSTORE_ALIAS, null);
@@ -275,7 +294,12 @@ public class NativeRuntimePlugin extends Plugin {
         return getContext().getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE);
     }
 
-    private void clearServerUrl() {
-        getPreferences().edit().remove(SERVER_URL_CIPHERTEXT).remove(SERVER_URL_IV).apply();
+    private boolean clearStoredServerConfiguration() {
+        return getPreferences().edit()
+            .remove(CONFIGURATION_CIPHERTEXT)
+            .remove(CONFIGURATION_IV)
+            .remove(LEGACY_SERVER_URL_CIPHERTEXT)
+            .remove(LEGACY_SERVER_URL_IV)
+            .commit();
     }
 }

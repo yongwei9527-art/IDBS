@@ -41,6 +41,7 @@ test('refresh sessions rotate once and can be revoked', async () => {
   const second = { jti: '00000000-0000-4000-8000-000000000002', subject: 'user-1', token: 'refresh-2', exp };
 
   assert.equal(await service.createRefreshSession(first), true);
+  assert.equal(await service.rotateRefreshSession(first, { ...second, subject: 'other-user' }), false);
   assert.equal(await service.rotateRefreshSession(first, second), true);
   assert.equal(await service.rotateRefreshSession(first, { ...second, jti: '00000000-0000-4000-8000-000000000003' }), false);
   assert.equal(await service.revokeRefreshSession(second), true);

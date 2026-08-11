@@ -78,8 +78,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (isAuthExpiredError(error)) {
         setMe(null);
       } else {
-        const fallback = decodeTokenMe(tokenStore.get() || token);
-        setMe((prev) => prev ?? fallback);
+        const currentToken = tokenStore.get();
+        if (!currentToken) setMe(null);
+        else setMe((prev) => prev ?? decodeTokenMe(currentToken));
       }
     } finally {
       setIsReady(true);
@@ -94,6 +95,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.addEventListener('laboratory-management-system:password-reset-required', onPasswordResetRequired);
     return () => window.removeEventListener('laboratory-management-system:password-reset-required', onPasswordResetRequired);
   }, [refresh]);
+  useEffect(() => {
+    const onApiOriginChanged = () => {
+      setMe(null);
+      setIsReady(true);
+    };
+    window.addEventListener('laboratory-management-system:api-origin-changed', onApiOriginChanged);
+    return () => window.removeEventListener('laboratory-management-system:api-origin-changed', onApiOriginChanged);
+  }, []);
   const loginUser = useCallback(async (phone: string, password: string) => {
     const bundle = await authApi.loginUser(phone, password);
     await refresh();

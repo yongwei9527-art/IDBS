@@ -1,18 +1,22 @@
 [Unit]
-Description=实验室管理系统 API
-After=network.target
+Description=Laboratory Management System API
+Wants=network-online.target
+After=network-online.target postgresql.service
+RequiresMountsFor=/var/www/laboratory-management-system/current /var/www/laboratory-management-system/shared
 
 [Service]
 Type=simple
+User=laboratory_management_system
+Group=laboratory_management_system
 WorkingDirectory=/var/www/laboratory-management-system/current
 EnvironmentFile=/var/www/laboratory-management-system/shared/.env
-ExecStart=/usr/bin/node server.js
+ExecStart=/usr/bin/node /var/www/laboratory-management-system/current/server.js
 Restart=always
-RestartSec=5
-User=www-data
-Group=www-data
-StandardOutput=append:/var/log/laboratory-management-system/app.log
-StandardError=append:/var/log/laboratory-management-system/error.log
+RestartSec=3
+Environment=NODE_ENV=production
+UMask=0022
+NoNewPrivileges=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target

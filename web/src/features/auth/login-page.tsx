@@ -7,7 +7,15 @@ import { AuthRouteStatus } from './auth-guard';
 import './login-page.css';
 import { APP_PATHS } from '@/lib/app-paths';
 import { getApiOrigin, normalizeApiOrigin, saveApiOrigin } from '@/lib/api';
-import { consumeNativePendingPairing, pairFromLink, restoreNativeServerConfiguration } from '@/lib/app-pairing';
+import {
+  confirmPairing,
+  formatServerFingerprint,
+  pairFromLink,
+  restoreNativeServerConfiguration,
+  subscribeNativeServerPairing,
+  type PairingCandidate
+} from '@/lib/app-pairing';
+import { authApi } from '@/lib/auth-api';
 
 const copy = {
   systemName: "实验室设备预约系统",
@@ -39,12 +47,13 @@ const extraCopy = {
   serverSaved: '\u670d\u52a1\u5668\u5730\u5740\u5df2\u4fdd\u5b58\uff0c\u4e0b\u6b21\u6253\u5f00\u4ecd\u4f1a\u4f7f\u7528\u8be5\u5730\u5740\u3002',
   sessionHint: '\u767b\u5f55\u72b6\u6001\u4f1a\u5b89\u5168\u4fdd\u7559\uff1b\u7cfb\u7edf\u4e0d\u4f1a\u4fdd\u5b58\u60a8\u8f93\u5165\u7684\u660e\u6587\u5bc6\u7801\u3002',
   pairingLink: '\u7c98\u8d34 App \u670d\u52a1\u5668\u914d\u5bf9\u94fe\u63a5',
-  pairingPlaceholder: 'labapp://pair?v=1&server=https%3A%2F%2Fexample.com&token=...',
+  pairingPlaceholder: 'labapp://pair?v=2&server=https%3A%2F%2Fexample.com&token=...',
   pairingAction: '\u914d\u5bf9\u5e76\u4fdd\u5b58\u670d\u52a1\u5668',
   pairingRequired: '\u8bf7\u7c98\u8d34\u4ece\u4e0b\u8f7d\u9875\u6216\u4e8c\u7ef4\u7801\u83b7\u5f97\u7684 App \u914d\u5bf9\u94fe\u63a5\u3002',
   pairingSaved: '\u670d\u52a1\u5668\u5df2\u5b89\u5168\u914d\u5bf9\u5e76\u4fdd\u5b58\uff0c\u8bf7\u4f7f\u7528\u60a8\u81ea\u5df1\u7684\u8d26\u53f7\u548c\u5bc6\u7801\u767b\u5f55\u3002',
   pairingRestored: '\u5df2\u6062\u590d\u5df2\u4fdd\u5b58\u7684\u670d\u52a1\u5668\u5730\u5740\uff0c\u8bf7\u4f7f\u7528\u60a8\u81ea\u5df1\u7684\u8d26\u53f7\u548c\u5bc6\u7801\u767b\u5f55\u3002',
-  pairingFailed: '\u914d\u5bf9\u94fe\u63a5\u65e0\u6548\u3001\u5df2\u8fc7\u671f\u6216\u4e0d\u5c5e\u4e8e\u5f53\u524d\u670d\u52a1\u5668\uff0c\u8bf7\u5237\u65b0\u4e0b\u8f7d\u9875\u540e\u91cd\u8bd5\u3002'
+  pairingFailed: '\u914d\u5bf9\u94fe\u63a5\u65e0\u6548\u3001\u5df2\u8fc7\u671f\u6216\u4e0d\u5c5e\u4e8e\u5f53\u524d\u670d\u52a1\u5668\uff0c\u8bf7\u5237\u65b0\u4e0b\u8f7d\u9875\u540e\u91cd\u8bd5\u3002',
+  insecureHttpCancelled: '\u5df2\u53d6\u6d88\u63d0\u4ea4\u3002\u8bf7\u4f18\u5148\u4f7f\u7528 HTTPS \u670d\u52a1\u5668\uff0c\u6216\u786e\u8ba4\u98ce\u9669\u540e\u518d\u6b21\u63d0\u4ea4\u3002'
 } as const;
 
 function safeRedirectTarget(raw: string | null) {
@@ -91,13 +100,62 @@ function needsServerAddress() {
   return Boolean(getApiOrigin());
 }
 
+function isLoopbackHost(hostname: string) {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  return host === 'localhost' || host === '::1' || host === '0.0.0.0'
+    || /^127(?:\.|$)/.test(host) || host.startsWith('::ffff:127.');
+}
+
+function insecureCredentialOrigin() {
+  if (typeof window === 'undefined') return '';
+  const configuredOrigin = getApiOrigin();
+  try {
+    const target = new URL(configuredOrigin || window.location.origin);
+    if (target.protocol !== 'http:' || isLoopbackHost(target.hostname)) return '';
+    return target.origin;
+  } catch {
+    return '';
+  }
+}
+
+function confirmInsecureCredentialSubmission() {
+  const origin = insecureCredentialOrigin();
+  if (!origin || typeof window === 'undefined') return true;
+  return window.confirm(
+    `\u5b89\u5168\u8b66\u544a\uff1a\u5f53\u524d\u670d\u52a1\u5668 ${origin} \u4f7f\u7528\u672a\u52a0\u5bc6 HTTP\u3002`
+    + '\n\u60a8\u63d0\u4ea4\u7684\u8d26\u53f7\u3001\u5bc6\u7801\u6216\u8eab\u4efd\u8d44\u6599\u53ef\u80fd\u88ab\u540c\u4e00\u7f51\u7edc\u4e2d\u7684\u4ed6\u4eba\u7a83\u53d6\u3002'
+    + '\n\u4ec5\u5728\u60a8\u4e86\u89e3\u98ce\u9669\u4e14\u4fe1\u4efb\u5f53\u524d\u7f51\u7edc\u65f6\u7ee7\u7eed\u3002\u662f\u5426\u4ecd\u8981\u63d0\u4ea4\uff1f'
+  );
+}
+
+async function requestPairingConfirmation(candidate: PairingCandidate) {
+  if (!candidate.can_confirm) throw new Error('Pairing identity mismatch');
+  const identity = candidate.identity;
+  const warning = candidate.requires_server_switch_confirmation
+    ? '\u8b66\u544a\uff1a\u8fd9\u5c06\u66ff\u6362\u5f53\u524d\u5df2\u4fe1\u4efb\u7684\u670d\u52a1\u5668\u3002\u53ea\u6709\u5728\u786e\u8ba4\u7ba1\u7406\u5458\u6b63\u5728\u8fc1\u79fb\u670d\u52a1\u65f6\u624d\u7ee7\u7eed\u3002'
+    : '\u8bf7\u6838\u5bf9\u670d\u52a1\u5668\u8eab\u4efd\uff0c\u786e\u8ba4\u65e0\u8bef\u540e\u518d\u4fdd\u5b58\u3002';
+  const accepted = window.confirm([
+    warning,
+    '',
+    `\u7ec4\u7ec7\uff1a${identity.organization_name}`,
+    `\u5b9e\u4f8b\uff1a${identity.instance_name}`,
+    `\u670d\u52a1\u5668\uff1a${identity.server_origin}`,
+    `\u6307\u7eb9\uff1a${formatServerFingerprint(identity.fingerprint)}`
+  ].join('\n'));
+  if (!accepted) return false;
+  await confirmPairing(candidate, {
+    allowServerSwitch: candidate.requires_server_switch_confirmation
+  });
+  return true;
+}
+
 export function LoginPage() {
   const navigate = useNavigate();
   const auth = useAuth();
   const [server, setServer] = useState(() => getApiOrigin().replace(/^https?:\/\//i, ''));
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [mode, setMode] = useState<'login' | 'register' | 'recover'>('login');
   const [registration, setRegistration] = useState({
     name: '',
     student_no: '',
@@ -108,6 +166,7 @@ export function LoginPage() {
     approval_code: ''
   });
   const [registrationConfirmation, setRegistrationConfirmation] = useState('');
+  const [recovery, setRecovery] = useState({ phone: '', name: '', student_no: '', major: '', mentor_name: '', reason: '' });
   const [showServerEditor, setShowServerEditor] = useState(false);
   const [serverStatus, setServerStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -129,31 +188,61 @@ export function LoginPage() {
 
   useEffect(() => {
     let cancelled = false;
+    let removePairingListener: (() => Promise<void>) | null = null;
 
-    async function restoreAppPairing() {
+    async function initializeAppPairing() {
       try {
-        const paired = await consumeNativePendingPairing();
-        if (paired) {
-          if (!cancelled) {
-            setServer(paired.server_url.replace(/^https?:\/\//i, ''));
-            setServerStatus(extraCopy.pairingSaved);
-          }
-          return;
-        }
-
         const restoredServer = await restoreNativeServerConfiguration();
         if (restoredServer && !cancelled) {
           setServer(restoredServer.replace(/^https?:\/\//i, ''));
           setServerStatus(extraCopy.pairingRestored);
         }
+
+        const remove = await subscribeNativeServerPairing({
+          onPairingStart: () => {
+            if (cancelled) return;
+            setError(null);
+            setServerStatus(null);
+            setPairingLoading(true);
+          },
+          onPairingCandidate: (candidate) => {
+            if (cancelled) return;
+            void requestPairingConfirmation(candidate).then((accepted) => {
+              if (cancelled) return;
+              if (!accepted) {
+                setPairingLoading(false);
+                return;
+              }
+              setServer(candidate.config.server_url.replace(/^https?:\/\//i, ''));
+              setPairingLink('');
+              setError(null);
+              setServerStatus(extraCopy.pairingSaved);
+              setPairingLoading(false);
+            }).catch(() => {
+              if (cancelled) return;
+              setServerStatus(null);
+              setError(extraCopy.pairingFailed);
+              setPairingLoading(false);
+            });
+          },
+          onError: () => {
+            if (cancelled) return;
+            setServerStatus(null);
+            setError(extraCopy.pairingFailed);
+            setPairingLoading(false);
+          }
+        });
+        if (cancelled) await remove();
+        else removePairingListener = remove;
       } catch {
         if (!cancelled) setError(extraCopy.pairingFailed);
       }
     }
 
-    void restoreAppPairing();
+    void initializeAppPairing();
     return () => {
       cancelled = true;
+      void removePairingListener?.();
     };
   }, []);
 
@@ -166,11 +255,13 @@ export function LoginPage() {
 
     setError(null);
     setServerStatus(null);
+    setPairingLink('');
     setPairingLoading(true);
     try {
-      const config = await pairFromLink(rawLink);
-      setServer(config.server_url.replace(/^https?:\/\//i, ''));
-      setPairingLink('');
+      const candidate = await pairFromLink(rawLink);
+      const accepted = await requestPairingConfirmation(candidate);
+      if (!accepted) return;
+      setServer(candidate.config.server_url.replace(/^https?:\/\//i, ''));
       setServerStatus(extraCopy.pairingSaved);
     } catch {
       setError(extraCopy.pairingFailed);
@@ -227,6 +318,10 @@ export function LoginPage() {
       setError(`${copy.serverRequired}${extraCopy.revealServer}`);
       return;
     }
+    if (!confirmInsecureCredentialSubmission()) {
+      setError(extraCopy.insecureHttpCancelled);
+      return;
+    }
 
     setLoading(true);
     try {
@@ -277,6 +372,10 @@ export function LoginPage() {
       setError(`${copy.serverRequired}${extraCopy.revealServer}`);
       return;
     }
+    if (!confirmInsecureCredentialSubmission()) {
+      setError(extraCopy.insecureHttpCancelled);
+      return;
+    }
 
     setLoading(true);
     try {
@@ -301,6 +400,35 @@ export function LoginPage() {
     }
   }
 
+  async function onRecoverySubmit(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setServerStatus(null);
+    if (![recovery.phone, recovery.name, recovery.student_no, recovery.mentor_name].every((value) => value.trim())) {
+      setError('请完整填写登录手机号、姓名、学号和导师姓名。');
+      return;
+    }
+    const origin = normalizeApiOrigin(server);
+    if (needsServerAddress() && !origin) {
+      setError(`${copy.serverRequired}${extraCopy.revealServer}`);
+      return;
+    }
+    if (!confirmInsecureCredentialSubmission()) {
+      setError(extraCopy.insecureHttpCancelled);
+      return;
+    }
+    setLoading(true);
+    try {
+      const result = await authApi.requestPasswordReset({ ...recovery, phone: recovery.phone.trim() });
+      setRecovery({ phone: '', name: '', student_no: '', major: '', mentor_name: '', reason: '' });
+      setServerStatus(result.message || '申请已提交，请联系最高管理员核验身份。');
+    } catch (requestError) {
+      setError(toChineseError(requestError, '申请提交失败，请稍后重试。'));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   if (!auth.isReady || auth.isLoggedIn) {
     return (
       <AuthRouteStatus
@@ -314,7 +442,7 @@ export function LoginPage() {
 
   return (
     <main className="login-shell">
-      <div className={`login-card ${mode === 'register' ? 'login-card--register' : ''}`}>
+      <div className={`login-card ${mode !== 'login' ? 'login-card--register' : ''}`}>
         <div className="login-brand-row">
           <div className="login-logo" aria-hidden="true">实</div>
           <div>
@@ -325,9 +453,9 @@ export function LoginPage() {
 
         <div className="login-divider" />
 
-        <h2 className="login-title">{mode === 'login' ? copy.title : '注册账号'}</h2>
+        <h2 className="login-title">{mode === 'login' ? copy.title : mode === 'register' ? '注册账号' : '申请管理员重置密码'}</h2>
 
-        <form onSubmit={mode === 'login' ? onSubmit : onRegisterSubmit} className="login-form" noValidate>
+        <form onSubmit={mode === 'login' ? onSubmit : mode === 'register' ? onRegisterSubmit : onRecoverySubmit} className="login-form" noValidate>
           {showServerEditor ? (
             <section className="login-server-editor" aria-label={copy.server}>
               <label className="login-field" htmlFor="login-server">
@@ -401,7 +529,7 @@ export function LoginPage() {
                 />
               </label>
             </>
-          ) : (
+          ) : mode === 'register' ? (
             <div className="login-register-grid">
               <label className="login-field" htmlFor="register-name">
                 <span>姓名</span>
@@ -443,13 +571,23 @@ export function LoginPage() {
                 <Input id="register-password-confirmation" type="password" showPassword value={registrationConfirmation} onChange={(event) => setRegistrationConfirmation(event.target.value)} autoComplete="new-password" className="login-input" />
               </label>
             </div>
+          ) : (
+            <div className="login-register-grid">
+              <label className="login-field" htmlFor="recover-phone"><span>登录手机号</span><Input id="recover-phone" value={recovery.phone} onChange={(event) => setRecovery((current) => ({ ...current, phone: event.target.value }))} autoComplete="tel" inputMode="tel" className="login-input" /></label>
+              <label className="login-field" htmlFor="recover-name"><span>姓名</span><Input id="recover-name" value={recovery.name} onChange={(event) => setRecovery((current) => ({ ...current, name: event.target.value }))} autoComplete="name" className="login-input" /></label>
+              <label className="login-field" htmlFor="recover-student"><span>学号 / 学工号</span><Input id="recover-student" value={recovery.student_no} onChange={(event) => setRecovery((current) => ({ ...current, student_no: event.target.value }))} className="login-input" /></label>
+              <label className="login-field" htmlFor="recover-major"><span>专业（可选）</span><Input id="recover-major" value={recovery.major} onChange={(event) => setRecovery((current) => ({ ...current, major: event.target.value }))} className="login-input" /></label>
+              <label className="login-field" htmlFor="recover-mentor"><span>导师姓名</span><Input id="recover-mentor" value={recovery.mentor_name} onChange={(event) => setRecovery((current) => ({ ...current, mentor_name: event.target.value }))} className="login-input" /></label>
+              <label className="login-field md:col-span-2" htmlFor="recover-reason"><span>申请说明（可选）</span><Input id="recover-reason" value={recovery.reason} onChange={(event) => setRecovery((current) => ({ ...current, reason: event.target.value }))} maxLength={500} className="login-input" /></label>
+              <p className="text-xs text-muted-foreground md:col-span-2">提交后不会立即修改密码。最高管理员核验资料后会生成 24 小时临时密码，请通过线下安全方式领取。</p>
+            </div>
           )}
 
           {error ? <p className="login-error" role="alert">{error}</p> : null}
           {serverStatus ? <p className="login-success" role="status">{serverStatus}</p> : null}
 
           <Button type="submit" disabled={loading} className="login-submit">
-            {loading ? (mode === 'login' ? copy.submitting : '注册中…') : (mode === 'login' ? copy.submit : '提交注册')}
+            {loading ? (mode === 'login' ? copy.submitting : mode === 'register' ? '注册中…' : '提交中…') : (mode === 'login' ? copy.submit : mode === 'register' ? '提交注册' : '提交找回申请')}
           </Button>
         </form>
 
@@ -458,12 +596,24 @@ export function LoginPage() {
           variant="ghost"
           className="mt-3 w-full"
           onClick={() => {
-            setMode((current) => current === 'login' ? 'register' : 'login');
+            setMode((current) => current === 'register' ? 'login' : 'register');
             setError(null);
             setServerStatus(null);
           }}
         >
-          {mode === 'login' ? '没有账号？注册账号' : '已有账号？返回登录'}
+          {mode === 'register' ? '已有账号？返回登录' : '没有账号？注册账号'}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          className="w-full"
+          onClick={() => {
+            setMode((current) => current === 'recover' ? 'login' : 'recover');
+            setError(null);
+            setServerStatus(null);
+          }}
+        >
+          {mode === 'recover' ? '返回账号登录' : '忘记密码？请求管理员重置'}
         </Button>
         <p className="login-tip">{extraCopy.sessionHint}<br />批准码不会改变账号角色，只用于通过普通用户注册审批</p>
       </div>

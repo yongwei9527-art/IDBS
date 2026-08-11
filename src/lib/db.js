@@ -28,12 +28,6 @@ function createPool(options = {}) {
     console.error('PostgreSQL pool error:', error);
   });
 
-  pool.on('connect', (client) => {
-    if (statementTimeoutMs > 0) {
-      client.query(`set statement_timeout = ${Math.floor(statementTimeoutMs)}`).catch(() => {});
-    }
-  });
-
   return pool;
 }
 

@@ -2,7 +2,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { discoverMigrationFiles, isForwardMigrationFile } = require('../../scripts/migrate-db');
+const {
+  discoverMigrationFiles,
+  isForwardMigrationFile,
+  migrationChecksum,
+  stripOuterTransactionWrapper
+} = require('../../scripts/migrate-db');
 
 const root = path.resolve(__dirname, '..', '..');
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8');
@@ -96,14 +101,20 @@ test('automatic migration discovery never executes rollback scripts', () => {
   const files = discoverMigrationFiles(path.join(root, 'sql', 'migrations'));
   assert.ok(files.includes('2026-07-11_v5_release_foundation.sql'));
   assert.ok(files.every((file) => !/rollback/i.test(file)));
-  assert.match(read('scripts/deploy-ubuntu.sh'), /\*rollback\*\) continue/);
+  const deploy = read('scripts/deploy-ubuntu.sh');
+  assert.match(deploy, /apply_database_schema\(\)/);
+  assert.match(deploy, /MIGRATION_DATABASE_URL/);
+  assert.match(deploy, /node "\$CANDIDATE_RELEASE\/scripts\/migrate-db\.js"/);
+  assert.match(deploy, /stop_application_for_migration/);
+  assert.doesNotMatch(deploy, /for migration in .*sql\/migrations/);
   assert.match(read('scripts/init-db.ps1'), /Name -notmatch '[^']*rollback/);
   assert.match(read('scripts/setup-local-db.ps1'), /Name -notmatch '[^']*rollback/);
-  assert.match(read('scripts/deploy-ubuntu.sh'), /--single-transaction -f "\$migration"/);
   assert.match(read('scripts/init-db.ps1'), /--single-transaction -f \$_\.FullName/);
   const localSetupScript = read('scripts/setup-local-db.ps1');
   assert.match(localSetupScript, /"--single-transaction"/);
   assert.match(localSetupScript, /"-f", \$_.FullName/);
+  assert.equal(migrationChecksum('select 1;\r\n'), migrationChecksum('select 1;\n'));
+  assert.equal(stripOuterTransactionWrapper('BEGIN;\nselect 1;\nCOMMIT;\n').trim(), 'select 1;');
 });
 
 

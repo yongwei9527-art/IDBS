@@ -2,7 +2,8 @@
 # Shared helpers for the VPS entrypoint scripts. Do not print secrets from here.
 set -euo pipefail
 
-APP_NAME="${APP_NAME:-laboratory_management_system}"
+SERVICE_NAME="${SERVICE_NAME:-laboratory-management-system}"
+LEGACY_SERVICE_NAME="${LEGACY_SERVICE_NAME:-laboratory_management_system}"
 APP_BASE="${APP_BASE:-/var/www/laboratory-management-system}"
 SRC_DIR="${SRC_DIR:-/var/www/laboratory-management-system-src}"
 APP_CURRENT="${APP_CURRENT:-$APP_BASE/current}"
@@ -49,18 +50,138 @@ normalize_host() {
 }
 
 validate_domain() {
-  [ -z "$1" ] && return 0
-  [[ "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || die 'Domain must not include protocol, port, or path.'
+  local value="$1" label
+  [ -z "$value" ] && return 0
+  [ "${#value}" -le 253 ] || die 'Domain name must be 253 characters or fewer.'
+  [[ "$value" != *'..'* && "$value" != .* && "$value" != *. ]] \
+    || die 'Domain name contains an empty label.'
+  IFS='.' read -r -a domain_labels <<< "$value"
+  [ "${#domain_labels[@]}" -ge 2 ] || die 'Enter a fully qualified domain name such as lab.example.com.'
+  for label in "${domain_labels[@]}"; do
+    [ "${#label}" -ge 1 ] && [ "${#label}" -le 63 ] \
+      || die 'Each domain label must contain 1-63 characters.'
+    [[ "$label" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]] \
+      || die 'Domain labels may contain only letters, digits, and internal hyphens.'
+  done
+  [[ "${domain_labels[${#domain_labels[@]}-1]}" =~ [A-Za-z] ]] \
+    || die 'The final domain label must contain a letter.'
+}
+
+letsencrypt_paths_match_domain() {
+  local domain="$1" certificate="$2" certificate_key="$3" certificate_dir key_dir name suffix
+  validate_domain "$domain"
+  [[ "$certificate" == /etc/letsencrypt/live/*/fullchain.pem ]] || return 1
+  [[ "$certificate_key" == /etc/letsencrypt/live/*/privkey.pem ]] || return 1
+  certificate_dir="${certificate%/fullchain.pem}"
+  key_dir="${certificate_key%/privkey.pem}"
+  [ "$certificate_dir" = "$key_dir" ] || return 1
+  name="${certificate_dir##*/}"
+  if [ "$name" != "$domain" ]; then
+    suffix="${name#"$domain"-}"
+    [[ "$suffix" =~ ^[0-9]+$ ]] || return 1
+  fi
+  [ -r "$certificate" ] && [ -r "$certificate_key" ]
+}
+
+find_letsencrypt_live_dir() {
+  local domain="$1" candidate name suffix
+  validate_domain "$domain"
+  for candidate in "/etc/letsencrypt/live/$domain" "/etc/letsencrypt/live/$domain"-*; do
+    [ -d "$candidate" ] || continue
+    name="${candidate##*/}"
+    if [ "$name" != "$domain" ]; then
+      suffix="${name#"$domain"-}"
+      [[ "$suffix" =~ ^[0-9]+$ ]] || continue
+    fi
+    [ -r "$candidate/fullchain.pem" ] && [ -r "$candidate/privkey.pem" ] || continue
+    printf '%s' "$candidate"
+    return 0
+  done
+  return 1
 }
 
 validate_phone() {
   [[ "$1" =~ ^\+?[0-9-]{6,20}$ ]] || die 'Administrator phone/login must contain 6-20 digits (optional + or hyphens).'
 }
 
-validate_absolute_dir() {
-  local value="$1" label="$2"
+canonicalize_absolute_dir() {
+  local value="$1" label="${2:-Directory}" normalized
   [[ "$value" == /* ]] || die "$label must be an absolute Linux path."
-  [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || die "$label contains an invalid newline."
+  [[ "$value" =~ ^/[A-Za-z0-9._/+@-]+$ ]] \
+    || die "$label may contain only letters, digits, dot, underscore, plus, at-sign, slash, and hyphen."
+  [[ "/$value/" != *'/../'* && "/$value/" != *'/./'* ]] \
+    || die "$label must not contain . or .. path segments."
+  normalized="$(readlink -m -- "$value")"
+  [ -n "$normalized" ] || normalized='/'
+  printf '%s' "$normalized"
+}
+
+validate_managed_root() {
+  local value="$1" label="$2" normalized
+  normalized="$(canonicalize_absolute_dir "$value" "$label")"
+  case "$normalized" in
+    /|/bin|/bin/*|/boot|/boot/*|/dev|/dev/*|/etc|/etc/*|/home|/lib|/lib/*|/lib32|/lib32/*|/lib64|/lib64/*|/media|/mnt|/opt|/proc|/proc/*|/root|/root/*|/run|/run/*|/sbin|/sbin/*|/srv|/sys|/sys/*|/tmp|/tmp/*|/usr|/usr/*|/var|/var/cache|/var/cache/*|/var/lib|/var/lib/postgresql|/var/lib/postgresql/*|/var/log|/var/log/*|/var/run|/var/run/*|/var/spool|/var/spool/*|/var/tmp|/var/tmp/*|/var/www)
+      die "$label must be a dedicated application directory, not a system directory: $normalized"
+      ;;
+  esac
+}
+
+path_is_same_or_within() {
+  local candidate="$1" parent="$2"
+  [ "$candidate" = "$parent" ] || [[ "$candidate" == "$parent"/* ]]
+}
+
+validate_absolute_dir() {
+  local value="$1" label="$2" normalized app_base app_current app_previous app_releases app_shared app_downloads source_root protected
+  normalized="$(canonicalize_absolute_dir "$value" "$label")"
+  case "$normalized" in
+    /|/bin|/bin/*|/boot|/boot/*|/dev|/dev/*|/etc|/etc/*|/home|/lib|/lib/*|/lib32|/lib32/*|/lib64|/lib64/*|/media|/mnt|/opt|/proc|/proc/*|/root|/root/*|/run|/run/*|/sbin|/sbin/*|/srv|/sys|/sys/*|/tmp|/tmp/*|/usr|/usr/*|/var|/var/cache|/var/cache/*|/var/lib/postgresql|/var/lib/postgresql/*|/var/log|/var/log/*|/var/run|/var/run/*|/var/spool|/var/spool/*|/var/tmp|/var/tmp/*|/var/www)
+      die "$label must be a dedicated subdirectory, not a system root directory: $normalized"
+      ;;
+  esac
+
+  app_base="$(readlink -m -- "$APP_BASE")"
+  app_current="$(readlink -m -- "$APP_CURRENT")"
+  app_previous="$(readlink -m -- "$APP_BASE/previous")"
+  app_releases="$(readlink -m -- "$APP_BASE/releases")"
+  app_shared="$(readlink -m -- "$APP_BASE/shared")"
+  app_downloads="$(readlink -m -- "$APP_BASE/downloads")"
+  source_root="$(readlink -m -- "$SRC_DIR")"
+  [ "$normalized" != "$app_base" ] \
+    || die "$label must not be the application base directory itself: $normalized"
+  for protected in "$app_current" "$app_previous" "$app_releases" "$app_shared" "$app_downloads" "$source_root"; do
+    if path_is_same_or_within "$normalized" "$protected" \
+      || path_is_same_or_within "$protected" "$normalized"; then
+      die "$label must not overlap release, download, source, or shared-secret directories: $normalized"
+    fi
+  done
+}
+
+validate_disjoint_directories() {
+  local -a labels=() paths=()
+  local label value normalized i j
+  [ $(( $# % 2 )) -eq 0 ] || die 'Directory validation requires label/path pairs.'
+  while [ "$#" -gt 0 ]; do
+    label="$1"
+    value="$2"
+    shift 2
+    normalized="$(canonicalize_absolute_dir "$value" "$label")"
+    labels+=("$label")
+    paths+=("$normalized")
+  done
+  for ((i = 0; i < ${#paths[@]}; i++)); do
+    for ((j = i + 1; j < ${#paths[@]}; j++)); do
+      if path_is_same_or_within "${paths[$i]}" "${paths[$j]}" \
+        || path_is_same_or_within "${paths[$j]}" "${paths[$i]}"; then
+        die "${labels[$i]} and ${labels[$j]} must be separate, non-nested directories."
+      fi
+    done
+  done
+}
+
+validate_systemd_unit_name() {
+  local value="$1" label="$2"
+  [[ "$value" =~ ^[A-Za-z0-9_.@-]+$ ]] || die "$label is not a valid systemd unit name."
 }
 
 encode_firebase_service_account() {
@@ -102,18 +223,61 @@ generate_password() {
   printf 'Lms!%s' "$(openssl rand -hex 12)"
 }
 
+github_release_apk_url() {
+  local source_dir="$1" package_file version
+  package_file="$source_dir/package.json"
+  [ -f "$package_file" ] || return 1
+  version="$(node -e 'const fs = require("node:fs"); const pkg = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(pkg.version || ""));' "$package_file" 2>/dev/null || true)"
+  [[ "$version" =~ ^[0-9][0-9A-Za-z.+-]*$ ]] || return 1
+  printf 'https://github.com/yongwei9527-art/IDBS/releases/download/v%s/Laboratory-Management-System-v%s.apk' "$version" "$version"
+}
+
+is_ipv4() {
+  local value="$1" octet
+  local -a octets
+  [[ "$value" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+  IFS='.' read -r -a octets <<< "$value"
+  [ "${#octets[@]}" -eq 4 ] || return 1
+  for octet in "${octets[@]}"; do
+    [ "$((10#$octet))" -le 255 ] || return 1
+  done
+}
+
+is_non_public_ipv4() {
+  local value="$1" first second _third _fourth
+  is_ipv4 "$value" || return 1
+  IFS='.' read -r first second _third _fourth <<< "$value"
+  case "$first" in
+    0|10|127) return 0 ;;
+    100) [ "$second" -ge 64 ] && [ "$second" -le 127 ] && return 0 ;;
+    169) [ "$second" -eq 254 ] && return 0 ;;
+    172) [ "$second" -ge 16 ] && [ "$second" -le 31 ] && return 0 ;;
+    192) [ "$second" -eq 168 ] && return 0 ;;
+  esac
+  [ "$first" -ge 224 ]
+}
+
 detect_public_ip() {
-  local ip
-  ip="$(curl -4fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
-  [ -n "$ip" ] || ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
-  printf '%s' "$ip"
+  local ip candidate
+  ip="$(curl -4fsS --max-time 5 https://api.ipify.org 2>/dev/null | tr -d '[:space:]' || true)"
+  if is_ipv4 "$ip"; then
+    printf '%s' "$ip"
+    return 0
+  fi
+  while IFS= read -r candidate; do
+    if is_ipv4 "$candidate"; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done < <(hostname -I 2>/dev/null | tr '[:space:]' '\n' || true)
+  return 1
 }
 
 ensure_directory() {
   local target="$1" owner="$2" mode="$3"
-  mkdir -p "$target"
-  chown "$owner" "$target"
-  chmod "$mode" "$target"
+  mkdir -p -- "$target"
+  chown -- "$owner" "$target"
+  chmod -- "$mode" "$target"
 }
 
 set_env_value() {
@@ -153,4 +317,34 @@ read_env_value() {
 public_origin() {
   local host="$1" https="$2"
   if [ "$https" = '1' ]; then printf 'https://%s' "$host"; else printf 'http://%s' "$host"; fi
+}
+
+validate_release_id() {
+  local value="$1"
+  [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$ ]] \
+    || die 'Release id must contain only letters, digits, dot, underscore, and hyphen (maximum 80 characters).'
+}
+
+release_path_is_managed() {
+  local candidate="$1" releases_root="$2" resolved_candidate resolved_root
+  resolved_candidate="$(readlink -m -- "$candidate")"
+  resolved_root="$(readlink -m -- "$releases_root")"
+  [ "$resolved_candidate" != "$resolved_root" ] \
+    && path_is_same_or_within "$resolved_candidate" "$resolved_root"
+}
+
+atomic_symlink_replace() {
+  local target="$1" link_path="$2" link_parent temp_dir temp_link
+  [ -n "$target" ] && [ -n "$link_path" ] || die 'Atomic symlink replacement requires a target and link path.'
+  link_parent="$(dirname "$link_path")"
+  mkdir -p -- "$link_parent"
+  temp_dir="$(mktemp -d "$link_parent/.release-link.XXXXXX")"
+  temp_link="$temp_dir/link"
+  ln -s -- "$target" "$temp_link"
+  if ! mv -Tf -- "$temp_link" "$link_path"; then
+    rm -f -- "$temp_link"
+    rmdir -- "$temp_dir" || true
+    return 1
+  fi
+  rmdir -- "$temp_dir"
 }

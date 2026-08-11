@@ -3,13 +3,45 @@ const path = require('path');
 
 function csvCell(value) {
   const text = String(value ?? '');
-  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  const safeText = typeof value === 'string' && /^[\t\r\n ]*[=+\-@]/.test(text) ? `'${text}` : text;
+  return /[",\n\r]/.test(safeText) ? `"${safeText.replace(/"/g, '""')}"` : safeText;
 }
 
 function exportRowsToCsv(rows = []) {
   const headers = [...new Set(rows.flatMap((row) => Object.keys(row || {})))];
   if (!headers.length) return '';
   return [headers.map(csvCell).join(','), ...rows.map((row) => headers.map((header) => csvCell(row?.[header])).join(','))].join('\n');
+}
+
+const EXPORT_PERMISSION_RULES = Object.freeze({
+  usage: { all: ['stats.export'] },
+  successful_usage: { all: ['stats.export'], any: ['return.export', 'return.view', 'return.confirm', 'return.image_review'] },
+  returns: { all: ['stats.export'], any: ['return.export', 'return.view', 'return.confirm', 'return.image_review'] },
+  reservations: { all: ['stats.export'], any: ['reservation.view', 'reservation.approve', 'reservation.change_plan'] },
+  faults: { all: ['stats.export'], any: ['device.view', 'device.manage', 'fault.manage'] },
+  user_activity: { all: ['stats.export', 'user.manage'] },
+  device_summary: { all: ['stats.export'], any: ['device.view', 'device.manage'] },
+  audit_logs: { all: ['stats.export', 'audit.view'] }
+});
+
+function isSupportedExportType(type) {
+  return Object.prototype.hasOwnProperty.call(EXPORT_PERMISSION_RULES, String(type || '').trim());
+}
+
+function hasExportPermission(type, admin = {}, role = {}, effectiveRolePermissions) {
+  const normalizedType = String(type || '').trim();
+  if (!isSupportedExportType(normalizedType)) return false;
+  const safeAdmin = admin || {};
+  const safeRole = role || {};
+  if (safeAdmin.role === 'super_admin' || safeRole.role_key === 'super_admin') return true;
+  const resolvedPermissions = typeof effectiveRolePermissions === 'function'
+    ? effectiveRolePermissions(safeRole)
+    : safeRole.permissions;
+  const permissions = Array.isArray(resolvedPermissions) ? resolvedPermissions : [];
+  if (permissions.includes('*')) return true;
+  const rule = EXPORT_PERMISSION_RULES[normalizedType];
+  return (rule.all || []).every((permission) => permissions.includes(permission))
+    && (!(rule.any || []).length || rule.any.some((permission) => permissions.includes(permission)));
 }
 
 const BUSINESS_STATUS = {
@@ -135,12 +167,12 @@ function friendlyExportError(error) {
   const raw = String(error?.message || error || '').trim();
   if (!raw) return '导出任务执行失败，请稍后重试。';
   if (/eperm|eacces|operation not permitted|permission denied|access is denied/i.test(raw)) {
-    return '导出文件目录没有写入权限，请检查 UPLOAD_DIR 配置或改用项目内 uploads 目录。';
+    return '导出文件目录没有写入权限，请检查 EXPORT_DIR 配置和目录所有者/权限。';
   }
   if (/enoent|no such file or directory/i.test(raw)) return '导出文件目录不存在，请检查上传目录配置。';
   if (/enospc|no space left/i.test(raw)) return '磁盘空间不足，导出文件写入失败。';
   if (/database|postgres|sql|connection/i.test(raw)) return '数据库暂时无法完成导出，请稍后重试。';
-  if (/[\u4e00-\u9fa5]/.test(raw)) return raw.slice(0, 1000);
+  if (new Set(['不支持的导出类型。', '当前账号没有该导出类型所需权限。']).has(raw)) return raw;
   return '导出任务执行失败，请检查目录权限、数据库连接或筛选条件。';
 }
 
@@ -178,6 +210,8 @@ function normalizeExportRows(type, rows = []) {
 function createExportService(context = {}) {
   const {
     adminExportData,
+    exportDir,
+    exportRetentionDays = 30,
     fail,
     effectiveRolePermissions,
     log,
@@ -187,37 +221,19 @@ function createExportService(context = {}) {
     queryOne,
     requireAdminRole,
     safeFilename,
-    uploadDir,
     uuid,
     withTransaction
   } = context;
+  const resolvedExportDir = path.resolve(exportDir || path.join(process.cwd(), 'uploads', 'exports'));
+  const retentionDays = Number.isInteger(Number(exportRetentionDays))
+    ? Math.min(Math.max(Number(exportRetentionDays), 1), 3650)
+    : 30;
 
-  const EXPORT_PERMISSION_RULES = {
-    usage: { all: ['stats.export'] },
-    successful_usage: { all: ['stats.export'], any: ['return.export', 'return.view', 'return.confirm', 'return.image_review'] },
-    returns: { all: ['stats.export'], any: ['return.export', 'return.view', 'return.confirm', 'return.image_review'] },
-    reservations: { all: ['stats.export'], any: ['reservation.view', 'reservation.approve', 'reservation.change_plan'] },
-    faults: { all: ['stats.export'], any: ['device.view', 'device.manage', 'fault.manage'] },
-    user_activity: { all: ['stats.export', 'user.manage'] },
-    device_summary: { all: ['stats.export'], any: ['device.view', 'device.manage'] },
-    audit_logs: { all: ['stats.export', 'audit.view'] }
-  };
   const EXPORT_JOB_LEASE_SECONDS = 15 * 60;
 
-  function hasAllExportPermissions(admin = {}, role = {}, type = 'usage') {
-    if (admin.role === 'super_admin' || role.role_key === 'super_admin') return true;
-    const permissions = typeof effectiveRolePermissions === 'function'
-      ? effectiveRolePermissions(role)
-      : (Array.isArray(role.permissions) ? role.permissions : []);
-    if (permissions.includes('*')) return true;
-    const rule = EXPORT_PERMISSION_RULES[type] || { all: ['stats.export'] };
-    return (rule.all || []).every((permission) => permissions.includes(permission))
-      && (!(rule.any || []).length || rule.any.some((permission) => permissions.includes(permission)));
-  }
-
   function assertExportTypeAndPermission(type, admin, role) {
-    if (!Object.prototype.hasOwnProperty.call(EXPORT_PERMISSION_RULES, type)) return fail('不支持的导出类型。', 400, 2001);
-    if (!hasAllExportPermissions(admin, role, type)) return fail('当前账号没有该导出类型所需权限。', 403, 1003);
+    if (!isSupportedExportType(type)) return fail('不支持的导出类型。', 400, 2001);
+    if (!hasExportPermission(type, admin, role, effectiveRolePermissions)) return fail('当前账号没有该导出类型所需权限。', 403, 1003);
     return null;
   }
 
@@ -237,17 +253,16 @@ function createExportService(context = {}) {
     if (!raw.startsWith(prefix)) return null;
     const filename = path.basename(raw.slice(prefix.length));
     if (!filename || filename !== raw.slice(prefix.length) || !/\.csv$/i.test(filename)) return null;
-    const dir = path.resolve(uploadDir, 'exports');
-    const absolutePath = path.resolve(dir, filename);
-    return absolutePath.startsWith(dir + path.sep) ? { absolutePath, filename } : null;
+    const absolutePath = path.resolve(resolvedExportDir, filename);
+    return absolutePath.startsWith(resolvedExportDir + path.sep) ? { absolutePath, filename } : null;
   }
 
   async function cleanupExpiredExportFiles() {
     const expired = await query(`
       select id, file_path from export_jobs
-      where status = 'finished' and file_path is not null and finished_at < now() - interval '7 days'
+      where status = 'finished' and file_path is not null and finished_at < now() - ($1 * interval '1 day')
       order by finished_at asc limit 50
-    `);
+    `, [retentionDays]);
     let removed = 0;
     for (const job of expired || []) {
       const location = exportFileLocation(job.file_path);
@@ -339,10 +354,13 @@ function createExportService(context = {}) {
     const job = await withTransaction(async (client) => {
       const row = await client.queryOne(`
         select * from export_jobs
-        where (status = 'pending' and coalesce(available_at, created_at) <= now())
-           or (status = 'running' and coalesce(lease_expires_at, started_at + interval '15 minutes') <= now())
+        where (
+          (status = 'pending' and coalesce(available_at, created_at) <= now())
+          or (status = 'running' and coalesce(lease_expires_at, started_at + interval '15 minutes') <= now())
+        )
+        and ($1::text = 'super_admin' or created_by = $2)
         order by created_at asc for update skip locked limit 1
-      `);
+      `, [admin.role, admin.id]);
       if (!row) return null;
       return client.queryOne(`
         update export_jobs set status = 'running', started_at = now(), finished_at = null, error_message = null,
@@ -361,10 +379,9 @@ function createExportService(context = {}) {
       const result = await adminExportData({ ...params, type: job.type }, token);
       if (result.ok === false) throw new Error(result.message || '导出失败');
       const rows = normalizeExportRows(job.type, result.rows || []);
-      const dir = path.join(uploadDir, 'exports');
-      await fs.promises.mkdir(dir, { recursive: true });
+      await fs.promises.mkdir(resolvedExportDir, { recursive: true });
       const filename = safeFilename(`${job.type}_${job.id}_${leaseToken}.csv`);
-      fullPath = path.join(dir, filename);
+      fullPath = path.join(resolvedExportDir, filename);
       await fs.promises.writeFile(fullPath, `\ufeff${exportRowsToCsv(rows)}`, 'utf8');
       const filePath = `/uploads/exports/${filename}`;
       const updated = await queryOne(`
@@ -404,12 +421,31 @@ function createExportService(context = {}) {
     if (denied) return denied;
     const location = exportFileLocation(job.file_path);
     if (!location) return fail('导出文件路径无效。', 404, 2004);
+    let fileHandle = null;
     try {
-      if (!(await fs.promises.stat(location.absolutePath)).isFile()) throw new Error('not a file');
+      const exportRoot = await fs.promises.realpath(resolvedExportDir);
+      const linkStat = await fs.promises.lstat(location.absolutePath);
+      if (linkStat.isSymbolicLink() || !linkStat.isFile()) throw new Error('not a regular file');
+      const realFilePath = await fs.promises.realpath(location.absolutePath);
+      const relativePath = path.relative(exportRoot, realFilePath);
+      if (!relativePath || relativePath.startsWith(`..${path.sep}`) || relativePath === '..' || path.isAbsolute(relativePath)) {
+        throw new Error('file escaped export directory');
+      }
+      const openFlags = fs.constants.O_RDONLY | Number(fs.constants.O_NOFOLLOW || 0);
+      fileHandle = await fs.promises.open(location.absolutePath, openFlags);
+      const openedStat = await fileHandle.stat();
+      if (!openedStat.isFile() || openedStat.dev !== linkStat.dev || openedStat.ino !== linkStat.ino) {
+        throw new Error('file changed while opening');
+      }
+      return ok({
+        file_handle: fileHandle,
+        content_length: openedStat.size,
+        download_name: safeFilename(`${job.type}_${job.id}.csv`)
+      });
     } catch (_) {
+      if (fileHandle) await fileHandle.close().catch(() => {});
       return fail('导出文件不存在或已过期。', 404, 2004);
     }
-    return ok({ ...location, download_name: safeFilename(`${job.type}_${job.id}.csv`) });
   }
 
   async function adminListExportJobs(params = {}, token) {
@@ -425,5 +461,14 @@ function createExportService(context = {}) {
   return { adminCreateExportJob, adminGetExportJobDownload, adminListExportJobs, adminRunNextExportJob, archiveDailySuccessfulUsage };
 }
 
-module.exports = { createExportService, csvCell, exportRowsToCsv, normalizeExportRows, localizeExportText };
+module.exports = {
+  EXPORT_PERMISSION_RULES,
+  createExportService,
+  csvCell,
+  exportRowsToCsv,
+  hasExportPermission,
+  isSupportedExportType,
+  normalizeExportRows,
+  localizeExportText
+};
 

@@ -1,8 +1,16 @@
 -- 实验室管理系统 schema for PostgreSQL
 -- Run this in schema public.
+SET search_path = public, pg_temp;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS btree_gist;
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version TEXT PRIMARY KEY,
+  checksum TEXT NOT NULL CONSTRAINT schema_migrations_checksum_format_check
+    CHECK (checksum ~ '^[0-9a-f]{64}$'),
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -19,6 +27,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_salt TEXT NOT NULL,
   password_reset_required BOOLEAN NOT NULL DEFAULT false,
   temporary_password_expires_at TIMESTAMPTZ,
+  authz_version BIGINT NOT NULL DEFAULT 1 CHECK (authz_version >= 1),
   role TEXT NOT NULL DEFAULT 'user', -- user/admin/super_admin
   status TEXT NOT NULL DEFAULT 'pending', -- pending/active/disabled/rejected
   is_banned BOOLEAN NOT NULL DEFAULT FALSE,
@@ -35,6 +44,28 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_single_super_admin_idx ON users ((role)) WHERE role = 'super_admin';
+
+CREATE TABLE IF NOT EXISTS password_reset_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  submitted_phone TEXT NOT NULL,
+  submitted_name TEXT NOT NULL,
+  submitted_student_no TEXT NOT NULL,
+  submitted_major TEXT,
+  submitted_mentor_name TEXT NOT NULL,
+  reason TEXT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled', 'expired')),
+  request_count INTEGER NOT NULL DEFAULT 1 CHECK (request_count >= 1),
+  reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  reviewed_at TIMESTAMPTZ,
+  review_note TEXT,
+  expires_at TIMESTAMPTZ NOT NULL DEFAULT (now() + INTERVAL '7 days'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_password_reset_requests_pending_user ON password_reset_requests(user_id) WHERE status = 'pending' AND user_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_password_reset_requests_status_time ON password_reset_requests(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_password_reset_requests_pending_expiry ON password_reset_requests(expires_at) WHERE status = 'pending';
 
 CREATE TABLE IF NOT EXISTS admin_roles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -311,7 +342,6 @@ CREATE TABLE IF NOT EXISTS user_requests (
   description TEXT NOT NULL,
   priority TEXT NOT NULL DEFAULT 'normal',
   status TEXT NOT NULL DEFAULT 'pending',
-  no_show_reason_category TEXT,
   admin_note TEXT,
   change_request_note TEXT,
   confirmed_by UUID REFERENCES users(id) ON DELETE SET NULL,
@@ -499,6 +529,100 @@ CREATE TABLE IF NOT EXISTS refresh_token_sessions (
 CREATE INDEX IF NOT EXISTS idx_refresh_token_sessions_subject ON refresh_token_sessions(subject, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_refresh_token_sessions_expiry ON refresh_token_sessions(expires_at) WHERE revoked_at IS NULL;
 
+-- Every security-sensitive account change invalidates all tokens issued from the
+-- previous authorization state.  The application embeds authz_version in both
+-- access and refresh JWTs and reloads the current principal on every use.
+CREATE OR REPLACE FUNCTION bump_user_authz_version()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF OLD.password_hash IS DISTINCT FROM NEW.password_hash
+     OR OLD.password_salt IS DISTINCT FROM NEW.password_salt
+     OR OLD.password_reset_required IS DISTINCT FROM NEW.password_reset_required
+     OR OLD.temporary_password_expires_at IS DISTINCT FROM NEW.temporary_password_expires_at
+     OR OLD.role IS DISTINCT FROM NEW.role
+     OR OLD.status IS DISTINCT FROM NEW.status
+     OR OLD.is_banned IS DISTINCT FROM NEW.is_banned
+     OR OLD.deleted_at IS DISTINCT FROM NEW.deleted_at THEN
+    NEW.authz_version := GREATEST(COALESCE(NEW.authz_version, 1), OLD.authz_version + 1);
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION revoke_user_refresh_sessions_after_authz_change()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF OLD.authz_version IS DISTINCT FROM NEW.authz_version THEN
+    UPDATE refresh_token_sessions
+    SET revoked_at = COALESCE(revoked_at, now())
+    WHERE subject = NEW.id::text AND revoked_at IS NULL;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION bump_user_authz_for_admin_role_change()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  affected_user_id UUID;
+BEGIN
+  affected_user_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.user_id ELSE NEW.user_id END;
+  IF TG_OP = 'UPDATE'
+     AND OLD.user_id IS NOT DISTINCT FROM NEW.user_id
+     AND OLD.role_key IS NOT DISTINCT FROM NEW.role_key
+     AND OLD.permissions IS NOT DISTINCT FROM NEW.permissions THEN
+    RETURN NULL;
+  END IF;
+
+  UPDATE users
+  SET authz_version = authz_version + 1,
+      updated_at = now()
+  WHERE id = affected_user_id;
+
+  UPDATE refresh_token_sessions
+  SET revoked_at = COALESCE(revoked_at, now())
+  WHERE subject = affected_user_id::text AND revoked_at IS NULL;
+
+  IF TG_OP = 'UPDATE' AND OLD.user_id IS DISTINCT FROM NEW.user_id THEN
+    UPDATE users
+    SET authz_version = authz_version + 1,
+        updated_at = now()
+    WHERE id = OLD.user_id;
+
+    UPDATE refresh_token_sessions
+    SET revoked_at = COALESCE(revoked_at, now())
+    WHERE subject = OLD.user_id::text AND revoked_at IS NULL;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS users_authz_version_bump_trigger ON users;
+CREATE TRIGGER users_authz_version_bump_trigger
+BEFORE UPDATE OF password_hash, password_salt, password_reset_required,
+  temporary_password_expires_at, role, status, is_banned, deleted_at
+ON users
+FOR EACH ROW EXECUTE FUNCTION bump_user_authz_version();
+
+DROP TRIGGER IF EXISTS users_authz_refresh_revoke_trigger ON users;
+CREATE TRIGGER users_authz_refresh_revoke_trigger
+AFTER UPDATE ON users
+FOR EACH ROW EXECUTE FUNCTION revoke_user_refresh_sessions_after_authz_change();
+
+DROP TRIGGER IF EXISTS admin_roles_authz_version_trigger ON admin_roles;
+CREATE TRIGGER admin_roles_authz_version_trigger
+AFTER INSERT OR UPDATE OR DELETE ON admin_roles
+FOR EACH ROW EXECUTE FUNCTION bump_user_authz_for_admin_role_change();
+
 CREATE TABLE IF NOT EXISTS scheduled_job_runs (
   job_key TEXT PRIMARY KEY,
   job_name TEXT NOT NULL,
@@ -580,6 +704,22 @@ CREATE INDEX IF NOT EXISTS idx_export_jobs_expired_files
   ON export_jobs(finished_at)
   WHERE status = 'finished' AND file_path IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS legacy_import_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_name TEXT NOT NULL,
+  source_sha256 TEXT NOT NULL,
+  source_format TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'completed', 'failed')),
+  options JSONB NOT NULL DEFAULT '{}'::jsonb,
+  summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+  error_message TEXT,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_legacy_import_runs_active_hash ON legacy_import_runs(source_sha256) WHERE status IN ('running', 'completed');
+CREATE INDEX IF NOT EXISTS idx_legacy_import_runs_created ON legacy_import_runs(created_at DESC);
+
 CREATE TABLE IF NOT EXISTS device_time_slots (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
@@ -606,6 +746,7 @@ CREATE TABLE IF NOT EXISTS reservation_items (
   start_time TIMESTAMPTZ NOT NULL,
   end_time TIMESTAMPTZ NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',
+  no_show_reason_category TEXT,
   admin_note TEXT,
   approved_by UUID REFERENCES users(id) ON DELETE SET NULL,
   approved_at TIMESTAMPTZ,
@@ -708,8 +849,9 @@ SELECT
   'reservation_item'::text AS source_type,
   d.device_code AS color_key
 FROM reservation_items ri
-JOIN devices d ON d.id = ri.device_id
-JOIN users u ON u.id = ri.user_id
+JOIN devices d ON d.id = ri.device_id AND d.deleted_at IS NULL
+JOIN users u ON u.id = ri.user_id AND u.deleted_at IS NULL
+WHERE ri.deleted_at IS NULL
 UNION ALL
 SELECT
   b.id AS event_id,
@@ -724,8 +866,9 @@ SELECT
   'borrow'::text AS source_type,
   d.device_code AS color_key
 FROM borrow_records b
-JOIN devices d ON d.id = b.device_id
-JOIN users u ON u.id = b.user_id;
+JOIN devices d ON d.id = b.device_id AND d.deleted_at IS NULL
+JOIN users u ON u.id = b.user_id AND u.deleted_at IS NULL
+WHERE b.deleted_at IS NULL;
 
 CREATE OR REPLACE VIEW device_usage_summary_view AS
 SELECT
@@ -738,9 +881,10 @@ SELECT
   COUNT(DISTINCT f.id)::int AS fault_count,
   MAX(b.borrow_time) AS last_used_at
 FROM devices d
-LEFT JOIN reservations r ON r.device_id = d.id
-LEFT JOIN borrow_records b ON b.device_id = d.id
-LEFT JOIN device_fault_reports f ON f.device_id = d.id
+LEFT JOIN reservations r ON r.device_id = d.id AND r.deleted_at IS NULL
+LEFT JOIN borrow_records b ON b.device_id = d.id AND b.deleted_at IS NULL
+LEFT JOIN device_fault_reports f ON f.device_id = d.id AND f.deleted_at IS NULL
+WHERE d.deleted_at IS NULL
 GROUP BY d.id, d.device_code, d.name;
 
 CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone);
@@ -751,6 +895,7 @@ CREATE INDEX IF NOT EXISTS idx_reservations_user_time ON reservations(user_id, s
 CREATE INDEX IF NOT EXISTS idx_borrow_records_device_time ON borrow_records(device_id, borrow_time, return_time);
 CREATE INDEX IF NOT EXISTS idx_borrow_records_user_time ON borrow_records(user_id, borrow_time, return_time);
 CREATE INDEX IF NOT EXISTS idx_borrow_records_active_due ON borrow_records(expected_return_time) WHERE status = 'in_use';
+CREATE INDEX IF NOT EXISTS idx_borrow_reminder_window ON borrow_records(status, expected_return_time) WHERE status = 'in_use';
 CREATE INDEX IF NOT EXISTS idx_borrow_records_return_review ON borrow_records(status, return_time DESC) WHERE status IN ('return_pending', 'abnormal_pending');
 CREATE INDEX IF NOT EXISTS idx_borrow_records_material_deadline ON borrow_records(return_material_deadline) WHERE return_material_required = TRUE AND return_supplemented_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_users_pending_active ON users(created_at DESC) WHERE status = 'pending' AND coalesce(is_banned, FALSE) = FALSE;
@@ -765,15 +910,18 @@ CREATE INDEX IF NOT EXISTS idx_reservation_items_cancel_requested ON reservation
 CREATE INDEX IF NOT EXISTS idx_user_requests_user_time ON user_requests(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_user_requests_status_time ON user_requests(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_user_notifications_user_time ON user_notifications(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_notifications_level_user_time ON user_notifications(level, user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_user_notifications_unread ON user_notifications(user_id, is_read, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_participants_user_time ON chat_participants(user_id, joined_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_time ON chat_messages(conversation_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_id_time ON chat_messages(conversation_id, id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_conversations_last_message ON chat_conversations(last_message_at DESC NULLS LAST, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_conversations_expires_at ON chat_conversations(expires_at) WHERE expires_at IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_conversations_system_key ON chat_conversations(system_key) WHERE system_key IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_messages_client_message ON chat_messages(sender_id, client_message_id) WHERE client_message_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_chat_messages_related ON chat_messages(related_type, related_id);
 CREATE INDEX IF NOT EXISTS idx_chat_message_reads_user_time ON chat_message_reads(user_id, read_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_message_reads_user_conv ON chat_message_reads(user_id, read_at DESC);
 CREATE INDEX IF NOT EXISTS idx_user_notifications_related ON user_notifications(related_type, related_id);
 CREATE INDEX IF NOT EXISTS idx_export_jobs_created_by_time ON export_jobs(created_by, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_export_jobs_status_time ON export_jobs(status, created_at DESC);
@@ -801,6 +949,7 @@ CREATE INDEX IF NOT EXISTS idx_reservation_items_batch ON reservation_items(batc
 CREATE INDEX IF NOT EXISTS idx_reservation_items_user_time ON reservation_items(user_id, start_time DESC);
 CREATE INDEX IF NOT EXISTS idx_reservation_items_device_time ON reservation_items(device_id, start_time, end_time);
 CREATE INDEX IF NOT EXISTS idx_reservation_items_pending_time ON reservation_items(start_time, created_at DESC) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_reservation_reminder_window ON reservation_items(status, start_time) WHERE status = 'approved';
 
 INSERT INTO system_configs (config_key, config_value, description)
 VALUES
@@ -843,6 +992,11 @@ VALUES
   ('user.manage', '管理用户', '搜索、禁用、恢复、解绑用户', '用户', 20),
   ('reservation.view', '查看预约', '查看预约与日历数据', '预约', 30),
   ('reservation.approve', '同意用户预约', '审批预约批次和明细', '预约', 40),
+  ('reservation.change_plan', 'Change reservation plan', 'Modify reservation time and slot', 'Reservations', 45),
+  ('return.view', 'View return records', 'View return status and archive data', 'Returns', 46),
+  ('return.confirm', 'Confirm returns', 'Confirm or record device returns', 'Returns', 47),
+  ('return.image_review', 'Review return images', 'Review return image evidence', 'Returns', 48),
+  ('return.export', 'Export return archives', 'Export return records and archives', 'Returns', 49),
   ('device.view', '查看设备', '查看设备和设备状态', '设备', 50),
   ('device.manage', '管理设备', '新增、编辑、停用设备和时间段', '设备', 60),
   ('fault.manage', '处理故障报备', '处理故障并联动设备状态', '故障', 70),
@@ -850,7 +1004,9 @@ VALUES
   ('stats.export', '导出统计', '导出统计数据', '统计', 90),
   ('system.config', '系统配置', '修改系统配置', '系统', 100),
   ('admin.manage', '管理管理员权限', '授权或撤销管理员权限', '系统', 110),
-  ('operation.view', '查看操作日志', '查看后台操作日志', '系统', 120)
+  ('audit.view', 'View operation logs', 'View administrator operation logs', 'System', 120),
+  ('chat.announce', 'Publish group announcements', 'Publish announcements and mention all members', 'Communication', 130),
+  ('chat.kick', 'Remove group members', 'Remove members and suspend reservation access', 'Communication', 140)
 ON CONFLICT (permission_key) DO UPDATE SET
   name = EXCLUDED.name,
   description = EXCLUDED.description,
@@ -861,7 +1017,7 @@ INSERT INTO roles (role_key, role_name, description, is_system)
 VALUES
   ('super_admin', '超级管理员', '全部权限', TRUE),
   ('admin', '管理员', '设备、用户、预约、统计管理', TRUE),
-  ('ops', '运营', '设备、预约、故障处理', TRUE),
+  ('duty_admin', 'Duty administrator', 'Reservation, return and fault handling', TRUE),
   ('auditor', '审计', '查看与导出', TRUE)
 ON CONFLICT (role_key) DO UPDATE SET role_name = EXCLUDED.role_name, description = EXCLUDED.description, is_system = EXCLUDED.is_system;
 
@@ -870,9 +1026,16 @@ SELECT r.id, p.permission_key
 FROM roles r
 JOIN permissions p ON (
   r.role_key = 'super_admin'
-  OR (r.role_key = 'admin' AND p.permission_key IN ('user.approve','user.manage','reservation.view','reservation.approve','device.view','device.manage','fault.manage','stats.view','stats.export'))
-  OR (r.role_key = 'ops' AND p.permission_key IN ('reservation.view','reservation.approve','device.view','device.manage','fault.manage'))
-  OR (r.role_key = 'auditor' AND p.permission_key IN ('reservation.view','device.view','stats.view','stats.export','operation.view'))
+  OR (r.role_key = 'admin' AND p.permission_key IN (
+    'user.approve','user.manage',
+    'reservation.view','reservation.approve','reservation.change_plan',
+    'return.view','return.confirm','return.image_review','return.export',
+    'device.view','device.manage','fault.manage',
+    'stats.view','stats.export','audit.view',
+    'chat.announce','chat.kick'
+  ))
+  OR (r.role_key = 'duty_admin' AND p.permission_key IN ('reservation.view','reservation.approve','return.view','return.confirm','return.image_review','device.view','fault.manage'))
+  OR (r.role_key = 'auditor' AND p.permission_key IN ('audit.view','reservation.view','return.view','device.view'))
 )
 ON CONFLICT DO NOTHING;
 
@@ -909,7 +1072,3 @@ ALTER TABLE chat_conversations DISABLE ROW LEVEL SECURITY;
 ALTER TABLE chat_participants DISABLE ROW LEVEL SECURITY;
 ALTER TABLE chat_messages DISABLE ROW LEVEL SECURITY;
 ALTER TABLE chat_message_reads DISABLE ROW LEVEL SECURITY;
-
-
-
-

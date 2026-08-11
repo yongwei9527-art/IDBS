@@ -17,6 +17,8 @@ import {
   useDeleteUser,
   useRevokeRole,
   useResetUserPassword,
+  usePasswordResetRequests,
+  useReviewPasswordResetRequest,
   useRegistrationApprovalCode,
   useRefreshRegistrationApprovalCode,
   useUpdateRegistrationApprovalCodeTtl,
@@ -26,7 +28,8 @@ import {
   useUnbindUserWechat,
   useUpsertRole,
   type AdminUser,
-  type AdminUserDetail
+  type AdminUserDetail,
+  type PasswordResetRequest
 } from '@/features/platform/operations-api';
 
 const STATUS_LABEL: Record<string, string> = {
@@ -259,6 +262,106 @@ function RegistrationApprovalCodeCard() {
   );
 }
 
+function PasswordResetRequestsCard() {
+  const query = usePasswordResetRequests('pending', true);
+  const review = useReviewPasswordResetRequest();
+  const { confirm, prompt, ActionDialog } = useActionDialog();
+  const rows = query.data?.requests ?? [];
+
+  async function handleReview(item: PasswordResetRequest, approved: boolean) {
+    let reviewNote = '';
+    if (approved) {
+      const accepted = await confirm({
+        title: '确认通过密码找回申请？',
+        description: `请人工核对账号资料。通过后将立即使 ${item.account_phone || item.submitted_phone} 的旧密码失效。`,
+        confirmText: '核验无误并生成临时密码',
+        cancelText: '取消',
+        tone: 'danger'
+      });
+      if (!accepted) return;
+    } else {
+      const note = await prompt({
+        title: '拒绝密码找回申请',
+        description: '请填写拒绝原因，便于用户联系管理员继续核验。',
+        confirmText: '确认拒绝',
+        cancelText: '取消',
+        placeholder: '例如：学号或导师信息不匹配',
+        required: true
+      });
+      if (note === null) return;
+      reviewNote = note;
+    }
+    review.mutate({ id: item.id, approved, review_note: reviewNote }, {
+      onSuccess: async (result) => {
+        try {
+          if (result.status !== 'approved' || !result.temporary_password) {
+            toast.success(result.message || (result.status === 'expired' ? '申请已过期，未重置密码' : '申请已拒绝'));
+            return;
+          }
+          await confirm({
+            title: '24 小时临时密码（仅显示本次）',
+            description: (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">请通过线下安全方式交给本人，关闭后无法再次查看。</p>
+                <p className="rounded-lg border bg-muted/40 px-4 py-3 text-center font-mono text-2xl font-bold tracking-[0.2em]">{result.temporary_password}</p>
+                <p className="text-xs text-muted-foreground">有效期至 {briefDateTime(result.temporary_password_expires_at)}，首次登录必须修改密码。</p>
+              </div>
+            ),
+            confirmText: '我已安全保存',
+            cancelText: '关闭'
+          });
+        } finally {
+          review.reset();
+        }
+      },
+      onError: (error) => toast.error(`处理失败：${toFriendlyError(error)}`)
+    });
+  }
+
+  if (!rows.length && !query.isLoading && !query.error) return null;
+  return (
+    <Card className="border-warning/30 bg-warning/[0.03]">
+      <ActionDialog />
+      <CardContent className="space-y-3 p-4">
+        <OpsDataToolbar title="待处理密码找回申请" meta={<>{rows.length} 条</>} />
+        {query.error ? <p className="text-sm text-destructive">读取失败：{toFriendlyError(query.error)}</p> : null}
+        {query.isLoading ? <p className="text-sm text-muted-foreground">正在读取申请…</p> : null}
+        <div className="space-y-2">
+          {rows.map((item) => {
+            const matches = [
+              ['姓名', item.submitted_name, item.account_name],
+              ['学号', item.submitted_student_no, item.account_student_no],
+              ['专业', item.submitted_major, item.account_major],
+              ['导师', item.submitted_mentor_name, item.account_mentor_name]
+            ] as const;
+            return (
+              <article key={item.id} className="rounded-lg border bg-card p-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold">{item.submitted_name} · {item.submitted_phone}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">申请 {item.request_count || 1} 次 · {briefDateTime(item.updated_at)}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" disabled={review.isPending} onClick={() => void handleReview(item, false)}>拒绝</Button>
+                    <Button size="sm" disabled={review.isPending} onClick={() => void handleReview(item, true)}>核验通过</Button>
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
+                  {matches.map(([label, submitted, account]) => {
+                    const same = Boolean(submitted && account && String(submitted).trim() === String(account).trim());
+                    return <div key={label} className={`rounded border p-2 ${same ? 'border-success/30 bg-success/5' : 'border-warning/30 bg-warning/5'}`}><strong>{label}</strong><br />提交：{submitted || '—'}<br />账号：{account || '—'}<br /><span>{same ? '一致' : '需人工核验'}</span></div>;
+                  })}
+                </div>
+                {item.reason ? <p className="mt-2 text-xs text-muted-foreground">说明：{item.reason}</p> : null}
+              </article>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function AdminUsersPage() {
   const capability = useCapability();
   const { confirm, prompt, ActionDialog } = useActionDialog();
@@ -436,7 +539,7 @@ export function AdminUsersPage() {
       title: `\u91cd\u7f6e${targetLabel}\u5bc6\u7801`,
       description: (
         <div className="space-y-2">
-          <p>系统将生成 12 位数字的一次性临时密码，只显示一次。</p>
+          <p>系统将生成仅显示一次的 12 位数字临时密码，有效期为 24 小时。</p>
           <p className="font-medium text-foreground">用户首次登录后必须立即设置新密码；刷新会话立即失效，旧访问令牌最长 15 分钟后失效。</p>
         </div>
       ),
@@ -449,7 +552,7 @@ export function AdminUsersPage() {
       {
         onSuccess: async (data) => {
           await confirm({
-            title: '一次性临时密码（仅显示一次）',
+            title: '24 小时临时密码（仅显示本次）',
             description: (
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground">请通过安全方式交给对应用户。关闭后系统无法再次查看，只能重新重置。</p>
@@ -585,6 +688,7 @@ export function AdminUsersPage() {
       <ActionDialog />
       <OpsPageHeader title="用户管理" className="ops-page-header--compact" />
       {canViewRegistrationApprovalCode ? <RegistrationApprovalCodeCard /> : null}
+      {capability.isSuperAdmin ? <PasswordResetRequestsCard /> : null}
       {capability.isSuperAdmin ? <SuperAdminOperationsOverview onOpenUser={setSelectedId} /> : null}
 
       <div className="user-admin-metrics">

@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { version: productVersion } = require('../../package.json');
 const { getReadinessStatus, getRuntimeDiagnostics } = require('../../src/lib/runtime-diagnostics');
 
 const config = {
@@ -43,7 +44,7 @@ test('runtime diagnostics reports only safe component state', async () => {
     websocketActive: true
   });
 
-  assert.equal(diagnostics.product_version, '5.0.0');
+  assert.equal(diagnostics.product_version, productVersion);
   assert.equal(diagnostics.components.scheduler, 'active');
   assert.equal(diagnostics.components.maintenance_window_scheduler, 'active');
   assert.equal(diagnostics.components.realtime_bus, 'active');
