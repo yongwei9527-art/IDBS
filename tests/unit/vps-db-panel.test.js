@@ -65,6 +65,20 @@ test('VPS installation has one canonical entrypoint and one canonical service na
   assert.doesNotMatch(prepare, /main\/scripts\/install-vps\.sh/);
 });
 
+test('published installer commands fail closed before sudo execution', () => {
+  const readme = fs.readFileSync(path.resolve(__dirname, '../../README.md'), 'utf8');
+  const deploymentGuide = fs.readFileSync(path.resolve(__dirname, '../../docs/VPS_DEPLOYMENT.md'), 'utf8');
+  for (const document of [readme, deploymentGuide]) {
+    const installerIndex = document.indexOf('raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install.sh');
+    assert.ok(installerIndex >= 0);
+    const installCommand = document.slice(Math.max(0, installerIndex - 500), installerIndex + 500);
+    assert.match(installCommand, /set -e/);
+    assert.match(installCommand, /test -s "\$tmp"/);
+    assert.match(installCommand, /bash -n "\$tmp"/);
+    assert.match(installCommand, /bash -n "\$tmp"[\s\S]*sudo (?:env [^\n]+ )?bash "\$tmp"/);
+  }
+});
+
 test('interrupted first installation preserves credentials and records final connection info', () => {
   assert.match(installer, /\.initial-super-admin-pending/);
   assert.match(installer, /install -o root -g root -m 600/);

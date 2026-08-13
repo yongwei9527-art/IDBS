@@ -10,12 +10,17 @@
 在受支持的全新 Ubuntu/Debian VPS 中执行：
 
 ```bash
-tmp="$(mktemp)"
-curl -4fL --connect-timeout 15 --max-time 120 --retry 3 \
-  -o "$tmp" \
-  "https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install.sh?v=$(date +%s)"
-sudo bash "$tmp"
-rm -f "$tmp"
+(
+  set -e
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' EXIT
+  curl -4fL --show-error --connect-timeout 15 --max-time 120 --retry 3 \
+    -o "$tmp" \
+    "https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install.sh?v=$(date +%s)"
+  test -s "$tmp"
+  bash -n "$tmp"
+  sudo bash "$tmp"
+)
 ```
 
 安装器会询问域名、HTTPS、最高管理员账号、密码和数据目录。直接按 Enter 可采用安全默认值；随机管理员密码只显示一次。
@@ -23,12 +28,17 @@ rm -f "$tmp"
 如果 VPS 无法连接 GitHub，可明确选择第三方代理（代理不由本项目运营，请确认信任后使用）：
 
 ```bash
-tmp="$(mktemp)"
-curl -4fL --connect-timeout 15 --max-time 120 --retry 3 \
-  -o "$tmp" \
-  "https://ghproxy.net/https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install.sh?v=$(date +%s)"
-sudo env GITHUB_PROXY_PREFIX=https://ghproxy.net bash "$tmp"
-rm -f "$tmp"
+(
+  set -e
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' EXIT
+  curl -4fL --show-error --connect-timeout 15 --max-time 120 --retry 3 \
+    -o "$tmp" \
+    "https://ghproxy.net/https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install.sh?v=$(date +%s)"
+  test -s "$tmp"
+  bash -n "$tmp"
+  sudo env GITHUB_PROXY_PREFIX=https://ghproxy.net bash "$tmp"
+)
 ```
 
 也可将命令中的两个 `ghproxy.net` 同时替换为 `gh-proxy.com` 或 `github.akams.cn`。

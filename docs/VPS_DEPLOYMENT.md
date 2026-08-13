@@ -13,7 +13,11 @@
   set -e
   tmp="$(mktemp)"
   trap 'rm -f "$tmp"' EXIT
-  curl -fL --retry 3 -o "$tmp" 'https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install.sh'
+  curl -4fL --show-error --connect-timeout 15 --max-time 120 --retry 3 \
+    -o "$tmp" \
+    "https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install.sh?v=$(date +%s)"
+  test -s "$tmp"
+  bash -n "$tmp"
   sudo bash "$tmp"
 )
 ```
