@@ -69,7 +69,7 @@ sudo laboratory-management-system-backup
 sudo laboratory-management-system-upgrade-postgresql
 ```
 
-PostgreSQL 主版本升级会要求输入 `UPGRADE-POSTGRESQL` 二次确认，先生成并验证数据库与全局角色备份，再执行升级。旧集群不会自动删除；完整流程和首次安装尚未成功时的独立升级命令见 VPS 详细文档。
+PostgreSQL 主版本升级会要求输入 `UPGRADE-POSTGRESQL` 二次确认，先生成并验证数据库与全局角色备份，再执行升级。升级到 16 后会再次验证数据库版本、应用 `/ready`（已有服务正在运行时）以及由 PostgreSQL 16 工具生成的第二份备份；全部通过才删除旧集群并精确卸载旧主版本软件包，不执行 `autoremove`。安装器发现本项目本地数据库仍为 PostgreSQL 13/14/15 时会自动完成相同的替换流程。完整流程和首次安装尚未成功时的独立升级命令见 VPS 详细文档。
 
 ## 使用入口
 

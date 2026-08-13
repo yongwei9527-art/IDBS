@@ -129,6 +129,7 @@ record_from_stdin() {
 }
 
 show_install_info() {
+  show_postgresql_info
   if [ ! -f "$INFO_FILE" ]; then
     echo "尚未找到安装信息：$INFO_FILE"
     return 0
@@ -145,6 +146,32 @@ show_install_info() {
   echo "安全提示：临时密码以 root-only（600）文件保存，但明文凭据仍有风险。"
   echo "首次或重置后登录必须立即修改密码；修改后，上述临时密码可能已失效。"
   echo "信息文件：$INFO_FILE"
+}
+
+show_postgresql_info() {
+  local cluster_rows primary_row major cluster port status
+  command -v pg_lsclusters >/dev/null 2>&1 || return 0
+  cluster_rows="$(pg_lsclusters --no-header 2>/dev/null || true)"
+  echo
+  echo '=== PostgreSQL ==='
+  primary_row="$(printf '%s\n' "$cluster_rows" | awk '$3 == 5432 && $4 == "online" { print; exit }')"
+  if [ -n "$primary_row" ]; then
+    read -r major cluster port status _ <<< "$primary_row"
+    printf '项目数据库集群：PostgreSQL %s/%s，端口 %s，状态 %s\n' "$major" "$cluster" "$port" "$status"
+    if [ "$major" = '16' ]; then
+      echo '版本基线：符合项目 PostgreSQL 16 基线'
+    elif [[ "$major" =~ ^[0-9]+$ ]] && [ "$major" -lt 16 ]; then
+      echo '版本基线：需要替换升级；运行 sudo laboratory-management-system-upgrade-postgresql'
+    else
+      echo '版本基线：不是项目验证的 PostgreSQL 16，请人工核查'
+    fi
+  else
+    echo '项目数据库集群：未发现 5432 上的在线 PostgreSQL 集群'
+  fi
+  if printf '%s\n' "$cluster_rows" | awk '$4 != "online" { found=1 } END { exit(found ? 0 : 1) }'; then
+    echo '其他已停止集群：'
+    printf '%s\n' "$cluster_rows" | awk '$4 != "online" { printf "  PostgreSQL %s/%s，端口 %s，状态 %s\n", $1, $2, $3, $4 }'
+  fi
 }
 
 ask_value() {

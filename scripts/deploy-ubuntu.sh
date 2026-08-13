@@ -96,34 +96,37 @@ install_packages() {
   export DEBIAN_FRONTEND=noninteractive
   safe_apt_update -y
   apt-get install -y acl curl ca-certificates gnupg iproute2 openssl postgresql-common rsync sudo util-linux
-  if [ "${EXISTING_INSTALL:-0}" = '1' ]; then
-    apt-get install -y postgresql postgresql-client
-  else
-    if ! apt-cache show postgresql-16 >/dev/null 2>&1; then
-      # shellcheck disable=SC1091
-      source /etc/os-release
-      codename="${VERSION_CODENAME:-}"
-      [ -n "$codename" ] || die 'The operating-system codename could not be detected.'
-      curl -4fsSI --connect-timeout 15 --max-time 60 \
-        "https://apt.postgresql.org/pub/repos/apt/dists/${codename}-pgdg/Release" >/dev/null \
-        || die "The official PostgreSQL repository does not support this OS codename: $codename"
-      key_dir='/usr/share/postgresql-common/pgdg'
-      key_file="$key_dir/apt.postgresql.org.asc"
-      repo_file='/etc/apt/sources.list.d/laboratory-management-system-pgdg.list'
-      mkdir -p -- "$key_dir"
-      key_tmp="$(mktemp "$key_dir/.apt.postgresql.org.asc.XXXXXX")"
-      curl -4fL --show-error --connect-timeout 15 --max-time 120 --retry 3 \
-        https://www.postgresql.org/media/keys/ACCC4CF8.asc -o "$key_tmp"
-      [ "$(gpg --show-keys --with-colons "$key_tmp" 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')" \
-          = 'B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8' ] \
-        || die 'The downloaded PostgreSQL repository signing-key fingerprint is invalid.'
-      install -o root -g root -m 0644 "$key_tmp" "$key_file"
-      rm -f -- "$key_tmp"
-      printf 'deb [signed-by=%s] https://apt.postgresql.org/pub/repos/apt %s-pgdg main\n' \
-        "$key_file" "$codename" > "$repo_file"
-      safe_apt_update -y
-    fi
-    apt-get install -y postgresql-16 postgresql-client-16
+  if ! apt-cache show postgresql-16 >/dev/null 2>&1; then
+    # shellcheck disable=SC1091
+    source /etc/os-release
+    codename="${VERSION_CODENAME:-}"
+    [ -n "$codename" ] || die 'The operating-system codename could not be detected.'
+    curl -4fsSI --connect-timeout 15 --max-time 60 \
+      "https://apt.postgresql.org/pub/repos/apt/dists/${codename}-pgdg/Release" >/dev/null \
+      || die "The official PostgreSQL repository does not support this OS codename: $codename"
+    key_dir='/usr/share/postgresql-common/pgdg'
+    key_file="$key_dir/apt.postgresql.org.asc"
+    repo_file='/etc/apt/sources.list.d/laboratory-management-system-pgdg.list'
+    mkdir -p -- "$key_dir"
+    key_tmp="$(mktemp "$key_dir/.apt.postgresql.org.asc.XXXXXX")"
+    curl -4fL --show-error --connect-timeout 15 --max-time 120 --retry 3 \
+      https://www.postgresql.org/media/keys/ACCC4CF8.asc -o "$key_tmp"
+    [ "$(gpg --show-keys --with-colons "$key_tmp" 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')" \
+        = 'B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8' ] \
+      || die 'The downloaded PostgreSQL repository signing-key fingerprint is invalid.'
+    install -o root -g root -m 0644 "$key_tmp" "$key_file"
+    rm -f -- "$key_tmp"
+    printf 'deb [signed-by=%s] https://apt.postgresql.org/pub/repos/apt %s-pgdg main\n' \
+      "$key_file" "$codename" > "$repo_file"
+    chmod 644 "$repo_file"
+    safe_apt_update -y
+  fi
+  # Existing installations are pinned as well. Installing a generic distro
+  # meta-package here could create another arbitrary major version (13/14/15)
+  # and reproduce the cross-VPS conflict this deployment is designed to avoid.
+  apt-get install -y postgresql-16 postgresql-client-16
+  if apt-cache show postgresql-contrib-16 >/dev/null 2>&1; then
+    apt-get install -y postgresql-contrib-16
   fi
   if [ ! -x /usr/bin/node ] \
     || [ "$(/usr/bin/node -p 'Number(process.versions.node.split(".")[0])' 2>/dev/null || echo 0)" -lt 22 ]; then
@@ -638,12 +641,53 @@ verify_local_postgres_target() {
     || die 'Could not verify the PostgreSQL server version on 127.0.0.1:5432.'
   server_major=$((server_version_num / 10000))
   log "Verified PostgreSQL server $server_major on the application target port 5432."
-  if [ "$server_major" -lt 15 ]; then
-    log "Compatibility recovery mode: PostgreSQL $server_major is below the supported production baseline. Complete this recovery, then run sudo laboratory-management-system-upgrade-postgresql."
+  [ -x "/usr/lib/postgresql/$server_major/bin/pg_dump" ] \
+    && [ -x "/usr/lib/postgresql/$server_major/bin/pg_restore" ] \
+    || die "PostgreSQL $server_major backup tools are missing."
+  set_env_value PG_DUMP_PATH "/usr/lib/postgresql/$server_major/bin/pg_dump"
+  set_env_value PG_RESTORE_PATH "/usr/lib/postgresql/$server_major/bin/pg_restore"
+  if [ "$server_major" -ne 16 ]; then
+    log "Compatibility mode: the project-tested local PostgreSQL major is 16; run sudo laboratory-management-system-upgrade-postgresql to replace PostgreSQL $server_major."
   fi
   if [ "${EXISTING_INSTALL:-0}" != '1' ] && [ "$server_major" -ne 16 ]; then
     die "A fresh installation must use PostgreSQL 16, but port 5432 is PostgreSQL $server_major. Remove the empty conflicting cluster or use a clean supported VPS."
   fi
+}
+
+upgrade_managed_local_postgres_if_required() {
+  local database_url parse_status cluster_count server_version_num server_major
+  database_url="$(get_env_value DATABASE_URL)"
+  if parse_local_database_password "$database_url" >/dev/null; then
+    :
+  else
+    parse_status=$?
+    [ "$parse_status" -eq 3 ] && return 0
+    die 'The configured local DATABASE_URL could not be parsed safely.'
+  fi
+
+  systemctl enable postgresql
+  systemctl start postgresql
+  cluster_count="$(pg_lsclusters --no-header 2>/dev/null | awk '$3 == 5432 && $4 == "online" { count++ } END { print count + 0 }')"
+  [ "$cluster_count" = '1' ] \
+    || die "Expected exactly one online PostgreSQL cluster on port 5432 before automatic upgrade; found $cluster_count. Run: sudo pg_lsclusters"
+  server_version_num="$(run_local_postgres_psql --dbname postgres --tuples-only --no-align \
+    --command 'SHOW server_version_num' | tr -d '[:space:]')"
+  [[ "$server_version_num" =~ ^[0-9]+$ ]] \
+    || die 'Could not verify the PostgreSQL server version before automatic upgrade.'
+  server_major=$((server_version_num / 10000))
+  if [ "$server_major" -ge 16 ]; then
+    return 0
+  fi
+
+  log "Replacing managed local PostgreSQL $server_major with PostgreSQL 16 before application migration."
+  log 'A verified pre-upgrade backup is created first; the old version is deleted only after database and application checks pass.'
+  CONFIRM_POSTGRES_UPGRADE=UPGRADE-POSTGRESQL \
+    REMOVE_OLD_POSTGRES_AFTER_SUCCESS=1 \
+    TARGET_POSTGRES_MAJOR=16 \
+    SERVICE_NAME="$SERVICE_NAME" \
+    APP_BASE="$APP_BASE" \
+    ENV_FILE="$ENV_FILE" \
+    bash "$ROOT_DIR/scripts/upgrade-postgresql.sh"
 }
 
 apply_database_schema() {
@@ -1331,6 +1375,7 @@ main() {
   prepare_candidate_release
   ensure_env
   configure_release_retention
+  upgrade_managed_local_postgres_if_required
   npm --prefix "$CANDIDATE_RELEASE" ci --omit=dev
   build_v3_frontend
   verify_candidate_release_sources

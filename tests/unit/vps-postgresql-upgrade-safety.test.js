@@ -7,6 +7,7 @@ const root = path.resolve(__dirname, '..', '..');
 const read = (name) => fs.readFileSync(path.join(root, name), 'utf8');
 const upgrade = read('scripts/upgrade-postgresql.sh');
 const deploy = read('scripts/deploy-ubuntu.sh');
+const prepare = read('scripts/prepare-vps.sh');
 const uninstall = read('scripts/uninstall-vps.sh');
 
 test('PostgreSQL major upgrade defaults to the project-tested PostgreSQL 16 dump method', () => {
@@ -41,12 +42,57 @@ test('upgrade creates and validates native database and global-object backups be
   assert.ok(main.indexOf('create_verified_backup') < main.indexOf('install_target_version'));
 });
 
-test('upgrade protects unrelated databases and keeps old cluster for rollback', () => {
+test('upgrade protects unrelated databases and retains the old cluster until all rollback gates pass', () => {
   assert.match(upgrade, /datname NOT IN \('postgres', '\$DATABASE_NAME'\)/);
   assert.match(upgrade, /restore_old_cluster/);
   assert.match(upgrade, /UPGRADE_VERIFIED/);
-  assert.match(upgrade, /The unchanged PostgreSQL \$OLD_MAJOR cluster is retained/);
-  assert.doesNotMatch(upgrade, /^\s*pg_dropcluster --stop "\$OLD_MAJOR"/m);
+  const perform = upgrade.slice(upgrade.indexOf('perform_upgrade() {'), upgrade.indexOf('\nmain() {'));
+  const verifyApp = perform.indexOf('verify_application');
+  const verifyBackup = perform.indexOf('verify_target_backup_and_tools');
+  const verified = perform.indexOf('UPGRADE_VERIFIED=1');
+  assert.ok(verifyApp >= 0 && verifyApp < verified);
+  assert.ok(verifyBackup >= 0 && verifyBackup < verified);
+  assert.match(upgrade, /\[ "\$UPGRADE_VERIFIED" = '1' \][\s\\\n]+\|\| die 'Internal safety check refused to delete the old PostgreSQL/);
+});
+
+test('successful replacement removes only the exact old cluster and version-specific packages', () => {
+  assert.match(upgrade, /REMOVE_OLD_POSTGRES_AFTER_SUCCESS="\$\{REMOVE_OLD_POSTGRES_AFTER_SUCCESS:-1\}"/);
+  assert.match(upgrade, /pg_dropcluster --stop "\$OLD_MAJOR" "\$CLUSTER_NAME"/);
+  assert.match(upgrade, /remaining_old_clusters=.*pg_lsclusters/);
+  assert.match(upgrade, /apt-get purge -y -- "\$\{packages\[@\]\}"/);
+  assert.doesNotMatch(upgrade, /apt-get (?:auto)?remove/);
+  assert.doesNotMatch(upgrade, /rm\s+-rf[^\n]*(?:postgresql|OLD_MAJOR)/);
+  assert.match(upgrade, /Target cluster stopped responding during old-package cleanup/);
+  assert.match(upgrade, /application failed its final readiness check after old-package cleanup/);
+  const main = upgrade.slice(upgrade.indexOf('main() {'));
+  assert.ok(main.indexOf('perform_upgrade') < main.indexOf('remove_old_postgresql'));
+});
+
+test('replacement pins future backup and restore tools to PostgreSQL 16 and verifies a post-upgrade dump', () => {
+  assert.match(upgrade, /set_env_value PG_DUMP_PATH "\$dump_tool"/);
+  assert.match(upgrade, /set_env_value PG_RESTORE_PATH "\$restore_tool"/);
+  assert.match(upgrade, /postgresql-\$\{TARGET_POSTGRES_MAJOR\}-verified\.dump/);
+  assert.match(upgrade, /"\$restore_tool" --list "\$post_dump"/);
+  assert.match(upgrade, /sha256sum --check SHA256SUMS/);
+});
+
+test('upgrade accepts the project extensions and compares all public table row counts before deletion', () => {
+  assert.match(upgrade, /extname NOT IN \('plpgsql', 'pgcrypto', 'btree_gist'\)/);
+  assert.match(upgrade, /pg_available_extensions/);
+  assert.match(upgrade, /create_database_inventory/);
+  assert.match(upgrade, /EXECUTE format\('SELECT count\(\*\) FROM %I\.%I'/);
+  assert.match(upgrade, /compare_database_inventories/);
+  const perform = upgrade.slice(upgrade.indexOf('perform_upgrade() {'), upgrade.indexOf('\nmain() {'));
+  assert.ok(perform.indexOf('compare_database_inventories') < perform.indexOf('UPGRADE_VERIFIED=1'));
+});
+
+test('upgrade keeps safety backups outside PostgreSQL data roots and simulates package cleanup first', () => {
+  assert.match(upgrade, /\/var\/lib\/postgresql\/\*/);
+  assert.match(upgrade, /BACKUP_ROOT must be outside the old PostgreSQL data directory/);
+  assert.match(upgrade, /apt-get -s purge -y -- "\$\{packages\[@\]\}"/);
+  assert.match(upgrade, /postgresql-client-common/);
+  assert.match(upgrade, /APT simulation would also remove unrelated package/);
+  assert.match(upgrade, /"postgresql-contrib-\$TARGET_POSTGRES_MAJOR"/);
 });
 
 test('PGDG repository key is pinned to the official signing-key fingerprint', () => {
@@ -58,4 +104,18 @@ test('deployment installs and uninstall removes the PostgreSQL upgrade command',
   assert.match(deploy, /POSTGRES_UPGRADE_COMMAND="\/usr\/local\/sbin\/laboratory-management-system-upgrade-postgresql"/);
   assert.match(deploy, /install_postgres_upgrade_command/);
   assert.match(uninstall, /\/usr\/local\/sbin\/laboratory-management-system-upgrade-postgresql/);
+});
+
+test('deployment pins PostgreSQL 16 on both fresh and existing installs and upgrades managed older clusters', () => {
+  assert.match(deploy, /apt-get install -y postgresql-16 postgresql-client-16/);
+  assert.match(deploy, /apt-get install -y postgresql-contrib-16/);
+  assert.doesNotMatch(deploy, /apt-get install -y postgresql postgresql-client/);
+  assert.match(deploy, /upgrade_managed_local_postgres_if_required/);
+  assert.match(deploy, /CONFIRM_POSTGRES_UPGRADE=UPGRADE-POSTGRESQL/);
+  assert.match(deploy, /REMOVE_OLD_POSTGRES_AFTER_SUCCESS=1/);
+  const main = deploy.slice(deploy.indexOf('main() {'));
+  assert.ok(main.indexOf('ensure_env') < main.indexOf('upgrade_managed_local_postgres_if_required'));
+  assert.ok(main.indexOf('upgrade_managed_local_postgres_if_required') < main.indexOf('verify_local_postgres_target'));
+  assert.doesNotMatch(prepare, /apt-get install -y[^\n]*\bpostgresql\s+postgresql-client\b/);
+  assert.match(prepare, /postgresql-common/);
 });

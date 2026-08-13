@@ -206,10 +206,12 @@ test('local PostgreSQL administration targets the same 5432 cluster as the appli
 
 test('fresh supported VPS installations pin PostgreSQL 16 instead of distro-dependent defaults', () => {
   assert.match(deployer, /apt-get install -y postgresql-16 postgresql-client-16/);
+  assert.match(deployer, /apt-get install -y postgresql-contrib-16/);
   assert.match(deployer, /apt\.postgresql\.org\/pub\/repos\/apt/);
   assert.match(deployer, /B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8/);
   assert.match(deployer, /A fresh installation must use PostgreSQL 16/);
-  assert.match(deployer, /if \[ "\$\{EXISTING_INSTALL:-0\}" = '1' \]/);
+  assert.doesNotMatch(deployer, /apt-get install -y postgresql postgresql-client/);
+  assert.match(deployer, /upgrade_managed_local_postgres_if_required/);
 });
 
 test('post-deploy environment changes are coalesced into at most one controlled restart', () => {

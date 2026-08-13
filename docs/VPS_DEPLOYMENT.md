@@ -212,10 +212,12 @@ sudo laboratory-management-system-upgrade-postgresql
 脚本只接受本项目 `.env` 中指向 `127.0.0.1:5432/laboratory_management_system` 的本地数据库，不会操作外部托管数据库；若同一 PostgreSQL 集群还有其他业务数据库或非核心扩展，也会停止并要求人工审查。执行前必须输入 `UPGRADE-POSTGRESQL` 确认。随后脚本会：
 
 1. 检查磁盘空间、目标版本、主集群和本项目数据库；
-2. 在应用目录的备份位置创建 PostgreSQL 自定义格式数据库备份、全局角色备份和 SHA-256 清单，并用 `pg_restore --list` 验证；
+2. 在应用目录的备份位置创建 PostgreSQL 自定义格式数据库备份、全局角色备份和 SHA-256 清单，并用 `pg_restore --list` 验证；备份目录不得位于旧 PostgreSQL 数据目录内；
 3. 必要时使用 PostgreSQL 官方 PGDG APT 仓库安装 PostgreSQL 16；仓库签名密钥会校验官方完整指纹；
-4. 停止应用，使用 Debian/Ubuntu 的 `pg_upgradecluster` 完成集群升级，再检查数据库版本和应用 `/ready`；
-5. 失败时尝试把未修改的旧集群切回原端口并恢复应用；成功时保留已停止的 PostgreSQL 13 集群，不自动删除。
+4. 停止应用，使用 Debian/Ubuntu 的 `pg_upgradecluster` 完成集群升级，再检查数据库版本和应用 `/ready`（已有服务正在运行时）；
+5. 对比升级前后 `public` 中全部表的行数、表/视图/序列对象清单和扩展版本；项目使用的 `pgcrypto`、`btree_gist` 会作为已验证扩展处理，未知扩展仍会拒绝自动升级；
+6. 使用 PostgreSQL 16 自带的 `pg_dump` 再生成一份自定义格式备份，用 PostgreSQL 16 的 `pg_restore --list` 验证，并重新执行 SHA-256 清单校验；同时把 `.env` 中的 `PG_DUMP_PATH`、`PG_RESTORE_PATH` 固定为 16 的绝对路径；
+7. 失败时尝试把未修改的旧集群切回原端口并恢复应用；只有前述检查全部成功后，才删除被替换的 PostgreSQL 13 集群，并先模拟、再精确 `purge` 已安装的 13 版本专用软件包。脚本不会执行 `apt autoremove`，也不会递归删除 PostgreSQL 目录；若发现其他 PostgreSQL 13 集群，则保留 13 软件包。
 
 成功后先检查：
 
@@ -224,7 +226,9 @@ sudo pg_lsclusters
 sudo systemctl status laboratory-management-system --no-pager
 ```
 
-至少观察数日并确认业务、备份和 App 连接正常后，才按升级器最终输出的精确版本和集群名执行 `pg_dropcluster --stop ...` 删除旧集群。不要提前卸载 PostgreSQL 13 软件包或删除 `/var/lib/postgresql/13`。需要无交互执行时必须显式设置 `CONFIRM_POSTGRES_UPGRADE=UPGRADE-POSTGRESQL`；可用 `TARGET_POSTGRES_MAJOR=15` 到 `18` 覆盖目标，但非 16 版本应先自行完成兼容性测试。
+正常成功结果中，`sudo pg_lsclusters` 应只显示 PostgreSQL 16 的项目主集群运行在 5432；`.env` 的 `DATABASE_URL` 不需要修改，因为主机、端口、数据库名和业务账号均保持不变。不要自行执行 `rm -rf /var/lib/postgresql/13`。需要无交互执行时必须显式设置 `CONFIRM_POSTGRES_UPGRADE=UPGRADE-POSTGRESQL`。如确需先保留旧集群进行人工观察，可显式设置 `REMOVE_OLD_POSTGRES_AFTER_SUCCESS=0`；默认值为 `1`，即验证成功后完成替换和清理。可用 `TARGET_POSTGRES_MAJOR=15` 到 `18` 覆盖目标，但项目自动安装与自动替换固定使用经过测试的 PostgreSQL 16，非 16 版本应先自行完成兼容性测试。
+
+重新运行当前安装器时，如果它确认 `.env` 使用本项目受管的本地数据库，且 5432 上仍是 PostgreSQL 13/14/15，会在应用迁移前自动调用上述升级器替换为 PostgreSQL 16；它不会再安装发行版的通用 `postgresql` 元包，因此不会因换一台 VPS 而随机装回旧主版本。外部数据库、同集群包含其他业务数据库、非核心扩展、多个 5432 主集群等情况仍会拒绝自动操作并要求人工审查。
 
 数据库主版本升级和操作系统升级是两项不同工作。若服务器操作系统已停止安全支持，应先规划系统快照、异机恢复演练与受支持操作系统迁移，不要把数据库升级当成操作系统安全更新的替代品。
 

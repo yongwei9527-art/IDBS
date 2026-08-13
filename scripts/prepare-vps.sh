@@ -102,7 +102,10 @@ install_base_packages() {
   log "Refreshing apt and installing base packages"
   disable_retired_bullseye_backports
   apt-get update -y
-  apt-get install -y curl ca-certificates gnupg git openssl nginx postgresql postgresql-client rsync sudo
+  # Do not install the distro's generic PostgreSQL server meta-package here.
+  # On another VPS that can silently create PostgreSQL 13/14/15. The canonical
+  # installer configures and pins PostgreSQL 16 after its database preflight.
+  apt-get install -y curl ca-certificates gnupg git openssl nginx postgresql-common rsync sudo
 }
 
 stop_old_services() {
@@ -151,15 +154,22 @@ ensure_runtime_dirs() {
 }
 
 reset_data_if_requested() {
+  local primary_cluster_count
   log "RESET_LABORATORY_MANAGEMENT_SYSTEM_DATA=1 detected: deleting application files and local PostgreSQL laboratory_management_system database"
   remove_managed_tree "$APP_BASE" 'Application base directory'
   remove_managed_tree "$SRC_DIR" 'Source directory'
 
+  command -v pg_lsclusters >/dev/null 2>&1 || return 0
+  primary_cluster_count="$(pg_lsclusters --no-header 2>/dev/null | awk '$3 == 5432 { count++ } END { print count + 0 }')"
+  [ "$primary_cluster_count" -le 1 ] \
+    || die "Refusing database reset because more than one PostgreSQL cluster is configured on port 5432. Run: sudo pg_lsclusters"
+  [ "$primary_cluster_count" = '1' ] || return 0
   systemctl enable postgresql
   systemctl start postgresql
-  run_as_postgres psql -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='laboratory_management_system';" || true
-  run_as_postgres dropdb --if-exists laboratory_management_system || true
-  run_as_postgres dropuser --if-exists laboratory_management_system_user || true
+  run_as_postgres psql -X --host /var/run/postgresql --port 5432 -d postgres \
+    -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='laboratory_management_system';" || true
+  run_as_postgres dropdb --host /var/run/postgresql --port 5432 --if-exists laboratory_management_system || true
+  run_as_postgres dropuser --host /var/run/postgresql --port 5432 --if-exists laboratory_management_system_user || true
 }
 
 validate_reset_request() {

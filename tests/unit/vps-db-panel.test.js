@@ -26,6 +26,13 @@ test('VPS db panel exposes the required three-item menu', () => {
   assert.match(panel, /请选择 \[1-3\]: " choice <\/dev\/tty/);
 });
 
+test('VPS db panel reports the live PostgreSQL baseline and upgrade command', () => {
+  assert.match(panel, /show_postgresql_info/);
+  assert.match(panel, /pg_lsclusters --no-header/);
+  assert.match(panel, /PostgreSQL 16 基线/);
+  assert.match(panel, /laboratory-management-system-upgrade-postgresql/);
+});
+
 test('VPS install information is root-only and temporary-password risk is explicit', () => {
   assert.match(panel, /install -o root -g root -m 600/);
   assert.match(panel, /PASSWORD_STATE=temporary_must_change/);
