@@ -69,6 +69,16 @@ test('interrupted first installation preserves credentials and records final con
   assert.doesNotMatch(installer, /RESET_LABORATORY_MANAGEMENT_SYSTEM_DATA=0 bash/);
 });
 
+test('outer installer waits for a stable service restart instead of one-shot readiness failure', () => {
+  assert.match(installer, /wait_for_final_readiness\(\)/);
+  assert.match(installer, /for attempt in \$\(seq 1 60\); do/);
+  assert.match(installer, /systemctl is-active --quiet "\$SERVICE_NAME"/);
+  assert.match(installer, /curl -fsS "http:\/\/127\.0\.0\.1:\$\{port\}\/ready" >\/dev\/null 2>&1/);
+  assert.match(installer, /journalctl -u "\$SERVICE_NAME" -n 100 --no-pager/);
+  assert.match(installer, /wait_for_final_readiness "\$ready_port"/);
+  assert.doesNotMatch(installer, /curl -fsS "http:\/\/127\.0\.0\.1:\$\{ready_port\}\/ready" >\/dev\/null/);
+});
+
 test('custom persistent directories reach Nginx, backups, and the deployed environment', () => {
   assert.match(installer, /UPLOAD_DIR="\$upload_dir"/);
   assert.match(installer, /EXPORT_DIR="\$export_dir"/);

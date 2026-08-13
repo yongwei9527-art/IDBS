@@ -67,6 +67,22 @@ report_install_failure() {
 }
 trap report_install_failure ERR
 
+wait_for_final_readiness() {
+  local port="$1" attempt
+  for attempt in $(seq 1 60); do
+    if systemctl is-active --quiet "$SERVICE_NAME" \
+      && curl -fsS "http://127.0.0.1:${port}/ready" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  printf '[vps] 最终就绪检查超时：服务在 60 秒内未稳定通过 /ready。\n' >&2
+  systemctl status "$SERVICE_NAME" --no-pager >&2 || true
+  journalctl -u "$SERVICE_NAME" -n 100 --no-pager >&2 || true
+  return 1
+}
+
 read_pending_value() {
   local key="$1"
   [ -f "$PENDING_ADMIN_FILE" ] || return 0
@@ -593,7 +609,9 @@ main() {
   local ready_port
   ready_port="$(read_env_value PORT || true)"
   ready_port="${ready_port:-3000}"
-  curl -fsS "http://127.0.0.1:${ready_port}/ready" >/dev/null
+  [[ "$ready_port" =~ ^[0-9]+$ ]] && [ "$ready_port" -ge 1 ] && [ "$ready_port" -le 65535 ] \
+    || die 'PORT 必须是 1 到 65535 之间的整数。'
+  wait_for_final_readiness "$ready_port"
   CURRENT_STEP='记录仅 root 可读的安装信息'
   record_install_info
   echo
