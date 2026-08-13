@@ -75,6 +75,37 @@ wait_for_cluster() {
   return 1
 }
 
+apt_package_has_candidate() {
+  apt-cache policy "$1" 2>/dev/null | awk '
+    $1 == "Candidate:" { found = 1; if ($2 != "(none)") available = 1 }
+    END { exit(found && available ? 0 : 1) }
+  '
+}
+
+disable_conflicting_pgdg_sources() {
+  local selected_file="$1" codename="$2" source_file backup_file disabled_file
+  for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
+    [ -f "$source_file" ] || continue
+    [ "$source_file" = "$selected_file" ] && continue
+    grep -Eq "^[[:space:]]*deb(-src)?[[:space:]].*https?://(apt|download|ftp|apt-archive)\\.postgresql\\.org/[^[:space:]]*[[:space:]]+${codename}-pgdg(-archive)?([[:space:]]|$)" "$source_file" || continue
+    backup_file="${source_file}.laboratory-management-system-backup"
+    [ -e "$backup_file" ] || cp -a -- "$source_file" "$backup_file"
+    sed -E -i "/^[[:space:]]*deb(-src)?[[:space:]].*https?:\\/\\/(apt|download|ftp|apt-archive)\\.postgresql\\.org\\/[^[:space:]]*[[:space:]]+${codename}-pgdg(-archive)?([[:space:]]|$)/ s|^|# Disabled conflicting PGDG source by Laboratory Management System: |" "$source_file"
+    log "Disabled a conflicting PGDG entry in $source_file"
+  done
+  for source_file in /etc/apt/sources.list.d/*.sources; do
+    [ -f "$source_file" ] || continue
+    grep -Eq '^[[:space:]]*URIs:[[:space:]].*https?://(apt|download|ftp|apt-archive)\.postgresql\.org/' "$source_file" || continue
+    grep -Eq "^[[:space:]]*Suites:[[:space:]].*(^|[[:space:]])${codename}-pgdg(-archive)?([[:space:]]|$)" "$source_file" || continue
+    awk '$1 == "URIs:" { seen = 1; for (i = 2; i <= NF; i++) if ($i !~ /^https?:\/\/(apt|download|ftp|apt-archive)\.postgresql\.org\//) bad = 1 } END { exit(seen && !bad ? 0 : 1) }' "$source_file" \
+      || die "Conflicting PGDG stanza shares a deb822 file with another repository: $source_file. Split that file and rerun the upgrade."
+    disabled_file="${source_file}.disabled-by-laboratory-management-system"
+    [ ! -e "$disabled_file" ] || disabled_file="${disabled_file}.$(date -u +%Y%m%dT%H%M%SZ)"
+    mv -- "$source_file" "$disabled_file"
+    log "Disabled conflicting PGDG source file $source_file"
+  done
+}
+
 restore_old_cluster() {
   local old_current_port target_current_port
   [ -n "$OLD_MAJOR" ] && [ -n "$CLUSTER_NAME" ] && [ -n "$OLD_PORT" ] || return 0
@@ -309,9 +340,8 @@ compare_database_inventories() {
 
 configure_pgdg_if_needed() {
   local codename key_dir key_file key_tmp repo_file pgdg_base pgdg_suite candidate release_url key_url
-  if apt-cache show "postgresql-$TARGET_POSTGRES_MAJOR" >/dev/null 2>&1; then
-    return 0
-  fi
+  # Do not trust a candidate from stale package indexes. Re-select a reachable
+  # official source on every upgrade attempt before package installation.
 
   [ -r /etc/os-release ] || die '/etc/os-release is missing.'
   # shellcheck disable=SC1091
@@ -352,11 +382,16 @@ configure_pgdg_if_needed() {
     || die 'The downloaded PostgreSQL repository signing-key fingerprint is invalid.'
   install -o root -g root -m 0644 "$key_tmp" "$key_file"
   rm -f -- "$key_tmp"
+  disable_conflicting_pgdg_sources "$repo_file" "$codename"
   printf 'deb [signed-by=%s] %s %s main\n' \
     "$key_file" "$pgdg_base" "$pgdg_suite" > "$repo_file"
   chmod 644 "$repo_file"
+  apt-get update \
+    -o "Dir::Etc::sourcelist=$repo_file" \
+    -o 'Dir::Etc::sourceparts=-' \
+    -o 'APT::Get::List-Cleanup=0'
   apt-get update
-  apt-cache show "postgresql-$TARGET_POSTGRES_MAJOR" >/dev/null 2>&1 \
+  apt_package_has_candidate "postgresql-$TARGET_POSTGRES_MAJOR" \
     || die "postgresql-$TARGET_POSTGRES_MAJOR is unavailable after configuring PGDG."
 }
 

@@ -114,6 +114,24 @@ test('PGDG setup distinguishes mirror DNS failures from unsupported distribution
   }
 });
 
+test('PGDG setup replaces conflicting legacy sources and requires an installable package candidate', () => {
+  for (const script of [upgrade, deploy]) {
+    assert.match(script, /apt_package_has_candidate\(\)/);
+    assert.match(script, /apt-cache policy "\$1"/);
+    assert.match(script, /disable_conflicting_pgdg_sources\(\)/);
+    assert.match(script, /Disabled conflicting PGDG source/);
+    assert.match(script, /\.laboratory-management-system-backup/);
+    assert.match(script, /Dir::Etc::sourcelist=\$repo_file/);
+    assert.match(script, /Dir::Etc::sourceparts=-/);
+    assert.match(script, /obsolete indexes|apt-get update\n/);
+    assert.match(script, /no installable APT candidate|is unavailable after configuring PGDG/);
+  }
+  assert.doesNotMatch(upgrade, /apt-cache show "postgresql-\$TARGET_POSTGRES_MAJOR"/);
+  assert.doesNotMatch(deploy, /apt-cache show postgresql-16/);
+  assert.match(upgrade, /Do not trust a candidate from stale package indexes/);
+  assert.match(deploy, /stale APT[\s\S]*enabled repository still points at an unreachable hostname/);
+});
+
 test('deployment installs and uninstall removes the PostgreSQL upgrade command', () => {
   assert.match(deploy, /POSTGRES_UPGRADE_COMMAND="\/usr\/local\/sbin\/laboratory-management-system-upgrade-postgresql"/);
   assert.match(deploy, /install_postgres_upgrade_command/);

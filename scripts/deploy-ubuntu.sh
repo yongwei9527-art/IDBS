@@ -91,12 +91,48 @@ run_local_postgres_createdb() {
   run_as_postgres createdb --host /var/run/postgresql --port 5432 "$@"
 }
 
+apt_package_has_candidate() {
+  apt-cache policy "$1" 2>/dev/null | awk '
+    $1 == "Candidate:" { found = 1; if ($2 != "(none)") available = 1 }
+    END { exit(found && available ? 0 : 1) }
+  '
+}
+
+disable_conflicting_pgdg_sources() {
+  local selected_file="$1" codename="$2" source_file backup_file disabled_file
+  for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
+    [ -f "$source_file" ] || continue
+    [ "$source_file" = "$selected_file" ] && continue
+    grep -Eq "^[[:space:]]*deb(-src)?[[:space:]].*https?://(apt|download|ftp|apt-archive)\\.postgresql\\.org/[^[:space:]]*[[:space:]]+${codename}-pgdg(-archive)?([[:space:]]|$)" "$source_file" || continue
+    backup_file="${source_file}.laboratory-management-system-backup"
+    [ -e "$backup_file" ] || cp -a -- "$source_file" "$backup_file"
+    sed -E -i "/^[[:space:]]*deb(-src)?[[:space:]].*https?:\\/\\/(apt|download|ftp|apt-archive)\\.postgresql\\.org\\/[^[:space:]]*[[:space:]]+${codename}-pgdg(-archive)?([[:space:]]|$)/ s|^|# Disabled conflicting PGDG source by Laboratory Management System: |" "$source_file"
+    log "Disabled a conflicting PGDG entry in $source_file"
+  done
+  for source_file in /etc/apt/sources.list.d/*.sources; do
+    [ -f "$source_file" ] || continue
+    grep -Eq '^[[:space:]]*URIs:[[:space:]].*https?://(apt|download|ftp|apt-archive)\.postgresql\.org/' "$source_file" || continue
+    grep -Eq "^[[:space:]]*Suites:[[:space:]].*(^|[[:space:]])${codename}-pgdg(-archive)?([[:space:]]|$)" "$source_file" || continue
+    # A deb822 file can contain unrelated repositories. Only disable the file
+    # when every URI in it is an official PostgreSQL repository.
+    awk '$1 == "URIs:" { seen = 1; for (i = 2; i <= NF; i++) if ($i !~ /^https?:\/\/(apt|download|ftp|apt-archive)\.postgresql\.org\//) bad = 1 } END { exit(seen && !bad ? 0 : 1) }' "$source_file" \
+      || die "Conflicting PGDG stanza shares a deb822 file with another repository: $source_file. Split that file and rerun the installer."
+    disabled_file="${source_file}.disabled-by-laboratory-management-system"
+    [ ! -e "$disabled_file" ] || disabled_file="${disabled_file}.$(date -u +%Y%m%dT%H%M%SZ)"
+    mv -- "$source_file" "$disabled_file"
+    log "Disabled conflicting PGDG source file $source_file"
+  done
+}
+
 install_packages() {
   local codename key_dir key_file key_tmp repo_file pgdg_base pgdg_suite candidate release_url key_url
   export DEBIAN_FRONTEND=noninteractive
   safe_apt_update -y
   apt-get install -y acl curl ca-certificates gnupg iproute2 openssl postgresql-common rsync sudo util-linux
-  if ! apt-cache show postgresql-16 >/dev/null 2>&1; then
+  # Always select and write one reachable official PGDG source. A stale APT
+  # package index can otherwise make `apt-cache` report PostgreSQL 16 while the
+  # enabled repository still points at an unreachable hostname.
+  {
     # shellcheck disable=SC1091
     source /etc/os-release
     codename="${VERSION_CODENAME:-}"
@@ -134,11 +170,23 @@ install_packages() {
       || die 'The downloaded PostgreSQL repository signing-key fingerprint is invalid.'
     install -o root -g root -m 0644 "$key_tmp" "$key_file"
     rm -f -- "$key_tmp"
+    disable_conflicting_pgdg_sources "$repo_file" "$codename"
     printf 'deb [signed-by=%s] %s %s main\n' \
       "$key_file" "$pgdg_base" "$pgdg_suite" > "$repo_file"
     chmod 644 "$repo_file"
+    # Update the selected source in isolation. `apt-get update` can otherwise
+    # return success after warning that this repository failed, then reuse an
+    # old package index and fail later with a misleading "Unable to locate".
+    apt-get update -y \
+      -o "Dir::Etc::sourcelist=$repo_file" \
+      -o 'Dir::Etc::sourceparts=-' \
+      -o 'APT::Get::List-Cleanup=0'
+    # Now refresh the complete configured set so APT removes obsolete indexes
+    # belonging to the just-disabled PGDG hostname before package selection.
     safe_apt_update -y
-  fi
+  }
+  apt_package_has_candidate postgresql-16 \
+    || die 'PostgreSQL 16 still has no installable APT candidate after configuring an official mirror. Review enabled files under /etc/apt/sources.list.d and rerun the installer.'
   # Existing installations are pinned as well. Installing a generic distro
   # meta-package here could create another arbitrary major version (13/14/15)
   # and reproduce the cross-VPS conflict this deployment is designed to avoid.
