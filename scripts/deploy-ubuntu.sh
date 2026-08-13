@@ -55,6 +55,7 @@ MIGRATION_ATTEMPTED=0
 RELEASE_SWITCHED=0
 DEPLOYMENT_COMPLETE=0
 LOCAL_DB_PASSWORD_FILE=''
+LOCAL_MIGRATION_BUNDLE=''
 
 log() { printf '\n[%s] %s\n' "${SERVICE_NAME}" "$*"; }
 
@@ -503,7 +504,7 @@ ensure_local_database() {
 }
 
 apply_database_schema() {
-  local database_url migration_database_url pgssl pgssl_reject pgssl_ca grant_runtime parse_status
+  local database_url migration_database_url pgssl pgssl_reject pgssl_ca grant_runtime parse_status migration_script
   database_url="$(get_env_value DATABASE_URL)"
   migration_database_url="$(get_env_value MIGRATION_DATABASE_URL || true)"
   pgssl="$(get_env_value PGSSL || true)"
@@ -528,13 +529,16 @@ apply_database_schema() {
       )
     else
       log 'Applying database baseline/forward migrations through the local PostgreSQL owner.'
+      [ -n "$LOCAL_MIGRATION_BUNDLE" ] \
+        || die 'The local PostgreSQL migration bundle was not prepared.'
+      migration_script="$LOCAL_MIGRATION_BUNDLE/scripts/migrate-db.js"
       run_as_postgres env \
         DATABASE_URL='postgresql:///laboratory_management_system?host=/var/run/postgresql' \
         PGSSL=false \
         PGSSL_REJECT_UNAUTHORIZED=true \
         PGSSL_CA= \
         GRANT_RUNTIME_DATABASE_PRIVILEGES=false \
-        node "$CANDIDATE_RELEASE/scripts/migrate-db.js"
+        node "$migration_script"
     fi
     return 0
   else
@@ -554,6 +558,58 @@ apply_database_schema() {
     export GRANT_RUNTIME_DATABASE_PRIVILEGES="$grant_runtime"
     node "$CANDIDATE_RELEASE/scripts/migrate-db.js"
   )
+}
+
+prepare_local_migration_bundle() {
+  local database_url parse_status bundle_parent
+  database_url="$(get_env_value DATABASE_URL)"
+  if parse_local_database_password "$database_url" >/dev/null; then
+    :
+  else
+    parse_status=$?
+    if [ "$parse_status" -eq 3 ]; then
+      return 0
+    fi
+    die 'The configured local DATABASE_URL could not be parsed safely.'
+  fi
+
+  # The release may live below a provider-managed /var/www parent that is not
+  # traversable by the postgres OS account. A root check can see migrate-db.js
+  # there while Node running as postgres reports the misleading MODULE_NOT_FOUND.
+  # Copy only the immutable migration runtime into PostgreSQL's private tree and
+  # verify it with the exact identity that will execute the migration before the
+  # application service is stopped.
+  bundle_parent='/var/lib/postgresql'
+  LOCAL_MIGRATION_BUNDLE="$(mktemp -d "$bundle_parent/.laboratory-migration.XXXXXX")"
+  install -d -o root -g postgres -m 0750 \
+    "$LOCAL_MIGRATION_BUNDLE/scripts" \
+    "$LOCAL_MIGRATION_BUNDLE/src/lib"
+  install -o root -g postgres -m 0644 \
+    "$CANDIDATE_RELEASE/scripts/migrate-db.js" \
+    "$LOCAL_MIGRATION_BUNDLE/scripts/migrate-db.js"
+  install -o root -g postgres -m 0644 \
+    "$CANDIDATE_RELEASE/src/lib/postgres-ssl.js" \
+    "$LOCAL_MIGRATION_BUNDLE/src/lib/postgres-ssl.js"
+  cp -a -- "$CANDIDATE_RELEASE/sql" "$LOCAL_MIGRATION_BUNDLE/sql"
+  cp -a -- "$CANDIDATE_RELEASE/node_modules" "$LOCAL_MIGRATION_BUNDLE/node_modules"
+  chown -R root:root "$LOCAL_MIGRATION_BUNDLE/sql" "$LOCAL_MIGRATION_BUNDLE/node_modules"
+  chmod -R a+rX,u+w,go-w "$LOCAL_MIGRATION_BUNDLE/sql" "$LOCAL_MIGRATION_BUNDLE/node_modules"
+  chown root:postgres "$LOCAL_MIGRATION_BUNDLE"
+  chmod 750 "$LOCAL_MIGRATION_BUNDLE"
+
+  run_as_postgres test -r "$LOCAL_MIGRATION_BUNDLE/scripts/migrate-db.js" \
+    || die 'The postgres OS account cannot read the prepared migration script.'
+  run_as_postgres test -r "$LOCAL_MIGRATION_BUNDLE/sql/schema.sql" \
+    || die 'The postgres OS account cannot read the prepared database schema.'
+  run_as_postgres env MIGRATION_MODULE="$LOCAL_MIGRATION_BUNDLE/scripts/migrate-db.js" \
+    node <<'NODE'
+const modulePath = process.env.MIGRATION_MODULE;
+const migrator = require(modulePath);
+if (!migrator || typeof migrator.migrateDatabase !== 'function') {
+  throw new Error('Prepared migration module did not expose migrateDatabase().');
+}
+NODE
+  log 'Verified the isolated migration runtime as the postgres OS account.'
 }
 
 finalize_local_database_permissions() {
@@ -719,6 +775,10 @@ deployment_exit() {
   if [ -n "$LOCAL_DB_PASSWORD_FILE" ]; then
     rm -f -- "$LOCAL_DB_PASSWORD_FILE"
     LOCAL_DB_PASSWORD_FILE=''
+  fi
+  if [ -n "$LOCAL_MIGRATION_BUNDLE" ]; then
+    rm -rf --one-file-system -- "$LOCAL_MIGRATION_BUNDLE"
+    LOCAL_MIGRATION_BUNDLE=''
   fi
   if [ "$status" -ne 0 ] && [ "$DEPLOYMENT_COMPLETE" != '1' ]; then
     if [ "$RELEASE_SWITCHED" = '1' ]; then
@@ -1115,6 +1175,7 @@ main() {
   verify_candidate_release_sources
   seal_candidate_release
   ensure_local_database
+  prepare_local_migration_bundle
   ensure_verified_pre_migration_backup
   stop_application_for_migration
   MIGRATION_ATTEMPTED=1

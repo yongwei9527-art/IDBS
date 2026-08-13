@@ -61,6 +61,7 @@ test('deployment builds an isolated release before interrupting the current serv
     'prepare_candidate_release',
     'npm --prefix "$CANDIDATE_RELEASE" ci --omit=dev',
     'build_v3_frontend',
+    'prepare_local_migration_bundle',
     'ensure_verified_pre_migration_backup',
     'stop_application_for_migration',
     'apply_database_schema',
@@ -68,6 +69,22 @@ test('deployment builds an isolated release before interrupting the current serv
     'systemctl restart "$SERVICE_NAME"',
     'verify_service_health'
   ]);
+});
+
+test('local migration is staged under PostgreSQL private storage and verified as postgres before downtime', () => {
+  const main = deploy.slice(deploy.lastIndexOf('\nmain() {'));
+  const localBranch = deploy.slice(
+    deploy.indexOf("log 'Applying database baseline/forward migrations through the local PostgreSQL owner.'"),
+    deploy.indexOf("log 'Applying database baseline/forward migrations to the external PostgreSQL database.'")
+  );
+  assert.match(deploy, /LOCAL_MIGRATION_BUNDLE="\$\(mktemp -d "\$bundle_parent\/\.laboratory-migration\.XXXXXX"\)"/);
+  assert.match(deploy, /bundle_parent='\/var\/lib\/postgresql'/);
+  assert.match(deploy, /run_as_postgres test -r "\$LOCAL_MIGRATION_BUNDLE\/scripts\/migrate-db\.js"/);
+  assert.match(deploy, /run_as_postgres env MIGRATION_MODULE=/);
+  assert.match(localBranch, /node "\$migration_script"/);
+  assert.doesNotMatch(localBranch, /node "\$CANDIDATE_RELEASE\/scripts\/migrate-db\.js"/);
+  assert.match(deploy, /rm -rf --one-file-system -- "\$LOCAL_MIGRATION_BUNDLE"/);
+  assert.ok(main.indexOf('prepare_local_migration_bundle') < main.indexOf('stop_application_for_migration'));
 });
 
 test('update creates, verifies, and passes one reusable pre-migration backup', () => {
