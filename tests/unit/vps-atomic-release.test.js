@@ -61,6 +61,7 @@ test('deployment builds an isolated release before interrupting the current serv
     'prepare_candidate_release',
     'npm --prefix "$CANDIDATE_RELEASE" ci --omit=dev',
     'build_v3_frontend',
+    'verify_candidate_runtime_access',
     'prepare_local_migration_bundle',
     'ensure_verified_pre_migration_backup',
     'stop_application_for_migration',
@@ -69,6 +70,18 @@ test('deployment builds an isolated release before interrupting the current serv
     'systemctl restart "$SERVICE_NAME"',
     'verify_service_health'
   ]);
+});
+
+test('runtime parent traversal is repaired with a user ACL and checked as the systemd account', () => {
+  const main = deploy.slice(deploy.lastIndexOf('\nmain() {'));
+  assert.match(deploy, /apt-get install -y acl /);
+  assert.match(deploy, /setfacl -m "u:\$\{APP_USER\}:--x" -- "\$ancestor"/);
+  assert.doesNotMatch(deploy, /chmod[^\n]*o\+x[^\n]*ancestor/);
+  assert.match(deploy, /exec sudo -u "\$APP_USER" env RUNTIME_RELEASE=/);
+  assert.match(deploy, /process\.chdir\(path\)/);
+  assert.match(deploy, /fs\.accessSync\('server\.js', fs\.constants\.R_OK\)/);
+  assert.ok(main.indexOf('ensure_runtime_path_access') < main.indexOf('prepare_candidate_release'));
+  assert.ok(main.indexOf('verify_candidate_runtime_access') < main.indexOf('stop_application_for_migration'));
 });
 
 test('local migration is staged under PostgreSQL private storage and verified as postgres before downtime', () => {

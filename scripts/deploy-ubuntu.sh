@@ -86,7 +86,7 @@ install_packages() {
   local postgres_major=''
   export DEBIAN_FRONTEND=noninteractive
   safe_apt_update -y
-  apt-get install -y curl ca-certificates gnupg nginx openssl postgresql postgresql-client rsync sudo util-linux
+  apt-get install -y acl curl ca-certificates gnupg nginx openssl postgresql postgresql-client rsync sudo util-linux
   if ! command -v node >/dev/null 2>&1 || [ "$(node -p 'Number(process.versions.node.split(".")[0])')" -lt 22 ]; then
     curl -4fL --show-error --connect-timeout 15 --max-time 180 --retry 3 \
       https://deb.nodesource.com/setup_22.x | bash -
@@ -172,6 +172,39 @@ ensure_user() {
       chmod 600 "$root_only_file"
     fi
   done
+}
+
+ensure_runtime_path_access() {
+  local resolved_app_base ancestor
+  resolved_app_base="$(readlink -m -- "$APP_BASE")"
+  ancestor="$(dirname -- "$resolved_app_base")"
+
+  # Some VPS images harden /var/www (or a custom APP_BASE parent) to 0700.
+  # Keep that directory private while granting only the dedicated application
+  # account permission to traverse the exact parent chain. Unlike chmod o+x,
+  # this does not grant access to every local account.
+  while [ "$ancestor" != '/' ]; do
+    setfacl -m "u:${APP_USER}:--x" -- "$ancestor" \
+      || die "Could not grant $APP_USER traverse access to application parent: $ancestor"
+    ancestor="$(dirname -- "$ancestor")"
+  done
+}
+
+verify_candidate_runtime_access() {
+  # Validate with the same OS identity and chdir operation systemd will use.
+  # Run this before database migration and before interrupting an old service so
+  # a provider-specific parent permission cannot become a late CHDIR failure.
+  (
+    cd /
+    exec sudo -u "$APP_USER" env RUNTIME_RELEASE="$CANDIDATE_RELEASE" node <<'NODE'
+const fs = require('fs');
+const path = String(process.env.RUNTIME_RELEASE || '');
+process.chdir(path);
+fs.accessSync('server.js', fs.constants.R_OK);
+fs.accessSync('package.json', fs.constants.R_OK);
+NODE
+  ) || die "The $APP_USER account cannot enter or read the candidate release: $CANDIDATE_RELEASE"
+  log "Verified candidate working-directory access as $APP_USER."
 }
 
 write_installation_owner_marker() {
@@ -1165,6 +1198,7 @@ main() {
   need_cmd tar
   resolve_persistent_directories
   ensure_user
+  ensure_runtime_path_access
   write_installation_owner_marker
   # Copy and build into an isolated candidate while the current service remains online.
   prepare_candidate_release
@@ -1174,6 +1208,7 @@ main() {
   build_v3_frontend
   verify_candidate_release_sources
   seal_candidate_release
+  verify_candidate_runtime_access
   ensure_local_database
   prepare_local_migration_bundle
   ensure_verified_pre_migration_backup
