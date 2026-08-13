@@ -52,7 +52,12 @@ sudo journalctl -u laboratory-management-system -f
 
 # 手动备份
 sudo laboratory-management-system-backup
+
+# PostgreSQL 13 主版本升级到项目验证过的 PostgreSQL 16
+sudo laboratory-management-system-upgrade-postgresql
 ```
+
+PostgreSQL 主版本升级会要求输入 `UPGRADE-POSTGRESQL` 二次确认，先生成并验证数据库与全局角色备份，再执行升级。旧集群不会自动删除；完整流程和首次安装尚未成功时的独立升级命令见 VPS 详细文档。
 
 ## 使用入口
 

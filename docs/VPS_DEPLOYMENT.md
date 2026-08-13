@@ -189,7 +189,46 @@ sudo bash scripts/backup.sh --verify
 
 备份文件含业务数据，应限制为管理员和备份系统可读；恢复数据库会覆盖现有数据，必须在维护窗口确认备份时间后再操作。
 
-### 3.2 安全卸载
+### 3.2 PostgreSQL 13 升级到 PostgreSQL 16
+
+本项目默认把 PostgreSQL 16 作为经过测试的生产升级目标。已经成功安装过当前版本后，可在维护窗口执行：
+
+```bash
+sudo laboratory-management-system-upgrade-postgresql
+```
+
+若应用安装尚未成功，服务器上还没有上述管理命令，可直接下载独立升级器：
+
+```bash
+(
+  set -e
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' EXIT
+  curl -fL --retry 3 -o "$tmp" 'https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/upgrade-postgresql.sh'
+  sudo bash "$tmp"
+)
+```
+
+脚本只接受本项目 `.env` 中指向 `127.0.0.1:5432/laboratory_management_system` 的本地数据库，不会操作外部托管数据库；若同一 PostgreSQL 集群还有其他业务数据库或非核心扩展，也会停止并要求人工审查。执行前必须输入 `UPGRADE-POSTGRESQL` 确认。随后脚本会：
+
+1. 检查磁盘空间、目标版本、主集群和本项目数据库；
+2. 在应用目录的备份位置创建 PostgreSQL 自定义格式数据库备份、全局角色备份和 SHA-256 清单，并用 `pg_restore --list` 验证；
+3. 必要时使用 PostgreSQL 官方 PGDG APT 仓库安装 PostgreSQL 16；仓库签名密钥会校验官方完整指纹；
+4. 停止应用，使用 Debian/Ubuntu 的 `pg_upgradecluster` 完成集群升级，再检查数据库版本和应用 `/ready`；
+5. 失败时尝试把未修改的旧集群切回原端口并恢复应用；成功时保留已停止的 PostgreSQL 13 集群，不自动删除。
+
+成功后先检查：
+
+```bash
+sudo pg_lsclusters
+sudo systemctl status laboratory-management-system --no-pager
+```
+
+至少观察数日并确认业务、备份和 App 连接正常后，才按升级器最终输出的精确版本和集群名执行 `pg_dropcluster --stop ...` 删除旧集群。不要提前卸载 PostgreSQL 13 软件包或删除 `/var/lib/postgresql/13`。需要无交互执行时必须显式设置 `CONFIRM_POSTGRES_UPGRADE=UPGRADE-POSTGRESQL`；可用 `TARGET_POSTGRES_MAJOR=15` 到 `18` 覆盖目标，但非 16 版本应先自行完成兼容性测试。
+
+数据库主版本升级和操作系统升级是两项不同工作。若服务器操作系统已停止安全支持，应先规划系统快照、异机恢复演练与受支持操作系统迁移，不要把数据库升级当成操作系统安全更新的替代品。
+
+### 3.3 安全卸载
 
 `sudo bash scripts/uninstall-vps.sh` 会停止新旧服务名、移除 systemd/Nginx 配置和管理命令，但默认保留应用目录、上传、导出与备份数据。确实需要连同应用目录删除时，必须在完成离线备份后显式执行：
 

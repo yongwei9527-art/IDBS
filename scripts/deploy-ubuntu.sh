@@ -33,6 +33,7 @@ UPDATE_COMMAND="/usr/local/bin/laboratory-management-system-update"
 LEGACY_UPDATE_COMMAND="/usr/local/bin/${LEGACY_SERVICE_NAME}-update"
 DB_COMMAND="/usr/local/bin/db"
 FIREBASE_CONFIG_COMMAND="/usr/local/sbin/laboratory-management-system-configure-firebase"
+POSTGRES_UPGRADE_COMMAND="/usr/local/sbin/laboratory-management-system-upgrade-postgresql"
 INSTALL_INFO_FILE="$APP_SHARED/install-info"
 INSTALL_OWNER_FILE="$APP_SHARED/installation-owner"
 PENDING_ADMIN_FILE="$APP_SHARED/.initial-super-admin-pending"
@@ -240,6 +241,7 @@ verify_candidate_release_sources() {
     scripts/doctor.js
     scripts/reset-admin-password.js
     scripts/update-vps.sh
+    scripts/upgrade-postgresql.sh
     scripts/backup.sh
     scripts/vps-db-panel.sh
     web/package.json
@@ -901,6 +903,10 @@ install_firebase_config_command() {
   install -o root -g root -m 0755 "$ROOT_DIR/scripts/configure-firebase.sh" "$FIREBASE_CONFIG_COMMAND"
 }
 
+install_postgres_upgrade_command() {
+  install -o root -g root -m 0755 "$ROOT_DIR/scripts/upgrade-postgresql.sh" "$POSTGRES_UPGRADE_COMMAND"
+}
+
 install_db_panel() {
   local quoted_app_base quoted_app_current quoted_panel_script
   printf -v quoted_app_base '%q' "$APP_BASE"
@@ -1121,6 +1127,7 @@ main() {
   install_admin_reset_command
   install_update_command
   install_firebase_config_command
+  install_postgres_upgrade_command
   install_db_panel
   activate_candidate_release
   systemctl restart "$SERVICE_NAME"
@@ -1141,6 +1148,7 @@ main() {
   log "Reset admin password command: sudo ${SERVICE_NAME}-reset-admin-password"
   log "Update command: sudo laboratory-management-system-update"
   log "Firebase command: sudo $FIREBASE_CONFIG_COMMAND /root/firebase-admin-service-account.json"
+  log "PostgreSQL major-upgrade command: sudo laboratory-management-system-upgrade-postgresql"
   log "VPS management panel: sudo db"
   log "Current release: $CANDIDATE_RELEASE"
   if [ -n "$ROLLBACK_RELEASE" ]; then

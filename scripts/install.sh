@@ -325,6 +325,7 @@ required_source_files() {
     server.js \
     deploy/vps-common.sh \
     scripts/deploy-ubuntu.sh \
+    scripts/upgrade-postgresql.sh \
     scripts/migrate-db.js \
     scripts/backup-database.js \
     scripts/provision-super-admin.js \

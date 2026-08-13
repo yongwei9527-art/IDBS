@@ -89,7 +89,8 @@ rm -f -- \
   "/usr/local/bin/${LEGACY_SERVICE_NAME}-update" \
   "/usr/local/bin/${SERVICE_NAME}-reset-admin-password" \
   "/usr/local/bin/${LEGACY_SERVICE_NAME}-reset-admin-password" \
-  /usr/local/sbin/laboratory-management-system-configure-firebase
+  /usr/local/sbin/laboratory-management-system-configure-firebase \
+  /usr/local/sbin/laboratory-management-system-upgrade-postgresql
 
 if [ -f /usr/local/bin/db ] && grep -Fq 'vps-db-panel.sh' /usr/local/bin/db; then
   rm -f -- /usr/local/bin/db
