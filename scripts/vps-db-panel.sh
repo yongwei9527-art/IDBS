@@ -19,6 +19,22 @@ read_info_value() {
   awk -v prefix="${key}=" 'index($0, prefix) == 1 { value = substr($0, length(prefix) + 1) } END { print value }' "$INFO_FILE"
 }
 
+read_env_value() {
+  local key="$1"
+  [ -f "$ENV_FILE" ] || return 0
+  awk -v prefix="${key}=" 'index($0, prefix) == 1 { value = substr($0, length(prefix) + 1) } END { print value }' "$ENV_FILE"
+}
+
+configured_public_origin() {
+  local origin
+  origin="$(read_env_value APP_PUBLIC_URL)"
+  [ -n "$origin" ] || origin="$(read_env_value CORS_ORIGIN | awk -F, '{ print $NF }')"
+  origin="${origin%/}"
+  if [[ "$origin" =~ ^https?://[^/[:space:]?#]+$ ]] && [[ "$origin" != *'@'* ]]; then
+    printf '%s' "$origin"
+  fi
+}
+
 generate_password() {
   printf 'IDBS!%s' "$(openssl rand -hex 8)"
 }
@@ -131,7 +147,14 @@ record_from_stdin() {
 show_install_info() {
   show_postgresql_info
   if [ ! -f "$INFO_FILE" ]; then
-    echo "尚未找到安装信息：$INFO_FILE"
+    local configured_origin
+    configured_origin="$(configured_public_origin)"
+    echo "尚未找到完整安装信息：$INFO_FILE"
+    echo '状态：部署尚未完成，因此不能确认公网网址可访问。'
+    if [ -n "$configured_origin" ]; then
+      printf '安装器已配置的候选地址：%s/v5/（部署成功后才可使用）\n' "$configured_origin"
+    fi
+    echo '请重新运行安装器；若再次失败，请查看 /var/log/laboratory-management-system/install-failure.log。'
     return 0
   fi
 
@@ -203,7 +226,7 @@ reset_super_admin() {
     return 1
   }
 
-  local current_phone current_name phone name password force_transfer=0 reply
+  local current_phone current_name phone name password force_transfer=0 reply recorded_origin
   current_phone="$(read_info_value SUPER_ADMIN_PHONE)"
   current_name="$(read_info_value SUPER_ADMIN_NAME)"
   phone="$(ask_value "最高管理员手机号/登录账号" "$current_phone")"
@@ -227,9 +250,16 @@ reset_super_admin() {
   SUPER_ADMIN_FORCE_TRANSFER="$force_transfer" \
     node "$APP_CURRENT/scripts/provision-super-admin.js"
 
+  recorded_origin="$(read_info_value APP_SERVER_ADDRESS)"
+  [ -n "$recorded_origin" ] || recorded_origin="$(configured_public_origin)"
+  if [ -z "$recorded_origin" ]; then
+    echo '最高管理员已重置，但部署尚未完成，当前没有经过验证的公网地址。' >&2
+    echo '请重新运行安装器；不要把空地址当作安装成功。' >&2
+    return 0
+  fi
   write_install_info \
-    "$(read_info_value APP_SERVER_ADDRESS)" \
-    "$(read_info_value WEB_ACCESS_URL)" \
+    "$recorded_origin" \
+    "${recorded_origin%/}/v5/" \
     "$phone" "$name" "$password"
 
   echo "最高管理员临时凭据已更新。该账号下次登录必须修改密码。"

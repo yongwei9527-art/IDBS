@@ -58,17 +58,36 @@ source "$COMMON_HELPER"
 DEFAULT_ADMIN_PHONE="${DEFAULT_ADMIN_PHONE:-13900000000}"
 DEFAULT_ADMIN_NAME="${DEFAULT_ADMIN_NAME:-系统最高管理员}"
 PENDING_ADMIN_FILE="$APP_BASE/shared/.initial-super-admin-pending"
+INSTALL_FAILURE_LOG="${INSTALL_FAILURE_LOG:-/var/log/laboratory-management-system/install-failure.log}"
 CURRENT_STEP='启动安装器'
 
 report_install_failure() {
-  local status=$?
+  local status=$? log_dir
   trap - ERR
+  log_dir="$(dirname "$INSTALL_FAILURE_LOG")"
+  mkdir -p -- "$log_dir"
+  {
+    printf 'time=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'exit_status=%s\n' "$status"
+    printf 'step=%s\n' "$CURRENT_STEP"
+    printf '\n=== systemd status ===\n'
+    systemctl status "$SERVICE_NAME" --no-pager 2>&1 || true
+    printf '\n=== application journal ===\n'
+    journalctl -u "$SERVICE_NAME" -n 150 --no-pager 2>&1 || true
+    printf '\n=== nginx config ===\n'
+    nginx -t 2>&1 || true
+    printf '\n=== PostgreSQL clusters ===\n'
+    pg_lsclusters 2>&1 || true
+  } > "$INSTALL_FAILURE_LOG"
+  chown root:root "$INSTALL_FAILURE_LOG"
+  chmod 600 "$INSTALL_FAILURE_LOG"
   printf '\n[vps] 安装在以下步骤失败：%s\n' "$CURRENT_STEP" >&2
   printf '[vps] 可以安全地重新运行安装器；已有数据库和上传文件会被保留。\n' >&2
   printf '[vps] 诊断命令：\n' >&2
   printf '  sudo systemctl status %s --no-pager\n' "$SERVICE_NAME" >&2
   printf '  sudo journalctl -u %s -n 100 --no-pager\n' "$SERVICE_NAME" >&2
   printf '  sudo nginx -t\n' >&2
+  printf '  sudo cat %s\n' "$INSTALL_FAILURE_LOG" >&2
   exit "$status"
 }
 trap report_install_failure ERR

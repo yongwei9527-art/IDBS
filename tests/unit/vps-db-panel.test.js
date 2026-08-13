@@ -33,6 +33,16 @@ test('VPS db panel reports the live PostgreSQL baseline and upgrade command', ()
   assert.match(panel, /laboratory-management-system-upgrade-postgresql/);
 });
 
+test('interrupted installation never records or presents a blank public URL as successful', () => {
+  assert.match(panel, /configured_public_origin/);
+  assert.match(panel, /部署尚未完成，因此不能确认公网网址可访问/);
+  assert.match(panel, /\$\{recorded_origin%\/\}\/v5\//);
+  assert.match(panel, /不要把空地址当作安装成功/);
+  assert.match(installer, /INSTALL_FAILURE_LOG="\$\{INSTALL_FAILURE_LOG:-\/var\/log\/laboratory-management-system\/install-failure\.log\}"/);
+  assert.match(installer, /pg_lsclusters 2>&1 \|\| true/);
+  assert.match(installer, /sudo cat %s/);
+});
+
 test('VPS install information is root-only and temporary-password risk is explicit', () => {
   assert.match(panel, /install -o root -g root -m 600/);
   assert.match(panel, /PASSWORD_STATE=temporary_must_change/);
