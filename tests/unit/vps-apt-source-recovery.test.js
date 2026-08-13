@@ -36,6 +36,13 @@ test('VPS installation disables only retired Debian 11 backports before apt upda
   assert.match(installer, /remote set-url origin "\$REPO_URL"/);
   assert.match(installer, /sparse-checkout disable/);
   assert.match(installer, /reset --hard "origin\/\$BRANCH"/);
+  assert.match(installer, /checkout --ignore-skip-worktree-bits --force HEAD -- \./);
+  assert.match(installer, /verify_source_checkout/);
+  assert.match(installer, /restore_required_source_files/);
+  assert.ok(installer.indexOf('restore_required_source_files') < installer.indexOf('status --porcelain'));
+  assert.match(installer, /hash-object --path="\$relative" -- "\$SRC_DIR\/\$relative"/);
+  assert.match(installer, /scripts\/migrate-db\.js/);
+  assert.match(installer, /trap - ERR[\s\S]*bash "\$SRC_DIR\/scripts\/deploy-ubuntu\.sh"/);
   assert.match(preparer, /disable_retired_bullseye_backports/);
   assert.match(preparer, /laboratory-management-system-backup/);
   assert.doesNotMatch(installer, /^\s*apt-get update\s*$/m);

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2030,SC2031
 # Interactive Ubuntu/Debian VPS installer. Download it first, then run it with sudo bash.
 set -Eeuo pipefail
 umask 077
@@ -256,6 +257,13 @@ fetch_source() {
   local current_origin=''
   log "正在从 GitHub 下载应用程序源码（$BRANCH）"
   if [ -d "$SRC_DIR/.git" ]; then
+    if [ "$(git -C "$SRC_DIR" config --bool core.sparseCheckout 2>/dev/null || true)" = 'true' ]; then
+      log '检测到稀疏检出，正在恢复完整项目文件。'
+      git -C "$SRC_DIR" sparse-checkout disable
+    fi
+    # Recover required tracked files that an interrupted/sparse checkout left
+    # absent before deciding whether the operator has real local modifications.
+    restore_required_source_files
     if [ -n "$(git -C "$SRC_DIR" status --porcelain)" ]; then
       die "Refusing to overwrite local source changes in $SRC_DIR."
     fi
@@ -263,10 +271,6 @@ fetch_source() {
     if [ "$current_origin" != "$REPO_URL" ]; then
       log "正在更新 GitHub 下载地址：$REPO_URL"
       git -C "$SRC_DIR" remote set-url origin "$REPO_URL"
-    fi
-    if [ "$(git -C "$SRC_DIR" config --bool core.sparseCheckout 2>/dev/null || true)" = 'true' ]; then
-      log '检测到稀疏检出，正在恢复完整项目文件。'
-      git -C "$SRC_DIR" sparse-checkout disable
     fi
     "${git_network[@]}" -C "$SRC_DIR" fetch origin --tags
     if git -C "$SRC_DIR" show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
@@ -288,6 +292,56 @@ fetch_source() {
     [ ! -e "$SRC_DIR" ] || [ -z "$(find "$SRC_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ] || die "$SRC_DIR is not an empty Git repository directory."
     "${git_network[@]}" clone --progress --branch "$BRANCH" "$REPO_URL" "$SRC_DIR"
   fi
+
+  # A stale sparse-index or an incomplete third-party Git proxy checkout can
+  # report the correct commit while leaving tracked files absent on disk. Force
+  # all skip-worktree entries back into the worktree before deployment.
+  git -C "$SRC_DIR" config core.sparseCheckout false
+  git -C "$SRC_DIR" config core.sparseCheckoutCone false
+  git -C "$SRC_DIR" read-tree -mu HEAD
+  git -C "$SRC_DIR" checkout --ignore-skip-worktree-bits --force HEAD -- .
+  verify_source_checkout
+}
+
+verify_source_checkout() {
+  local relative expected actual
+  while IFS= read -r relative; do
+    [ -n "$relative" ] || continue
+    git -C "$SRC_DIR" ls-files --error-unmatch -- "$relative" >/dev/null 2>&1 \
+      || die "当前版本不包含安装所需文件：$relative"
+    [ -s "$SRC_DIR/$relative" ] \
+      || die "源码检出不完整，缺少安装所需文件：$SRC_DIR/$relative。请停用有缓存问题的 GitHub 代理后重试。"
+    expected="$(git -C "$SRC_DIR" rev-parse "HEAD:$relative")"
+    actual="$(git -C "$SRC_DIR" hash-object --path="$relative" -- "$SRC_DIR/$relative")"
+    [ "$actual" = "$expected" ] \
+      || die "源码文件与当前 Git 提交不一致：$SRC_DIR/$relative。请停用有缓存问题的 GitHub 代理后重试。"
+  done < <(required_source_files)
+}
+
+required_source_files() {
+  printf '%s\n' \
+    package.json \
+    package-lock.json \
+    server.js \
+    deploy/vps-common.sh \
+    scripts/deploy-ubuntu.sh \
+    scripts/migrate-db.js \
+    scripts/backup-database.js \
+    scripts/provision-super-admin.js \
+    scripts/doctor.js \
+    web/package.json \
+    web/package-lock.json
+}
+
+restore_required_source_files() {
+  local relative
+  while IFS= read -r relative; do
+    [ -n "$relative" ] || continue
+    if [ ! -s "$SRC_DIR/$relative" ] \
+      && git -C "$SRC_DIR" ls-files --error-unmatch -- "$relative" >/dev/null 2>&1; then
+      git -C "$SRC_DIR" checkout --ignore-skip-worktree-bits --force HEAD -- "$relative"
+    fi
+  done < <(required_source_files)
 }
 
 main() {
@@ -362,7 +416,7 @@ main() {
     enable_https=1
     echo "已保留现有 HTTPS 公网地址；接下来会验证 Nginx 证书配置：$origin"
   else
-    if [ -n "$domain" ] && ask_yes_no '域名 DNS 生效后，是否自动配置 Let’s Encrypt HTTPS？' 'Y'; then
+    if [ -n "$domain" ] && ask_yes_no "域名 DNS 生效后，是否自动配置 Let's Encrypt HTTPS？" 'Y'; then
       enable_https=1
       tls_email="$(ask_value '证书到期通知邮箱（可留空）' '')"
     fi
@@ -434,6 +488,10 @@ main() {
   # Export deployment settings inside a subshell instead of passing KEY=value
   # arguments to env, so the initial administrator password never enters argv.
   (
+    # The outer installer owns the user-facing failure report. Do not inherit
+    # its ERR trap into the deployment subshell or the same error is printed
+    # twice.
+    trap - ERR
     export APP_BASE="$APP_BASE"
     export SERVICE_NAME="$SERVICE_NAME"
     export LEGACY_SERVICE_NAME="$LEGACY_SERVICE_NAME"

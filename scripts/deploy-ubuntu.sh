@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2030,SC2031
 set -Eeuo pipefail
 umask 077
 
@@ -91,7 +92,7 @@ install_packages() {
   fi
   postgres_major="$(psql --version 2>/dev/null | grep -oE '[0-9]+' | head -n 1 || true)"
   if [ -n "$postgres_major" ] && [ "$postgres_major" -lt 15 ]; then
-    log "警告：当前 PostgreSQL ${postgres_major} 已不适合作为新的长期生产环境。此次安装会继续以便恢复服务，但请尽快升级到受支持的 PostgreSQL 15+ 和受支持的操作系统。"
+    log "兼容模式：检测到 PostgreSQL ${postgres_major}。这不会阻止本次恢复安装，也不是安装失败；服务恢复后请安排升级到 PostgreSQL 15+ 和受支持的操作系统。"
   fi
 }
 
@@ -188,7 +189,7 @@ write_installation_owner_marker() {
 }
 
 prepare_candidate_release() {
-  local git_revision timestamp
+  local git_revision timestamp repository_root
   timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
   git_revision="$(git -C "$ROOT_DIR" rev-parse --short=12 HEAD 2>/dev/null || printf 'source')"
   if [ -z "$RELEASE_ID" ]; then
@@ -201,13 +202,22 @@ prepare_candidate_release() {
   [ ! -e "$CANDIDATE_RELEASE" ] && [ ! -L "$CANDIDATE_RELEASE" ] \
     || die "Candidate release already exists: $CANDIDATE_RELEASE"
   mkdir -p -- "$CANDIDATE_RELEASE"
-  rsync -a --delete \
-    --exclude '.git' \
-    --exclude 'node_modules' \
-    --exclude 'uploads' \
-    --exclude '.env' \
-    --exclude 'public/download/' \
-    "$ROOT_DIR/" "$CANDIDATE_RELEASE/"
+  repository_root="$(git -C "$ROOT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ "$repository_root" = "$ROOT_DIR" ]; then
+    # Build releases from the Git object database rather than the worktree.
+    # This remains complete even when a proxy/sparse checkout left a tracked
+    # file (for example scripts/migrate-db.js) absent from the source folder.
+    git -C "$ROOT_DIR" archive --format=tar HEAD | tar -xf - -C "$CANDIDATE_RELEASE"
+  else
+    rsync -a --delete \
+      --exclude '.git' \
+      --exclude 'node_modules' \
+      --exclude 'uploads' \
+      --exclude '.env' \
+      --exclude 'public/download/' \
+      "$ROOT_DIR/" "$CANDIDATE_RELEASE/"
+  fi
+  verify_candidate_release_sources
   mkdir -p -- "$CANDIDATE_RELEASE/public"
   rm -rf -- "$CANDIDATE_RELEASE/public/download"
   ln -s -- "$APP_DOWNLOADS" "$CANDIDATE_RELEASE/public/download"
@@ -215,6 +225,30 @@ prepare_candidate_release() {
   # Release code is immutable to the runtime account. Root-run management commands
   # must never execute shell scripts writable by the application process.
   seal_candidate_release
+}
+
+verify_candidate_release_sources() {
+  local relative
+  local -a required_files=(
+    package.json
+    package-lock.json
+    server.js
+    deploy/vps-common.sh
+    scripts/migrate-db.js
+    scripts/backup-database.js
+    scripts/provision-super-admin.js
+    scripts/doctor.js
+    scripts/reset-admin-password.js
+    scripts/update-vps.sh
+    scripts/backup.sh
+    scripts/vps-db-panel.sh
+    web/package.json
+    web/package-lock.json
+  )
+  for relative in "${required_files[@]}"; do
+    [ -s "$CANDIDATE_RELEASE/$relative" ] \
+      || die "Candidate release is incomplete before migration; required file is missing: $relative"
+  done
 }
 
 seal_candidate_release() {
@@ -1062,6 +1096,7 @@ main() {
   fi
   install_packages
   need_cmd rsync
+  need_cmd tar
   resolve_persistent_directories
   ensure_user
   write_installation_owner_marker
@@ -1071,6 +1106,7 @@ main() {
   configure_release_retention
   npm --prefix "$CANDIDATE_RELEASE" ci --omit=dev
   build_v3_frontend
+  verify_candidate_release_sources
   seal_candidate_release
   ensure_local_database
   ensure_verified_pre_migration_backup

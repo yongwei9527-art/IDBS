@@ -22,11 +22,37 @@ function ordered(source, snippets) {
   }
 }
 
+test('candidate archive contains every migration-critical file', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vps-candidate-archive-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const archive = path.join(os.tmpdir(), `vps-candidate-${process.pid}-${Date.now()}.tar`);
+  t.after(() => fs.rmSync(archive, { force: true }));
+  const archiveResult = spawnSync('git', ['archive', '--format=tar', '--output', archive, 'HEAD'], {
+    cwd: root,
+    encoding: 'utf8',
+    windowsHide: true
+  });
+  assert.equal(archiveResult.status, 0, `${archiveResult.stdout || ''}\n${archiveResult.stderr || ''}`);
+  const listing = spawnSync('tar', ['-tf', archive], { encoding: 'utf8', windowsHide: true });
+  assert.equal(listing.status, 0, `${listing.stdout || ''}\n${listing.stderr || ''}`);
+  const files = new Set(listing.stdout.split(/\r?\n/));
+  for (const required of [
+    'scripts/migrate-db.js',
+    'scripts/backup-database.js',
+    'scripts/provision-super-admin.js',
+    'web/package.json'
+  ]) {
+    assert.ok(files.has(required), `archive missing ${required}`);
+  }
+});
+
 test('deployment builds an isolated release before interrupting the current service', () => {
   const main = deploy.slice(deploy.lastIndexOf('\nmain() {'));
   assert.match(deploy, /APP_RELEASES="\$APP_BASE\/releases"/);
   assert.match(deploy, /CANDIDATE_RELEASE="\$APP_RELEASES\/\$RELEASE_ID"/);
-  assert.match(deploy, /"\$ROOT_DIR\/" "\$CANDIDATE_RELEASE\/"/);
+  assert.match(deploy, /git -C "\$ROOT_DIR" archive --format=tar HEAD \| tar -xf - -C "\$CANDIDATE_RELEASE"/);
+  assert.match(deploy, /verify_candidate_release_sources/);
+  assert.match(deploy, /scripts\/migrate-db\.js/);
   assert.doesNotMatch(deploy, /"\$ROOT_DIR\/" "\$APP_CURRENT\/"/);
   assert.match(deploy, /chown -R root:root "\$CANDIDATE_RELEASE"/);
   assert.match(deploy, /chmod -R a\+rX,u\+w,go-w "\$CANDIDATE_RELEASE"/);
