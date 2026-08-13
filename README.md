@@ -3,14 +3,19 @@
 面向实验室的设备预约、借还、故障、群聊、通知和后台管理系统。
 
 当前版本：**v5.0.8**
-支持：Ubuntu 22.04 / 24.04、Debian 11 / 12、Web、PWA、Android。
+全新 VPS 支持：Ubuntu 22.04 / 24.04、Debian 12 / 13、Web、PWA、Android。旧系统上的已有安装只提供恢复兼容模式，恢复后必须尽快迁移到支持的系统。
 
 ## 一键安装
 
-在全新 Ubuntu VPS 中执行：
+在受支持的全新 Ubuntu/Debian VPS 中执行：
 
 ```bash
-curl -4fL --connect-timeout 15 --max-time 120 --retry 3 https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install.sh | sudo bash
+tmp="$(mktemp)"
+curl -4fL --connect-timeout 15 --max-time 120 --retry 3 \
+  -o "$tmp" \
+  "https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install.sh?v=$(date +%s)"
+sudo bash "$tmp"
+rm -f "$tmp"
 ```
 
 安装器会询问域名、HTTPS、最高管理员账号、密码和数据目录。直接按 Enter 可采用安全默认值；随机管理员密码只显示一次。
@@ -18,7 +23,12 @@ curl -4fL --connect-timeout 15 --max-time 120 --retry 3 https://raw.githubuserco
 如果 VPS 无法连接 GitHub，可明确选择第三方代理（代理不由本项目运营，请确认信任后使用）：
 
 ```bash
-curl -4fL --connect-timeout 15 --max-time 120 --retry 3 "https://ghproxy.net/https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install.sh?v=$(date +%s)" | sudo env GITHUB_PROXY_PREFIX=https://ghproxy.net bash
+tmp="$(mktemp)"
+curl -4fL --connect-timeout 15 --max-time 120 --retry 3 \
+  -o "$tmp" \
+  "https://ghproxy.net/https://raw.githubusercontent.com/yongwei9527-art/IDBS/main/scripts/install.sh?v=$(date +%s)"
+sudo env GITHUB_PROXY_PREFIX=https://ghproxy.net bash "$tmp"
+rm -f "$tmp"
 ```
 
 也可将命令中的两个 `ghproxy.net` 同时替换为 `gh-proxy.com` 或 `github.akams.cn`。
@@ -33,7 +43,9 @@ App 下载：https://你的域名/download
 最高管理员临时密码：随机生成
 ```
 
-没有域名也能安装，系统会使用服务器公网 IP 和 HTTP。生产环境推荐使用域名和 HTTPS。
+没有域名也能安装，系统会使用服务器公网 IP 和 HTTP。安装器会同时验证 Node 内部 `/ready` 与 Nginx 公共路由；`127.0.0.1:3000` 仅是服务器内部检查地址。生产环境推荐使用域名和 HTTPS。
+
+全新安装固定使用 PostgreSQL 16，不再随发行版随机安装 PostgreSQL 13/15。安装前还会拒绝非 systemd 主机、并发部署、非本项目进程占用运行端口，以及非 Nginx 程序占用 80/443 端口。
 
 ## 常用命令
 

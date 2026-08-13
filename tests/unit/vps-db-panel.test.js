@@ -46,7 +46,7 @@ test('deployment installs canonical update command and db panel', () => {
   assert.match(deploy, /UPDATE_COMMAND="\/usr\/local\/bin\/laboratory-management-system-update"/);
   assert.match(deploy, /DB_COMMAND="\/usr\/local\/bin\/db"/);
   assert.match(deploy, /install_db_panel/);
-  assert.match(deploy, /PostgreSQL 15\+/);
+  assert.match(deploy, /PostgreSQL 16/);
 });
 
 test('VPS installation has one canonical entrypoint and one canonical service name', () => {
@@ -71,7 +71,7 @@ test('interrupted first installation preserves credentials and records final con
 
 test('outer installer waits for a stable service restart instead of one-shot readiness failure', () => {
   assert.match(installer, /wait_for_final_readiness\(\)/);
-  assert.match(installer, /for attempt in \$\(seq 1 60\); do/);
+  assert.match(installer, /while \[ "\$attempts" -lt 60 \]; do/);
   assert.match(installer, /systemctl is-active --quiet "\$SERVICE_NAME"/);
   assert.match(installer, /curl -fsS "http:\/\/127\.0\.0\.1:\$\{port\}\/ready" >\/dev\/null 2>&1/);
   assert.match(installer, /journalctl -u "\$SERVICE_NAME" -n 100 --no-pager/);
@@ -181,7 +181,7 @@ test('APK delivery defaults to the matching GitHub release and preserves self-ho
   assert.match(common, /github_release_apk_url()/);
   assert.match(common, /Laboratory-Management-System-v%s\.apk/);
   assert.match(installer, /configure_default_apk_download_url()/);
-  assert.match(installer, /set_env_value APK_DOWNLOAD_URL_MANAGED "\$managed_mode"/);
+  assert.match(installer, /set_runtime_env_value APK_DOWNLOAD_URL_MANAGED "\$managed_mode"/);
   assert.match(installer, /previous_origin/);
   assert.match(installer, /\$\{previous_origin%\/\}\/download\/app\.apk/);
   assert.match(installer, /Android APK：%s/);
@@ -215,7 +215,7 @@ test('VPS installer supports a domain-free install and secure defaults for blank
   assert.match(installer, /仅自动检测到内网\/LAN IPv4/);
   assert.match(installer, /无人值守安装需要公网 IPv4 或域名/);
   assert.match(installer, /origin="http:\/\/\$host"/);
-  assert.match(installer, /DOMAIN_NAME="\$\{domain:-_\}"/);
+  assert.match(installer, /DOMAIN_NAME="\$host"/);
   assert.match(installer, /if \[ "\$enable_https" = '1' \]; then/);
 });
 

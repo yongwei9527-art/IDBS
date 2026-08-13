@@ -14,7 +14,55 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  vps-shell-portability:
+    name: VPS shell portability (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [ubuntu:22.04, ubuntu:24.04, debian:12, debian:13]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Parse and lint VPS scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" \
+            -w /workspace \
+            "${{ matrix.image }}" \
+            bash -lc '
+              set -euo pipefail
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -qq
+              apt-get install -y -qq ca-certificates curl gnupg postgresql-common shellcheck >/dev/null
+              . /etc/os-release
+              curl -4fsSI --connect-timeout 15 --max-time 60 \
+                "https://apt.postgresql.org/pub/repos/apt/dists/${VERSION_CODENAME}-pgdg/Release" >/dev/null
+              key="$(mktemp)"
+              curl -4fsSL --connect-timeout 15 --max-time 120 \
+                https://www.postgresql.org/media/keys/ACCC4CF8.asc -o "$key"
+              test "$(gpg --show-keys --with-colons "$key" | awk -F: '\''$1 == "fpr" { print $10; exit }'\'')" \
+                = B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8
+              rm -f "$key"
+              bash -n deploy/*.sh scripts/*.sh
+              shellcheck -x \
+                deploy/vps-common.sh \
+                scripts/install.sh \
+                scripts/deploy-ubuntu.sh \
+                scripts/update.sh \
+                scripts/update-vps.sh \
+                scripts/backup.sh \
+                scripts/uninstall-vps.sh
+            '
+
   quality:
+    needs: vps-shell-portability
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

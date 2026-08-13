@@ -1,6 +1,6 @@
 # VPS 部署、更新与 App 配对
 
-本文说明当前仓库中 `scripts/install.sh`、`scripts/update.sh`、`scripts/backup.sh` 的使用方式，以及 Android App 与服务器的安全配对流程。脚本面向 Ubuntu/Debian VPS，要求以 `root` 或具有 `sudo` 权限的账号执行。
+本文说明当前仓库中 `scripts/install.sh`、`scripts/update.sh`、`scripts/backup.sh` 的使用方式，以及 Android App 与服务器的安全配对流程。全新安装支持 Ubuntu 22.04/24.04、Debian 12/13，要求 systemd 作为 PID 1，并以 `root` 或具有 `sudo` 权限的账号执行。旧系统上的已有安装只允许进入恢复兼容模式。
 
 > 生产环境建议先配置可解析到 VPS 的 HTTPS 域名。没有域名时仍可安装，并通过 `http://公网IP/v5/` 访问网页、在 App 中手动填写服务器地址；安全二维码配对则要求可公开解析的 HTTPS 域名和标准 443 端口。
 
@@ -26,7 +26,7 @@ cd IDBS
 sudo bash scripts/install.sh
 ```
 
-安装器会安装或准备 Node.js、Nginx、PostgreSQL、应用依赖和服务，并拉取指定分支的源码。它会交互询问：
+安装器会准备系统级 Node.js 22、Nginx、固定的 PostgreSQL 16、应用依赖和服务，并拉取指定分支的源码。全新安装不会使用发行版碰巧提供的 PostgreSQL 主版本。它会交互询问：
 
 项目的唯一正式安装入口是 `scripts/install.sh`；`scripts/install-vps.sh` 只是向后兼容包装器。Linux 服务统一命名为 `laboratory-management-system`，旧服务名 `laboratory_management_system` 会作为兼容别名保留。PostgreSQL 数据库 `laboratory_management_system` 和用户 `laboratory_management_system_user` 仍使用下划线。
 
@@ -40,7 +40,7 @@ sudo bash scripts/install.sh
 
 域名留空不会阻止安装。安装器会优先检测公网 IPv4，无法访问外部检测服务时再选择本机有效 IPv4；无域名模式跳过 Certbot，使用 `http://公网IPv4` 和 Nginx 80 端口。也可在域名提示处直接输入公网 IPv4。若自动探测只能得到私网/局域网 IPv4，交互安装必须明确确认才会继续为 LAN-only 部署，非交互安装默认拒绝；用户显式输入私网 IPv4 时仍会收到不可供互联网客户端使用的警告。若完全无法取得有效 IPv4，则会停止并要求重新输入公网 IPv4 或域名。
 
-云厂商安全组或外部防火墙必须允许 TCP 80 入站；使用 HTTPS 域名时还要允许 TCP 443。安装器不会自动放宽服务器已有的防火墙策略。若 UFW 已启用，可根据实际入口执行 `sudo ufw allow 80/tcp`，域名 HTTPS 环境再执行 `sudo ufw allow 443/tcp`。
+云厂商安全组或外部防火墙必须允许 TCP 80 入站；使用 HTTPS 域名时还要允许 TCP 443。安装器不会自动放宽服务器已有的防火墙策略。安装前会检查 systemd、并发部署、应用端口以及 80/443 冲突；安装结束会先检查 `127.0.0.1:PORT/ready`，再通过本机 Nginx 按实际域名/IP 检查公共 `/ready` 路由。内部 `127.0.0.1` 检查不是最终用户访问地址。若 UFW 已启用，可根据实际入口执行 `sudo ufw allow 80/tcp`，域名 HTTPS 环境再执行 `sudo ufw allow 443/tcp`。
 
 默认目录如下（可在安装向导中覆盖）：
 

@@ -21,10 +21,16 @@ if [ -n "$SCRIPT_SOURCE" ] && [ -f "$SCRIPT_SOURCE" ]; then
 fi
 COMMON_HELPER="${SCRIPT_DIR:+$SCRIPT_DIR/../deploy/vps-common.sh}"
 TEMP_COMMON_HELPER=''
+INSTALL_LOCK_DIR=''
+INSTALL_LOCK_HELD=0
 COMMON_HELPER_REF='d8c538b4fbec636b8523473d5f2bd72522b00c6d'
 COMMON_HELPER_SHA256='fdabd61d92eb83be6b8a972395197016f636cd445b7d98d4aa6acd2710b09044'
 cleanup_install() {
   [ -z "$TEMP_COMMON_HELPER" ] || rm -f "$TEMP_COMMON_HELPER"
+  if [ "$INSTALL_LOCK_HELD" = '1' ] && [ -n "$INSTALL_LOCK_DIR" ]; then
+    rm -f -- "$INSTALL_LOCK_DIR/pid"
+    rmdir -- "$INSTALL_LOCK_DIR" 2>/dev/null || true
+  fi
 }
 trap cleanup_install EXIT
 if [ -z "$COMMON_HELPER" ] || [ ! -f "$COMMON_HELPER" ]; then
@@ -68,8 +74,9 @@ report_install_failure() {
 trap report_install_failure ERR
 
 wait_for_final_readiness() {
-  local port="$1" attempt
-  for attempt in $(seq 1 60); do
+  local port="$1" attempts=0
+  while [ "$attempts" -lt 60 ]; do
+    attempts=$((attempts + 1))
     if systemctl is-active --quiet "$SERVICE_NAME" \
       && curl -fsS "http://127.0.0.1:${port}/ready" >/dev/null 2>&1; then
       return 0
@@ -81,6 +88,100 @@ wait_for_final_readiness() {
   systemctl status "$SERVICE_NAME" --no-pager >&2 || true
   journalctl -u "$SERVICE_NAME" -n 100 --no-pager >&2 || true
   return 1
+}
+
+wait_for_public_proxy_readiness() {
+  local public_origin="$1" public_host="$2" attempts=0 status_code=''
+  while [ "$attempts" -lt 30 ]; do
+    attempts=$((attempts + 1))
+    if systemctl is-active --quiet nginx; then
+      if [[ "$public_origin" == https://* ]]; then
+        status_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+          --resolve "${public_host}:443:127.0.0.1" \
+          "https://${public_host}/ready" 2>/dev/null || true)"
+        if [ "$status_code" = '200' ]; then
+          return 0
+        fi
+      else
+        status_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+          -H "Host: ${public_host}" "http://127.0.0.1/ready" 2>/dev/null || true)"
+        if [ "$status_code" = '200' ]; then
+          return 0
+        fi
+      fi
+    fi
+    sleep 1
+  done
+
+  printf '[vps] Nginx 代理在 30 秒内未通过 /ready，请检查站点配置和服务日志。\n' >&2
+  nginx -t >&2 || true
+  systemctl status nginx --no-pager >&2 || true
+  journalctl -u nginx -n 80 --no-pager >&2 || true
+  return 1
+}
+
+acquire_installer_lock() {
+  local existing_pid=''
+  INSTALL_LOCK_DIR='/run/lock/laboratory-management-system-install.lock.d'
+  mkdir -p /run/lock
+  if mkdir "$INSTALL_LOCK_DIR" 2>/dev/null; then
+    :
+  else
+    if [ -f "$INSTALL_LOCK_DIR/pid" ]; then
+      existing_pid="$(cat "$INSTALL_LOCK_DIR/pid" 2>/dev/null || true)"
+    fi
+    if [[ "$existing_pid" =~ ^[0-9]+$ ]] && kill -0 "$existing_pid" 2>/dev/null; then
+      die "另一个安装器正在运行（PID $existing_pid），请等待其完成。"
+    fi
+    rm -f -- "$INSTALL_LOCK_DIR/pid"
+    rmdir -- "$INSTALL_LOCK_DIR" 2>/dev/null \
+      || die '安装锁目录异常，请确认没有安装任务运行后删除 /run/lock/laboratory-management-system-install.lock.d。'
+    mkdir "$INSTALL_LOCK_DIR" \
+      || die '无法取得安装锁，请稍后重试。'
+  fi
+  printf '%s\n' "$$" > "$INSTALL_LOCK_DIR/pid"
+  INSTALL_LOCK_HELD=1
+}
+
+RUNTIME_CONFIG_CHANGED=0
+
+set_runtime_env_value() {
+  local key="$1" value="$2" current
+  current="$(read_env_value "$key" || true)"
+  if [ "$current" = "$value" ]; then
+    return 0
+  fi
+  set_env_value "$key" "$value"
+  RUNTIME_CONFIG_CHANGED=1
+}
+
+restart_after_runtime_config_change() {
+  local port="$1"
+  if [ "$RUNTIME_CONFIG_CHANGED" != '1' ]; then
+    return 0
+  fi
+  log '运行配置已更改，正在执行一次受控服务重启。'
+  systemctl restart "$SERVICE_NAME"
+  wait_for_final_readiness "$port"
+  RUNTIME_CONFIG_CHANGED=0
+}
+
+require_supported_host_release() {
+  local supported=0
+  # shellcheck disable=SC1091
+  source /etc/os-release
+  case "${ID:-}:${VERSION_ID:-}" in
+    ubuntu:22.04|ubuntu:24.04|debian:12|debian:13) supported=1 ;;
+  esac
+  if [ "$supported" = '1' ]; then
+    return 0
+  fi
+  if [ -f "$APP_BASE/shared/.env" ]; then
+    printf '[vps] 警告：当前系统 %s %s 不在全新生产安装支持矩阵中；仅允许继续恢复已有安装。\n' \
+      "${ID:-unknown}" "${VERSION_ID:-unknown}" >&2
+    return 0
+  fi
+  die "全新安装仅支持 Ubuntu 22.04/24.04 或 Debian 12/13；当前为 ${ID:-unknown} ${VERSION_ID:-unknown}。"
 }
 
 read_pending_value() {
@@ -258,10 +359,9 @@ configure_default_apk_download_url() {
 
   if [ -n "$apk_url" ]; then
     if [ "$apk_url" != "$current_url" ]; then
-      set_env_value APK_DOWNLOAD_URL "$apk_url"
+      set_runtime_env_value APK_DOWNLOAD_URL "$apk_url"
     fi
-    set_env_value APK_DOWNLOAD_URL_MANAGED "$managed_mode"
-    systemctl restart "$SERVICE_NAME"
+    set_runtime_env_value APK_DOWNLOAD_URL_MANAGED "$managed_mode"
     return 0
   fi
 
@@ -363,7 +463,9 @@ restore_required_source_files() {
 
 main() {
   require_root
+  acquire_installer_lock
   require_debian
+  require_supported_host_release
   validate_systemd_unit_name "$SERVICE_NAME" '正式服务名称'
   validate_systemd_unit_name "$LEGACY_SERVICE_NAME" '旧版兼容服务名称'
   [[ "$APP_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || die '应用程序运行用户名称无效。'
@@ -380,7 +482,8 @@ main() {
   CURRENT_STEP='安装基础软件包'
   safe_apt_update
   apt-get install -y git curl ca-certificates openssl
-  if ! command -v node >/dev/null 2>&1 || [ "$(node -p 'Number(process.versions.node.split(".")[0])')" -lt 22 ]; then
+  if [ ! -x /usr/bin/node ] \
+    || [ "$(/usr/bin/node -p 'Number(process.versions.node.split(".")[0])' 2>/dev/null || echo 0)" -lt 22 ]; then
     curl -4fL --show-error --connect-timeout 15 --max-time 180 --retry 3 \
       https://deb.nodesource.com/setup_22.x | bash -
     apt-get install -y nodejs
@@ -514,7 +617,7 @@ main() {
     export LEGACY_SERVICE_NAME="$LEGACY_SERVICE_NAME"
     export HOST="127.0.0.1"
     export PORT="$deploy_port"
-    export DOMAIN_NAME="${domain:-_}"
+    export DOMAIN_NAME="$host"
     export ENABLE_HTTPS="$enable_https"
     export CORS_ORIGIN="$cors_origin"
     export UPLOAD_DIR="$upload_dir"
@@ -537,26 +640,25 @@ main() {
   ensure_directory "$backup_dir" root:root 750
   # PostgreSQL is provisioned by the existing deployment script. This directory is retained for DB operational artifacts.
   ensure_directory "$database_dir" postgres:postgres 700
-  set_env_value UPLOAD_DIR "$upload_dir"
-  set_env_value EXPORT_DIR "$export_dir"
-  set_env_value BACKUP_DIR "$backup_dir"
-  set_env_value DATABASE_DIR "$database_dir"
+  set_runtime_env_value UPLOAD_DIR "$upload_dir"
+  set_runtime_env_value EXPORT_DIR "$export_dir"
+  set_runtime_env_value BACKUP_DIR "$backup_dir"
+  set_runtime_env_value DATABASE_DIR "$database_dir"
   if [ -z "$(read_env_value EXPORT_RETENTION_DAYS || true)" ]; then
-    set_env_value EXPORT_RETENTION_DAYS "30"
+    set_runtime_env_value EXPORT_RETENTION_DAYS "30"
   fi
-  set_env_value APP_PUBLIC_URL "$origin"
-  set_env_value CORS_ORIGIN "$cors_origin"
+  set_runtime_env_value APP_PUBLIC_URL "$origin"
+  set_runtime_env_value CORS_ORIGIN "$cors_origin"
   if [ -z "$(read_env_value APP_PAIRING_SECRET || true)" ]; then
-    set_env_value APP_PAIRING_SECRET "$(generate_secret)"
+    set_runtime_env_value APP_PAIRING_SECRET "$(generate_secret)"
   fi
   if [ -z "$(read_env_value APP_PAIRING_TTL_MINUTES || true)" ]; then
-    set_env_value APP_PAIRING_TTL_MINUTES "10"
+    set_runtime_env_value APP_PAIRING_TTL_MINUTES "10"
   fi
   if [ -n "$firebase_service_account_base64" ]; then
-    set_env_value FCM_SERVICE_ACCOUNT_JSON_BASE64 "$firebase_service_account_base64"
-    set_env_value FCM_SERVICE_ACCOUNT_JSON ""
+    set_runtime_env_value FCM_SERVICE_ACCOUNT_JSON_BASE64 "$firebase_service_account_base64"
+    set_runtime_env_value FCM_SERVICE_ACCOUNT_JSON ""
   fi
-  systemctl restart "$SERVICE_NAME"
 
   local admin_probe_status=0
   if highest_admin_exists; then
@@ -587,17 +689,15 @@ main() {
     fi
     if nginx_domain_uses_https "$domain"; then
       origin="https://$domain"
-      set_env_value APP_PUBLIC_URL "$origin"
-      set_env_value CORS_ORIGIN "https://localhost,$origin"
-      systemctl restart "$SERVICE_NAME"
+      set_runtime_env_value APP_PUBLIC_URL "$origin"
+      set_runtime_env_value CORS_ORIGIN "https://localhost,$origin"
       if [ "$certbot_succeeded" != '1' ]; then
         echo 'Certbot 返回错误，但 Nginx 当前正在使用可读取且与域名匹配的证书。请检查证书有效期和 Certbot 日志。' >&2
       fi
     else
       origin="http://$host"
-      set_env_value APP_PUBLIC_URL "$origin"
-      set_env_value CORS_ORIGIN "https://localhost,$origin"
-      systemctl restart "$SERVICE_NAME"
+      set_runtime_env_value APP_PUBLIC_URL "$origin"
+      set_runtime_env_value CORS_ORIGIN "https://localhost,$origin"
       echo '已安装的 Nginx 站点尚未启用 HTTPS，服务仍可通过 HTTP 访问。请检查 DNS 和 Certbot 日志后重试证书配置。' >&2
     fi
   fi
@@ -611,7 +711,9 @@ main() {
   ready_port="${ready_port:-3000}"
   [[ "$ready_port" =~ ^[0-9]+$ ]] && [ "$ready_port" -ge 1 ] && [ "$ready_port" -le 65535 ] \
     || die 'PORT 必须是 1 到 65535 之间的整数。'
+  restart_after_runtime_config_change "$ready_port"
   wait_for_final_readiness "$ready_port"
+  wait_for_public_proxy_readiness "$origin" "$host"
   CURRENT_STEP='记录仅 root 可读的安装信息'
   record_install_info
   echo

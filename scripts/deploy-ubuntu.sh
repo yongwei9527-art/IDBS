@@ -56,6 +56,7 @@ RELEASE_SWITCHED=0
 DEPLOYMENT_COMPLETE=0
 LOCAL_DB_PASSWORD_FILE=''
 LOCAL_MIGRATION_BUNDLE=''
+DEPLOYMENT_LOCK_FILE=''
 
 log() { printf '\n[%s] %s\n' "${SERVICE_NAME}" "$*"; }
 
@@ -82,27 +83,107 @@ run_as_postgres() {
   )
 }
 
+run_local_postgres_psql() {
+  run_as_postgres psql -X --host /var/run/postgresql --port 5432 "$@"
+}
+
+run_local_postgres_createdb() {
+  run_as_postgres createdb --host /var/run/postgresql --port 5432 "$@"
+}
+
 install_packages() {
-  local postgres_major=''
+  local codename key_dir key_file key_tmp repo_file
   export DEBIAN_FRONTEND=noninteractive
   safe_apt_update -y
-  apt-get install -y acl curl ca-certificates gnupg nginx openssl postgresql postgresql-client rsync sudo util-linux
-  if ! command -v node >/dev/null 2>&1 || [ "$(node -p 'Number(process.versions.node.split(".")[0])')" -lt 22 ]; then
+  apt-get install -y acl curl ca-certificates gnupg iproute2 openssl postgresql-common rsync sudo util-linux
+  if [ "${EXISTING_INSTALL:-0}" = '1' ]; then
+    apt-get install -y postgresql postgresql-client
+  else
+    if ! apt-cache show postgresql-16 >/dev/null 2>&1; then
+      # shellcheck disable=SC1091
+      source /etc/os-release
+      codename="${VERSION_CODENAME:-}"
+      [ -n "$codename" ] || die 'The operating-system codename could not be detected.'
+      curl -4fsSI --connect-timeout 15 --max-time 60 \
+        "https://apt.postgresql.org/pub/repos/apt/dists/${codename}-pgdg/Release" >/dev/null \
+        || die "The official PostgreSQL repository does not support this OS codename: $codename"
+      key_dir='/usr/share/postgresql-common/pgdg'
+      key_file="$key_dir/apt.postgresql.org.asc"
+      repo_file='/etc/apt/sources.list.d/laboratory-management-system-pgdg.list'
+      mkdir -p -- "$key_dir"
+      key_tmp="$(mktemp "$key_dir/.apt.postgresql.org.asc.XXXXXX")"
+      curl -4fL --show-error --connect-timeout 15 --max-time 120 --retry 3 \
+        https://www.postgresql.org/media/keys/ACCC4CF8.asc -o "$key_tmp"
+      [ "$(gpg --show-keys --with-colons "$key_tmp" 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')" \
+          = 'B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8' ] \
+        || die 'The downloaded PostgreSQL repository signing-key fingerprint is invalid.'
+      install -o root -g root -m 0644 "$key_tmp" "$key_file"
+      rm -f -- "$key_tmp"
+      printf 'deb [signed-by=%s] https://apt.postgresql.org/pub/repos/apt %s-pgdg main\n' \
+        "$key_file" "$codename" > "$repo_file"
+      safe_apt_update -y
+    fi
+    apt-get install -y postgresql-16 postgresql-client-16
+  fi
+  if [ ! -x /usr/bin/node ] \
+    || [ "$(/usr/bin/node -p 'Number(process.versions.node.split(".")[0])' 2>/dev/null || echo 0)" -lt 22 ]; then
     curl -4fL --show-error --connect-timeout 15 --max-time 180 --retry 3 \
       https://deb.nodesource.com/setup_22.x | bash -
     apt-get install -y nodejs
   fi
-  postgres_major="$(psql --version 2>/dev/null | grep -oE '[0-9]+' | head -n 1 || true)"
-  if [ -n "$postgres_major" ] && [ "$postgres_major" -lt 15 ]; then
-    log "兼容模式：检测到 PostgreSQL ${postgres_major}。这不会阻止本次恢复安装，也不是安装失败；服务恢复后请安排升级到 PostgreSQL 15+ 和受支持的操作系统。"
+  [ -x /usr/bin/node ] \
+    && [ "$(/usr/bin/node -p 'Number(process.versions.node.split(".")[0])')" -ge 22 ] \
+    || die 'A system-managed Node.js 22+ executable is required at /usr/bin/node.'
+}
+
+require_systemd_host() {
+  local init_name
+  need_cmd systemctl
+  init_name="$(ps -p 1 -o comm= 2>/dev/null | tr -d '[:space:]' || true)"
+  [ "$init_name" = 'systemd' ] \
+    || die "This VPS is not running systemd as PID 1 (detected: ${init_name:-unknown}). Use a full Ubuntu/Debian VPS, not a restricted application container."
+}
+
+acquire_deployment_lock() {
+  DEPLOYMENT_LOCK_FILE="$APP_SHARED/deployment.lock"
+  exec 8>"$DEPLOYMENT_LOCK_FILE"
+  flock -n 8 || die 'Another installation or deployment is already running.'
+}
+
+preflight_runtime_port() {
+  local recognized_service_active=0
+  if systemctl is-active --quiet "$SERVICE_NAME" \
+    || systemctl is-active --quiet "$LEGACY_SERVICE_NAME"; then
+    recognized_service_active=1
   fi
+  if ss -H -ltn "sport = :$PORT" 2>/dev/null | grep -q . \
+    && [ "$recognized_service_active" != '1' ]; then
+    ss -H -ltnp "sport = :$PORT" >&2 || true
+    die "Runtime port $PORT is already occupied by a process not managed by $SERVICE_NAME. Choose another PORT or stop that process before installation."
+  fi
+}
+
+preflight_web_ports() {
+  local port
+  for port in 80 443; do
+    if ! ss -H -ltn "sport = :$port" 2>/dev/null | grep -q .; then
+      continue
+    fi
+    if systemctl is-active --quiet nginx; then
+      continue
+    fi
+    ss -H -ltnp "sport = :$port" >&2 || true
+    die "Public web port $port is occupied while Nginx is inactive. Stop the conflicting web server before installation."
+  done
 }
 
 resolve_persistent_directories() {
   local existing_uploads='' existing_exports='' existing_backups='' existing_database_ops=''
   validate_systemd_unit_name "$SERVICE_NAME" 'Canonical service name'
   validate_systemd_unit_name "$LEGACY_SERVICE_NAME" 'Legacy service name'
-  [ "$DOMAIN_NAME" = '_' ] || validate_domain "$DOMAIN_NAME"
+  if [ "$DOMAIN_NAME" != '_' ] && ! is_ipv4 "$DOMAIN_NAME"; then
+    validate_domain "$DOMAIN_NAME"
+  fi
   [ "$HOST" = '127.0.0.1' ] || die 'HOST must be 127.0.0.1 for the Nginx-backed VPS deployment.'
   [[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] \
     || die 'PORT must be a whole number from 1 to 65535.'
@@ -494,7 +575,7 @@ set_local_database_role_password() {
   printf '%s' "$password" > "$LOCAL_DB_PASSWORD_FILE"
   chown postgres:postgres "$LOCAL_DB_PASSWORD_FILE"
   chmod 600 "$LOCAL_DB_PASSWORD_FILE"
-  run_as_postgres psql -X --quiet --set ON_ERROR_STOP=1 --dbname postgres \
+  run_local_postgres_psql --quiet --set ON_ERROR_STOP=1 --dbname postgres \
     --set=password_file="$LOCAL_DB_PASSWORD_FILE" <<SQL || status=$?
 SELECT format('${operation} ROLE laboratory_management_system_user WITH LOGIN PASSWORD %L', pg_read_file(:'password_file')) \gexec
 SQL
@@ -522,18 +603,47 @@ ensure_local_database() {
   systemctl enable postgresql
   systemctl start postgresql
 
-  if ! run_as_postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='laboratory_management_system_user'" | grep -q 1; then
+  if ! run_local_postgres_psql --dbname postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='laboratory_management_system_user'" | grep -q 1; then
     set_local_database_role_password CREATE "$db_password"
   else
     set_local_database_role_password ALTER "$db_password"
   fi
   db_password=''
 
-  if ! run_as_postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='laboratory_management_system'" | grep -q 1; then
-    run_as_postgres createdb -O laboratory_management_system_user laboratory_management_system
+  if ! run_local_postgres_psql --dbname postgres -tAc "SELECT 1 FROM pg_database WHERE datname='laboratory_management_system'" | grep -q 1; then
+    run_local_postgres_createdb -O laboratory_management_system_user laboratory_management_system
   fi
 
-  run_as_postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON DATABASE laboratory_management_system TO laboratory_management_system_user;"
+  run_local_postgres_psql --dbname laboratory_management_system -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON DATABASE laboratory_management_system TO laboratory_management_system_user;"
+}
+
+verify_local_postgres_target() {
+  local database_url parse_status cluster_count server_version_num server_major
+  database_url="$(get_env_value DATABASE_URL)"
+  if parse_local_database_password "$database_url" >/dev/null; then
+    :
+  else
+    parse_status=$?
+    [ "$parse_status" -eq 3 ] && return 0
+    die 'The configured local DATABASE_URL could not be parsed safely.'
+  fi
+  systemctl enable postgresql
+  systemctl start postgresql
+  cluster_count="$(pg_lsclusters --no-header 2>/dev/null | awk '$3 == 5432 && $4 == "online" { count++ } END { print count + 0 }')"
+  [ "$cluster_count" = '1' ] \
+    || die "Expected exactly one online PostgreSQL cluster on port 5432; found $cluster_count. Run: sudo pg_lsclusters"
+  server_version_num="$(run_local_postgres_psql --dbname postgres --tuples-only --no-align \
+    --command 'SHOW server_version_num' | tr -d '[:space:]')"
+  [[ "$server_version_num" =~ ^[0-9]+$ ]] \
+    || die 'Could not verify the PostgreSQL server version on 127.0.0.1:5432.'
+  server_major=$((server_version_num / 10000))
+  log "Verified PostgreSQL server $server_major on the application target port 5432."
+  if [ "$server_major" -lt 15 ]; then
+    log "Compatibility recovery mode: PostgreSQL $server_major is below the supported production baseline. Complete this recovery, then run sudo laboratory-management-system-upgrade-postgresql."
+  fi
+  if [ "${EXISTING_INSTALL:-0}" != '1' ] && [ "$server_major" -ne 16 ]; then
+    die "A fresh installation must use PostgreSQL 16, but port 5432 is PostgreSQL $server_major. Remove the empty conflicting cluster or use a clean supported VPS."
+  fi
 }
 
 apply_database_schema() {
@@ -658,8 +768,8 @@ finalize_local_database_permissions() {
     die 'The configured local DATABASE_URL could not be parsed safely.'
   fi
 
-  run_as_postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "ALTER SCHEMA public OWNER TO laboratory_management_system_user;"
-  run_as_postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 <<'SQL'
+  run_local_postgres_psql --dbname laboratory_management_system -v ON_ERROR_STOP=1 -c "ALTER SCHEMA public OWNER TO laboratory_management_system_user;"
+  run_local_postgres_psql --dbname laboratory_management_system -v ON_ERROR_STOP=1 <<'SQL'
 DO $$
 DECLARE
   r record;
@@ -675,11 +785,11 @@ BEGIN
   END LOOP;
 END $$;
 SQL
-  run_as_postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "GRANT ALL ON SCHEMA public TO laboratory_management_system_user;"
-  run_as_postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO laboratory_management_system_user;"
-  run_as_postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO laboratory_management_system_user;"
-  run_as_postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES FOR ROLE laboratory_management_system_user IN SCHEMA public GRANT ALL ON TABLES TO laboratory_management_system_user;"
-  run_as_postgres psql -d laboratory_management_system -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES FOR ROLE laboratory_management_system_user IN SCHEMA public GRANT ALL ON SEQUENCES TO laboratory_management_system_user;"
+  run_local_postgres_psql --dbname laboratory_management_system -v ON_ERROR_STOP=1 -c "GRANT ALL ON SCHEMA public TO laboratory_management_system_user;"
+  run_local_postgres_psql --dbname laboratory_management_system -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO laboratory_management_system_user;"
+  run_local_postgres_psql --dbname laboratory_management_system -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO laboratory_management_system_user;"
+  run_local_postgres_psql --dbname laboratory_management_system -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES FOR ROLE laboratory_management_system_user IN SCHEMA public GRANT ALL ON TABLES TO laboratory_management_system_user;"
+  run_local_postgres_psql --dbname laboratory_management_system -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES FOR ROLE laboratory_management_system_user IN SCHEMA public GRANT ALL ON SEQUENCES TO laboratory_management_system_user;"
 }
 
 stop_application_for_migration() {
@@ -1061,7 +1171,7 @@ install_nginx() {
   if [ "$tls_enabled" = '1' ]; then
     cat > "$nginx_temp" <<EOF
 server {
-  listen 80 default_server;
+  listen 80;
   server_name $DOMAIN_NAME;
   return 301 https://\$host\$request_uri;
 }
@@ -1076,7 +1186,7 @@ EOF
   else
     cat > "$nginx_temp" <<EOF
 server {
-  listen 80 default_server;
+  listen 80;
   server_name $DOMAIN_NAME;
 EOF
   fi
@@ -1174,13 +1284,20 @@ provision_initial_super_admin() {
 }
 
 verify_service_health() {
-  local _attempt
-  for _attempt in $(seq 1 30); do
-    if curl -fsS "http://127.0.0.1:$PORT/ready" >/dev/null; then
+  local attempts=0 active_state
+  while [ "$attempts" -lt 60 ]; do
+    attempts=$((attempts + 1))
+    if systemctl is-active --quiet "$SERVICE_NAME" \
+      && curl -fsS "http://127.0.0.1:$PORT/ready" >/dev/null 2>&1; then
       return 0
+    fi
+    active_state="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
+    if [ "$active_state" = 'failed' ]; then
+      break
     fi
     sleep 1
   done
+  systemctl status "$SERVICE_NAME" --no-pager || true
   journalctl -u "$SERVICE_NAME" -n 80 --no-pager || true
   log "Service readiness check failed."
   return 1
@@ -1193,11 +1310,21 @@ main() {
   if [ -f "$ENV_FILE" ]; then
     EXISTING_INSTALL=1
   fi
+  require_systemd_host
   install_packages
   need_cmd rsync
   need_cmd tar
+  need_cmd flock
+  need_cmd ss
   resolve_persistent_directories
   ensure_user
+  acquire_deployment_lock
+  preflight_runtime_port
+  preflight_web_ports
+  # Install/start Nginx only after an existing non-Nginx listener on 80/443 has
+  # been diagnosed. Otherwise apt can fail mid-transaction with a misleading
+  # package error when Apache, Caddy, or another proxy owns the public ports.
+  apt-get install -y nginx
   ensure_runtime_path_access
   write_installation_owner_marker
   # Copy and build into an isolated candidate while the current service remains online.
@@ -1209,6 +1336,7 @@ main() {
   verify_candidate_release_sources
   seal_candidate_release
   verify_candidate_runtime_access
+  verify_local_postgres_target
   ensure_local_database
   prepare_local_migration_bundle
   ensure_verified_pre_migration_backup
