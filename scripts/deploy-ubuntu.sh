@@ -92,7 +92,7 @@ run_local_postgres_createdb() {
 }
 
 install_packages() {
-  local codename key_dir key_file key_tmp repo_file
+  local codename key_dir key_file key_tmp repo_file pgdg_base pgdg_suite candidate release_url key_url
   export DEBIAN_FRONTEND=noninteractive
   safe_apt_update -y
   apt-get install -y acl curl ca-certificates gnupg iproute2 openssl postgresql-common rsync sudo util-linux
@@ -101,23 +101,41 @@ install_packages() {
     source /etc/os-release
     codename="${VERSION_CODENAME:-}"
     [ -n "$codename" ] || die 'The operating-system codename could not be detected.'
-    curl -4fsSI --connect-timeout 15 --max-time 60 \
-      "https://apt.postgresql.org/pub/repos/apt/dists/${codename}-pgdg/Release" >/dev/null \
-      || die "The official PostgreSQL repository does not support this OS codename: $codename"
+    pgdg_base=''
+    pgdg_suite="${codename}-pgdg"
+    for candidate in \
+      "https://apt.postgresql.org/pub/repos/apt|${codename}-pgdg" \
+      "https://download.postgresql.org/pub/repos/apt|${codename}-pgdg" \
+      "https://ftp.postgresql.org/pub/repos/apt|${codename}-pgdg" \
+      "https://apt-archive.postgresql.org/pub/repos/apt|${codename}-pgdg-archive"; do
+      pgdg_base="${candidate%%|*}"
+      pgdg_suite="${candidate#*|}"
+      release_url="${pgdg_base}/dists/${pgdg_suite}/Release"
+      if curl -4fL --silent --show-error --connect-timeout 15 --max-time 60 \
+          --retry 2 --retry-delay 2 "$release_url" -o /dev/null; then
+        break
+      fi
+      pgdg_base=''
+    done
+    [ -n "$pgdg_base" ] || die "Could not reach a PostgreSQL official APT mirror for ${codename}-pgdg. This is normally a VPS DNS/network problem, not proof that $codename is unsupported. Check DNS access to apt.postgresql.org or download.postgresql.org, then rerun the installer."
     key_dir='/usr/share/postgresql-common/pgdg'
     key_file="$key_dir/apt.postgresql.org.asc"
     repo_file='/etc/apt/sources.list.d/laboratory-management-system-pgdg.list'
     mkdir -p -- "$key_dir"
     key_tmp="$(mktemp "$key_dir/.apt.postgresql.org.asc.XXXXXX")"
-    curl -4fL --show-error --connect-timeout 15 --max-time 120 --retry 3 \
-      https://www.postgresql.org/media/keys/ACCC4CF8.asc -o "$key_tmp"
+    key_url="$pgdg_base/ACCC4CF8.asc"
+    if [[ "$pgdg_base" == https://apt-archive.postgresql.org/* ]]; then
+      key_url='https://www.postgresql.org/media/keys/ACCC4CF8.asc'
+    fi
+    curl -4fL --show-error --connect-timeout 15 --max-time 120 --retry 3 --retry-delay 2 \
+      "$key_url" -o "$key_tmp"
     [ "$(gpg --show-keys --with-colons "$key_tmp" 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')" \
         = 'B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8' ] \
       || die 'The downloaded PostgreSQL repository signing-key fingerprint is invalid.'
     install -o root -g root -m 0644 "$key_tmp" "$key_file"
     rm -f -- "$key_tmp"
-    printf 'deb [signed-by=%s] https://apt.postgresql.org/pub/repos/apt %s-pgdg main\n' \
-      "$key_file" "$codename" > "$repo_file"
+    printf 'deb [signed-by=%s] %s %s main\n' \
+      "$key_file" "$pgdg_base" "$pgdg_suite" > "$repo_file"
     chmod 644 "$repo_file"
     safe_apt_update -y
   fi

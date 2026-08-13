@@ -5,6 +5,7 @@ APP_BASE="${APP_BASE:-/var/www/laboratory-management-system}"
 APP_CURRENT="${APP_CURRENT:-$APP_BASE/current}"
 ENV_FILE="${ENV_FILE:-$APP_BASE/shared/.env}"
 INFO_FILE="${INSTALL_INFO_FILE:-$APP_BASE/shared/install-info}"
+PENDING_PUBLIC_ORIGIN_FILE="${PENDING_PUBLIC_ORIGIN_FILE:-$APP_BASE/shared/.public-origin-pending}"
 
 require_root() {
   if [ "$(id -u)" -ne 0 ]; then
@@ -27,7 +28,11 @@ read_env_value() {
 
 configured_public_origin() {
   local origin
-  origin="$(read_env_value APP_PUBLIC_URL)"
+  origin=''
+  if [ -f "$PENDING_PUBLIC_ORIGIN_FILE" ]; then
+    IFS= read -r origin < "$PENDING_PUBLIC_ORIGIN_FILE" || true
+  fi
+  [ -n "$origin" ] || origin="$(read_env_value APP_PUBLIC_URL)"
   [ -n "$origin" ] || origin="$(read_env_value CORS_ORIGIN | awk -F, '{ print $NF }')"
   origin="${origin%/}"
   if [[ "$origin" =~ ^https?://[^/[:space:]?#]+$ ]] && [[ "$origin" != *'@'* ]]; then

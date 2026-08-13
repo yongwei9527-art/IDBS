@@ -100,6 +100,20 @@ test('PGDG repository key is pinned to the official signing-key fingerprint', ()
   assert.match(upgrade, /signed-by=%s/);
 });
 
+test('PGDG setup distinguishes mirror DNS failures from unsupported distributions and uses official fallbacks', () => {
+  for (const script of [upgrade, deploy]) {
+    assert.match(script, /https:\/\/apt\.postgresql\.org\/pub\/repos\/apt/);
+    assert.match(script, /https:\/\/download\.postgresql\.org\/pub\/repos\/apt/);
+    assert.match(script, /https:\/\/ftp\.postgresql\.org\/pub\/repos\/apt/);
+    assert.match(script, /https:\/\/apt-archive\.postgresql\.org\/pub\/repos\/apt/);
+    assert.match(script, /\$\{codename\}-pgdg-archive/);
+    assert.match(script, /DNS\/network problem, not proof that .* is unsupported/);
+    assert.doesNotMatch(script, /repository does not support this OS codename/);
+    assert.match(script, /key_url="\$pgdg_base\/ACCC4CF8\.asc"/);
+    assert.match(script, /www\.postgresql\.org\/media\/keys\/ACCC4CF8\.asc/);
+  }
+});
+
 test('deployment installs and uninstall removes the PostgreSQL upgrade command', () => {
   assert.match(deploy, /POSTGRES_UPGRADE_COMMAND="\/usr\/local\/sbin\/laboratory-management-system-upgrade-postgresql"/);
   assert.match(deploy, /install_postgres_upgrade_command/);

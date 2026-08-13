@@ -26,6 +26,14 @@ test('VPS db panel exposes the required three-item menu', () => {
   assert.match(panel, /请选择 \[1-3\]: " choice <\/dev\/tty/);
 });
 
+test('installer refreshes the db recovery panel before deployment can fail', () => {
+  const fetch = installer.indexOf('fetch_source');
+  const refresh = installer.indexOf('install_recovery_db_panel', fetch);
+  const deploy = installer.indexOf('bash "$SRC_DIR/scripts/deploy-ubuntu.sh"', refresh);
+  assert.ok(fetch >= 0 && refresh > fetch && deploy > refresh);
+  assert.match(installer, /quoted_panel_script.*\$SRC_DIR\/scripts\/vps-db-panel\.sh/);
+});
+
 test('VPS db panel reports the live PostgreSQL baseline and upgrade command', () => {
   assert.match(panel, /show_postgresql_info/);
   assert.match(panel, /pg_lsclusters --no-header/);
@@ -42,6 +50,14 @@ test('interrupted installation never records or presents a blank public URL as s
   assert.match(installer, /INSTALL_FAILURE_LOG="\$\{INSTALL_FAILURE_LOG:-\/var\/log\/laboratory-management-system\/install-failure\.log\}"/);
   assert.match(installer, /pg_lsclusters 2>&1 \|\| true/);
   assert.match(installer, /sudo cat %s/);
+});
+
+test('interrupted deployment preserves the current candidate public origin for db diagnostics', () => {
+  assert.match(installer, /PENDING_PUBLIC_ORIGIN_FILE="\$APP_BASE\/shared\/\.public-origin-pending"/);
+  assert.match(installer, /record_pending_public_origin/);
+  assert.match(installer, /rm -f -- "\$PENDING_PUBLIC_ORIGIN_FILE"/);
+  assert.match(panel, /PENDING_PUBLIC_ORIGIN_FILE/);
+  assert.match(panel, /IFS= read -r origin < "\$PENDING_PUBLIC_ORIGIN_FILE"/);
 });
 
 test('VPS install information is root-only and temporary-password risk is explicit', () => {

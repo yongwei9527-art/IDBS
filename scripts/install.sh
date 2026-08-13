@@ -58,6 +58,7 @@ source "$COMMON_HELPER"
 DEFAULT_ADMIN_PHONE="${DEFAULT_ADMIN_PHONE:-13900000000}"
 DEFAULT_ADMIN_NAME="${DEFAULT_ADMIN_NAME:-系统最高管理员}"
 PENDING_ADMIN_FILE="$APP_BASE/shared/.initial-super-admin-pending"
+PENDING_PUBLIC_ORIGIN_FILE="$APP_BASE/shared/.public-origin-pending"
 INSTALL_FAILURE_LOG="${INSTALL_FAILURE_LOG:-/var/log/laboratory-management-system/install-failure.log}"
 CURRENT_STEP='启动安装器'
 
@@ -346,6 +347,34 @@ record_install_info() {
     printf '%s\n%s\n' "$app_server_address" "$web_access_url" \
       | /usr/local/bin/db --record-addresses
   fi
+  rm -f -- "$PENDING_PUBLIC_ORIGIN_FILE"
+}
+
+record_pending_public_origin() {
+  local pending_dir pending_tmp
+  pending_dir="$(dirname "$PENDING_PUBLIC_ORIGIN_FILE")"
+  mkdir -p -- "$pending_dir"
+  chmod 700 "$pending_dir"
+  pending_tmp="$(mktemp "$pending_dir/.public-origin-pending.XXXXXX")"
+  printf '%s\n' "${origin%/}" > "$pending_tmp"
+  chown root:root "$pending_tmp"
+  chmod 600 "$pending_tmp"
+  mv -f -- "$pending_tmp" "$PENDING_PUBLIC_ORIGIN_FILE"
+}
+
+install_recovery_db_panel() {
+  local quoted_app_base quoted_app_current quoted_panel_script
+  [ -s "$SRC_DIR/scripts/vps-db-panel.sh" ] \
+    || die 'The checked-out source does not contain the VPS db panel.'
+  printf -v quoted_app_base '%q' "$APP_BASE"
+  printf -v quoted_app_current '%q' "$APP_CURRENT"
+  printf -v quoted_panel_script '%q' "$SRC_DIR/scripts/vps-db-panel.sh"
+  cat > /usr/local/bin/db <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+exec env APP_BASE=$quoted_app_base APP_CURRENT=$quoted_app_current bash $quoted_panel_script "\$@"
+EOF
+  chmod 755 /usr/local/bin/db
 }
 
 configure_default_apk_download_url() {
@@ -615,6 +644,11 @@ main() {
 
   CURRENT_STEP='下载项目源码'
   fetch_source
+  record_pending_public_origin
+  # Refresh the recovery panel before deployment. If package installation or
+  # PostgreSQL upgrade fails, `sudo db` must not keep executing an old panel
+  # that silently displays blank addresses from an interrupted installation.
+  install_recovery_db_panel
   # deploy-ubuntu.sh owns service shutdown, directory preparation, and Nginx replacement.
   # Do not run prepare-vps.sh during a normal install/rerun because it removes the working
   # service and Nginx units before the replacement release has been validated.
