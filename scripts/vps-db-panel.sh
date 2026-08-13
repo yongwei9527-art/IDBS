@@ -145,6 +145,7 @@ record_from_stdin() {
 }
 
 show_install_info() {
+  local app_server_address web_access_url address_is_verified=1
   show_postgresql_info
   if [ ! -f "$INFO_FILE" ]; then
     local configured_origin
@@ -158,10 +159,21 @@ show_install_info() {
     return 0
   fi
 
+  app_server_address="$(read_info_value APP_SERVER_ADDRESS)"
+  web_access_url="$(read_info_value WEB_ACCESS_URL)"
+  if [ -z "$app_server_address" ] || [ -z "$web_access_url" ]; then
+    address_is_verified=0
+    app_server_address="$(configured_public_origin)"
+    [ -z "$app_server_address" ] || web_access_url="${app_server_address%/}/v5/"
+  fi
+
   echo
   echo "=== 实验室管理系统连接信息 ==="
-  printf 'App 服务器连接地址：%s\n' "$(read_info_value APP_SERVER_ADDRESS)"
-  printf '网页访问地址：%s\n' "$(read_info_value WEB_ACCESS_URL)"
+  printf 'App 服务器连接地址：%s\n' "$app_server_address"
+  printf '网页访问地址：%s\n' "$web_access_url"
+  if [ "$address_is_verified" != '1' ]; then
+    echo '地址状态：安装信息中的地址为空；以上仅为环境文件中的候选地址，部署成功前不能确认可访问。'
+  fi
   printf '最高管理员账号：%s\n' "$(read_info_value SUPER_ADMIN_PHONE)"
   printf '最高管理员姓名：%s\n' "$(read_info_value SUPER_ADMIN_NAME)"
   printf '最近生成的临时密码：%s\n' "$(read_info_value SUPER_ADMIN_TEMP_PASSWORD)"

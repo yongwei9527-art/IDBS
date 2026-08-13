@@ -38,6 +38,7 @@ test('interrupted installation never records or presents a blank public URL as s
   assert.match(panel, /部署尚未完成，因此不能确认公网网址可访问/);
   assert.match(panel, /\$\{recorded_origin%\/\}\/v5\//);
   assert.match(panel, /不要把空地址当作安装成功/);
+  assert.match(panel, /安装信息中的地址为空；以上仅为环境文件中的候选地址/);
   assert.match(installer, /INSTALL_FAILURE_LOG="\$\{INSTALL_FAILURE_LOG:-\/var\/log\/laboratory-management-system\/install-failure\.log\}"/);
   assert.match(installer, /pg_lsclusters 2>&1 \|\| true/);
   assert.match(installer, /sudo cat %s/);
