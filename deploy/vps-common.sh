@@ -77,11 +77,18 @@ ask_yes_no() {
 
 normalize_host() {
   local value="$1"
+  # Input read from a terminal or pasted from Windows can contain surrounding
+  # spaces or a trailing carriage return.  Strip only surrounding whitespace;
+  # otherwise a valid IPv4 address falls through to domain validation.
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
   value="${value,,}"
   value="${value#http://}"
   value="${value#https://}"
   value="${value%%/*}"
   value="${value%.}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
   printf '%s' "$value"
 }
 

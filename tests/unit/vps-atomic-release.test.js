@@ -229,6 +229,13 @@ test('VPS host normalization and public-IP checks reject reserved addresses', (t
 set -euo pipefail
 source deploy/vps-common.sh
 [ "$(normalize_host 'HTTPS://LAB.Example.COM./v5/')" = 'lab.example.com' ]
+[ "$(normalize_host ' 123.60.55.61 ')" = '123.60.55.61' ]
+[ "$(normalize_host $'123.60.55.61\r')" = '123.60.55.61' ]
+[ "$(normalize_host $' HTTPS://LAB.Example.COM./v5/\r')" = 'lab.example.com' ]
+for address in 123.60.55.61 ' 123.60.55.61 ' $'123.60.55.61\r' 'http://123.60.55.61/'; do
+  normalized="$(normalize_host "$address")"
+  is_ipv4 "$normalized"
+done
 for address in 10.0.0.1 100.64.0.1 192.0.2.1 198.18.0.1 198.51.100.1 203.0.113.1 224.0.0.1 255.255.255.255; do
   is_non_public_ipv4 "$address"
 done
